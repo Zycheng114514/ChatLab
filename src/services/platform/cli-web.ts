@@ -56,6 +56,14 @@ export class CliWebPlatformAdapter implements PlatformAdapter {
     return { success: false, error: 'Not available in CLI Web' }
   }
 
+  async getUiScale(): Promise<number> {
+    return 1
+  }
+
+  async setUiScale(_scale: number): Promise<{ success: boolean; error?: string }> {
+    return { success: false, error: 'UI scale is only available on desktop' }
+  }
+
   async getAnalyticsEnabled(): Promise<boolean> {
     try {
       const resp = await fetchWithAuth('/_web/telemetry/enabled')

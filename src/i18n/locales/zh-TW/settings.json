@@ -34,6 +34,8 @@
     "appearance": {
       "title": "外觀設定",
       "themeMode": "主題模式",
+      "uiScale": "介面縮放",
+      "uiScaleDesc": "調整整體介面和文字的大小",
       "insightCardTheme": "洞察卡片配色",
       "insightCardThemeOption": "配色 {index}",
       "auto": "依系統設定",

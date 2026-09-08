@@ -2,7 +2,7 @@
  * 窗口和文件系统操作 IPC 处理器
  */
 
-import { ipcMain, app, dialog, clipboard, shell, nativeTheme } from 'electron'
+import { ipcMain, app, dialog, clipboard, shell, nativeTheme, BrowserWindow } from 'electron'
 import * as fs from 'fs/promises'
 import { loadConfig, setConfigField } from '@openchatlab/config'
 import type { DesktopCloseBehavior } from '@openchatlab/shared-types'
@@ -237,6 +237,25 @@ export function registerWindowHandlers(ctx: IpcContext): void {
     try {
       setConfigField('desktop.close_behavior', behavior)
       if (behavior !== 'background') destroyWindowsTray()
+      return { success: true }
+    } catch (error) {
+      return { success: false, error: error instanceof Error ? error.message : String(error) }
+    }
+  })
+
+  // ==================== 界面缩放 ====================
+  ipcMain.handle('app:getUiScale', () => {
+    return loadConfig().desktop.ui_scale
+  })
+
+  ipcMain.handle('app:setUiScale', (event, scale: number) => {
+    if (typeof scale !== 'number' || !Number.isFinite(scale) || scale < 0.8 || scale > 2) {
+      return { success: false, error: 'Unsupported UI scale' }
+    }
+
+    try {
+      setConfigField('desktop.ui_scale', String(scale))
+      BrowserWindow.fromWebContents(event.sender)?.webContents.setZoomFactor(scale)
       return { success: true }
     } catch (error) {
       return { success: false, error: error instanceof Error ? error.message : String(error) }

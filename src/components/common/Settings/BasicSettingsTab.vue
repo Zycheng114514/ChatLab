@@ -40,6 +40,12 @@ const isWindowsDesktop =
 const desktopCloseBehavior = ref<DesktopCloseBehavior>('background')
 let savedDesktopCloseBehavior: DesktopCloseBehavior = 'background'
 
+// UI Scale
+const UI_SCALE_PRESETS = [0.9, 1, 1.1, 1.25, 1.5]
+const uiScale = ref('1')
+let savedUiScale = '1'
+const uiScaleOptions = UI_SCALE_PRESETS.map((scale) => ({ label: `${Math.round(scale * 100)}%`, value: String(scale) }))
+
 onMounted(async () => {
   if (!IS_ELECTRON) {
     isPackaged.value = false
@@ -59,6 +65,13 @@ onMounted(async () => {
     } catch {
       desktopCloseBehavior.value = 'background'
     }
+  }
+
+  try {
+    savedUiScale = String(await usePlatformService().getUiScale())
+    uiScale.value = savedUiScale
+  } catch {
+    uiScale.value = '1'
   }
 })
 
@@ -81,6 +94,17 @@ async function handleDesktopCloseBehaviorChange(value: string | number) {
     savedDesktopCloseBehavior = nextBehavior
   } else {
     desktopCloseBehavior.value = savedDesktopCloseBehavior
+  }
+}
+
+async function handleUiScaleChange(value: string | number) {
+  const nextScale = String(value)
+  uiScale.value = nextScale
+  const result = await usePlatformService().setUiScale(Number(nextScale))
+  if (result.success) {
+    savedUiScale = nextScale
+  } else {
+    uiScale.value = savedUiScale
   }
 }
 
@@ -215,6 +239,28 @@ const desktopCloseBehaviorOptions = computed(() => [
             <UTabs v-model="colorMode" size="sm" class="gap-0" :items="colorModeOptions"></UTabs>
           </div>
         </div>
+        <template v-if="IS_ELECTRON">
+          <div class="border-t border-gray-200 dark:border-gray-700"></div>
+          <div class="flex items-center justify-between p-4">
+            <div class="flex-1 pr-4">
+              <p class="text-sm font-medium text-gray-900 dark:text-white">
+                {{ t('settings.basic.appearance.uiScale') }}
+              </p>
+              <p class="text-xs text-gray-500 dark:text-gray-400">
+                {{ t('settings.basic.appearance.uiScaleDesc') }}
+              </p>
+            </div>
+            <div class="w-64">
+              <UTabs
+                :model-value="uiScale"
+                size="sm"
+                class="gap-0"
+                :items="uiScaleOptions"
+                @update:model-value="handleUiScaleChange"
+              ></UTabs>
+            </div>
+          </div>
+        </template>
         <div class="border-t border-gray-200 dark:border-gray-700"></div>
         <div class="flex items-center justify-between p-4">
           <div class="flex-1 pr-4">

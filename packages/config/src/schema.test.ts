@@ -35,3 +35,19 @@ test('accepts supported Windows close behaviors and rejects invalid values', () 
   assert.throws(() => configSchema.parse({ desktop: { close_behavior: 'ask' } }))
   assert.throws(() => configSchema.parse({ desktop: { close_behavior: 'hide-forever' } }))
 })
+
+test('defaults the desktop UI scale to 1', () => {
+  const config = configSchema.parse({})
+
+  assert.equal(config.desktop.ui_scale, 1)
+})
+
+test('accepts supported desktop UI scales and rejects out-of-range or non-numeric values', () => {
+  for (const uiScale of [0.8, 1.25, 2]) {
+    assert.equal(configSchema.parse({ desktop: { ui_scale: uiScale } }).desktop.ui_scale, uiScale)
+  }
+
+  for (const uiScale of [0.5, 3, '1']) {
+    assert.throws(() => configSchema.parse({ desktop: { ui_scale: uiScale } }))
+  }
+})
