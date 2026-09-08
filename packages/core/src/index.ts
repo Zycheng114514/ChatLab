@@ -97,6 +97,7 @@ export {
   getMembersPaginated,
   executeParameterizedSql,
   getMessageAttachments,
+  getMessageAttachmentById,
   fetchMessageAttachments,
   getCatchphraseAnalysis,
   getMentionAnalysis,

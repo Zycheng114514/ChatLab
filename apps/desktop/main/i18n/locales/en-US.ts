@@ -79,6 +79,9 @@ export default {
     migrationV10Desc: 'Track source message coverage for segment summaries',
     migrationV10Message:
       'Record how many messages each segment summary covers so outdated summaries can be regenerated',
+    migrationV11Desc: 'Add storage for message attachments',
+    migrationV11Message:
+      'Add a table for media file information so imported images, voice messages and files can be shown; existing messages are unchanged',
     integrityError:
       'Database structure is incomplete: missing meta table. Please delete this database file and re-import.',
     checkFailed: 'Database check failed: {{error}}',

@@ -49,6 +49,11 @@ export class BrowserPlatformAdapter implements PlatformAdapter {
     return { success: false, error: 'Desktop close behavior is not available in Web WASM' }
   }
 
+  getAttachmentUrl(): string | null {
+    // Web WASM has no file system access, so attachments stay metadata-only.
+    return null
+  }
+
   async getAnalyticsEnabled(): Promise<boolean> {
     return false
   }

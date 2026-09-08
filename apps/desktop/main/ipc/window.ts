@@ -17,6 +17,8 @@ import {
 import { getDesktopAppVersion } from '../runtime/compat'
 import { requestAppQuit } from '../window/main-window'
 import { destroyWindowsTray } from '../window/windows-tray'
+import { buildMediaProtocolUrl, parseMediaProtocolUrl, resolveMediaFile } from '../media-protocol'
+import { getInternalDbManager } from '../internal-api/server'
 
 const REMOTE_CONFIG_ALLOWED_DOMAINS = ['chatlab.fun', '1app.top']
 const REMOTE_CONFIG_TIMEOUT_MS = 8000
@@ -317,6 +319,15 @@ export function registerWindowHandlers(ctx: IpcContext): void {
     } catch {
       return false
     }
+  })
+
+  // 在文件管理器中定位附件：路径解析只发生在主进程，渲染进程只知道附件 ID
+  ipcMain.handle('attachment:revealInFolder', async (_, sessionId: string, attachmentId: number) => {
+    const target = parseMediaProtocolUrl(buildMediaProtocolUrl(sessionId, attachmentId))
+    const file = target ? resolveMediaFile(getInternalDbManager(), target) : null
+    if (!file) return false
+    shell.showItemInFolder(file.absolutePath)
+    return true
   })
 
   // 在文件管理器中打开

@@ -2,10 +2,12 @@ import type { FastifyInstance } from 'fastify'
 import type { AiRouteContext } from '../../context/ai'
 import type { RuntimeRouteContext } from '../../context/runtime'
 import type { ServiceRouteContext } from '../../context/services'
+import { createReadStream, existsSync } from 'fs'
 import {
   chatTopicWorkCoordinator,
   sessionService,
   ownerProfileService,
+  resolveAttachmentFile,
   PreferencesManager,
 } from '@openchatlab/node-runtime'
 
@@ -102,4 +104,22 @@ export function registerSessionRoutes(server: FastifyInstance, ctx: SessionRoute
     ownerProfileService.excludeOwnerSession(preferences(), request.params.id)
     return { success: true }
   })
+
+  // Serve one message attachment from the directory its export was imported from.
+  // resolveAttachmentFile refuses paths outside that directory, so a crafted
+  // export cannot turn this into an arbitrary file read.
+  server.get<{ Params: { id: string; attachmentId: string } }>(
+    '/_web/sessions/:id/attachments/:attachmentId',
+    async (request, reply) => {
+      const db = adapter.ensureReadonly(request.params.id)
+      const file = resolveAttachmentFile(db, Number(request.params.attachmentId))
+      if (!file || !existsSync(file.absolutePath)) {
+        return reply.code(404).send({ error: 'Attachment not found' })
+      }
+
+      reply.header('Content-Type', file.contentType)
+      reply.header('Content-Disposition', `inline; filename*=UTF-8''${encodeURIComponent(file.fileName)}`)
+      return reply.send(createReadStream(file.absolutePath))
+    }
+  )
 }

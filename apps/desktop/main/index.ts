@@ -3,7 +3,12 @@ import { join } from 'path'
 import { optimizer, platform } from '@electron-toolkit/utils'
 import { checkUpdate } from './update/manager'
 import mainIpcMain, { cleanup } from './ipc'
-import { startInternalServer, stopInternalServer, registerInternalApiIpc } from './internal-api/server'
+import {
+  startInternalServer,
+  stopInternalServer,
+  registerInternalApiIpc,
+  getInternalDbManager,
+} from './internal-api/server'
 import { getDataSourceManager, getPullEngine } from './ipc/api'
 import { getPathProvider } from './paths/provider'
 import { initAnalytics } from './analytics'
@@ -12,6 +17,7 @@ import { prepareDesktopRuntime } from './app/bootstrap'
 import { createMainWindow, markAppQuitting } from './window/main-window'
 import { destroyWindowsTray } from './window/windows-tray'
 import { initLockManager, cleanupLockManager } from './security/lock-manager'
+import { registerMediaProtocolHandler, registerMediaProtocolScheme } from './media-protocol'
 
 class MainProcess {
   mainWindow: BrowserWindow | null
@@ -66,6 +72,7 @@ class MainProcess {
     }
 
     protocol.registerSchemesAsPrivileged([{ scheme: 'app', privileges: { secure: true, standard: true } }])
+    registerMediaProtocolScheme()
     this.registerAppEvents()
   }
 
@@ -84,6 +91,8 @@ class MainProcess {
       try {
         await startInternalServer(getPathProvider(), { getDataSourceManager, getPullEngine })
         registerInternalApiIpc()
+        // Needs the internal server's DatabaseManager to look attachments up.
+        registerMediaProtocolHandler(getInternalDbManager)
         console.log('[Main] Internal API Server ready')
       } catch (error) {
         console.error('[Main] Internal API Server failed to start:', error)

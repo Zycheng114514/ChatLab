@@ -56,6 +56,16 @@ export function getMessageAttachments(
   return groupAttachments(rows)
 }
 
+/** Single attachment lookup for the file-serving paths (desktop protocol, CLI Web route). */
+export function getMessageAttachmentById(db: DatabaseAdapter, attachmentId: number): MessageAttachment | null {
+  if (!Number.isInteger(attachmentId)) return null
+  if (!hasTable(db, 'message_attachment')) return null
+
+  const row = db.prepare(`${ATTACHMENT_SELECT} WHERE id = ?`).get(attachmentId) as unknown as AttachmentRow | undefined
+  if (!row) return null
+  return groupAttachments([row])[row.message_id][0]
+}
+
 export async function fetchMessageAttachments(
   executor: AsyncSqlExecutor,
   messageIds: readonly number[]

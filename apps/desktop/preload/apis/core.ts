@@ -124,4 +124,10 @@ export const extendedApi = {
       return ipcRenderer.invoke('app:setDesktopCloseBehavior', behavior)
     },
   },
+  attachment: {
+    /** 在系统文件管理器中定位附件文件；文件不存在或路径越界时返回 false */
+    revealInFolder: (sessionId: string, attachmentId: number): Promise<boolean> => {
+      return ipcRenderer.invoke('attachment:revealInFolder', sessionId, attachmentId)
+    },
+  },
 }

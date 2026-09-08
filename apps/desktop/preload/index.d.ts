@@ -195,6 +195,9 @@ interface Api {
     getDesktopCloseBehavior: () => Promise<DesktopCloseBehavior>
     setDesktopCloseBehavior: (behavior: DesktopCloseBehavior) => Promise<{ success: boolean; error?: string }>
   }
+  attachment: {
+    revealInFolder: (sessionId: string, attachmentId: number) => Promise<boolean>
+  }
 }
 
 /**

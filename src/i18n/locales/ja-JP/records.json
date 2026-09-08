@@ -137,5 +137,11 @@
     "replyTo": "返信",
     "expandMessyContent": "全文を表示",
     "collapseMessyContent": "折りたたむ"
+  },
+  "attachments": {
+    "reveal": "フォルダーに表示",
+    "download": "添付ファイルをダウンロード",
+    "missing": "ファイルが見つかりません",
+    "unavailable": "このプラットフォームでは添付ファイルを開けません"
   }
 }

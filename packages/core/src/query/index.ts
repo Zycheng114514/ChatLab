@@ -1,6 +1,6 @@
 export { buildTimeFilter, buildSystemMessageFilter, hasTable, hasColumn } from './filters'
 
-export { getMessageAttachments, fetchMessageAttachments } from './message-attachments'
+export { getMessageAttachments, getMessageAttachmentById, fetchMessageAttachments } from './message-attachments'
 export type { MessageAttachment } from './message-attachments'
 
 export {

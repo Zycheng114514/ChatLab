@@ -137,5 +137,11 @@
     "replyTo": "回复",
     "expandMessyContent": "展开完整内容",
     "collapseMessyContent": "收起"
+  },
+  "attachments": {
+    "reveal": "在文件夹中显示",
+    "download": "下载附件",
+    "missing": "文件未找到",
+    "unavailable": "当前平台无法打开附件"
   }
 }

@@ -6,9 +6,11 @@
 import { computed, ref, watch } from 'vue'
 import { useI18n } from 'vue-i18n'
 
+import MessageAttachments from './MessageAttachments.vue'
 import { analyzeMessyContent } from './messy-content'
 import type { ChatRecordMessage } from './types'
 import { chatTopicColorStyle } from './topic-highlight'
+import type { MessageAttachment } from '@openchatlab/core'
 import { useSessionStore } from '@/stores/session'
 
 const { t } = useI18n()
@@ -16,6 +18,10 @@ const { t } = useI18n()
 const props = defineProps<{
   /** 消息数据 */
   message: ChatRecordMessage
+  /** 当前会话 ID（附件按会话解析文件） */
+  sessionId?: string
+  /** 该消息的附件（由列表按页批量取得） */
+  attachments?: MessageAttachment[]
   /** 是否为目标消息（需要高亮） */
   isTarget?: boolean
   /** 话题高亮颜色；普通消息定位仍使用默认主色。 */
@@ -247,6 +253,11 @@ function highlightContent(content: string): string {
                 </a>
               </li>
             </ul>
+            <MessageAttachments
+              v-if="props.attachments?.length && props.sessionId"
+              :session-id="props.sessionId"
+              :attachments="props.attachments"
+            />
             <button
               v-if="contentAnalysis.shouldCollapse"
               type="button"

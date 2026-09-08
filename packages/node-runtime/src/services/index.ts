@@ -47,6 +47,9 @@ export { generateSummary, generateAllSummaries } from './summary-service'
 export type { LlmConfig, SummaryServiceDeps } from './summary-service'
 
 // Export service
+export { resolveAttachmentFile } from './attachment-service'
+export type { SessionAttachmentFile } from './attachment-service'
+
 export { exportMarkdown } from './export-service'
 
 // Contacts service

@@ -137,5 +137,11 @@
     "replyTo": "回覆",
     "expandMessyContent": "展開完整內容",
     "collapseMessyContent": "收起"
+  },
+  "attachments": {
+    "reveal": "在資料夾中顯示",
+    "download": "下載附件",
+    "missing": "找不到檔案",
+    "unavailable": "目前平台無法開啟附件"
   }
 }
