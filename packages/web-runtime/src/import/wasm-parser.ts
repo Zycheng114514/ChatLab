@@ -7,7 +7,19 @@ import type {
 import type { BrowserImportParseResult } from './browser-parser'
 import type { AttachmentKind, ParsedAttachment } from '@openchatlab/shared-types'
 
-type BrowserWasmFormatId = 'chatlab' | 'weflow'
+export type BrowserWasmFormatId = 'chatlab' | 'weflow' | 'telegram-native' | 'telegram-native-single'
+
+/** Rust kernel id per browser format; both Telegram exports share one kernel. */
+const WASM_KERNEL_IDS: Record<BrowserWasmFormatId, string> = {
+  chatlab: 'chatlab',
+  weflow: 'weflow',
+  'telegram-native': 'telegram',
+  'telegram-native-single': 'telegram',
+}
+
+function isTelegram(formatId: BrowserWasmFormatId): boolean {
+  return formatId === 'telegram-native' || formatId === 'telegram-native-single'
+}
 
 interface WasmNativeRole {
   id: string
@@ -78,6 +90,8 @@ export interface ParseWithWasmOptions {
   onLog?: (event: BrowserImportLogEvent) => void
   loader?: BrowserWasmParserLoader
   batchSize?: number
+  /** Format options for the kernel (Telegram: `chatIndex` or `single`). */
+  optionsJson?: string
 }
 
 let modulePromise: Promise<BrowserWasmParserModule> | undefined
@@ -97,7 +111,7 @@ export async function parseWithWasm(
     const bytes = new Uint8Array(await source.arrayBuffer())
     options.checkCancelled?.()
     options.onProgress?.({ stage: 'parsing', progress: 0, messagesProcessed: 0 })
-    parser = new module.WasmParser(formatId, bytes, source.name)
+    parser = new module.WasmParser(WASM_KERNEL_IDS[formatId], bytes, source.name, options.optionsJson)
 
     await yieldToWorkerQueue()
     options.checkCancelled?.()
@@ -165,6 +179,20 @@ function mapResult(
   members: BrowserParsedMember[],
   messages: BrowserParsedMessage[]
 ): BrowserImportParseResult {
+  if (isTelegram(formatId)) {
+    return {
+      formatId,
+      meta: {
+        name: meta.name as string,
+        platform: 'telegram',
+        type: meta.chatType as string,
+        groupId: optionalString(meta.groupId),
+      },
+      members,
+      messages,
+    }
+  }
+
   if (formatId === 'weflow') {
     return {
       formatId,
@@ -202,6 +230,14 @@ function mapMembers(
   formatId: BrowserWasmFormatId,
   meta: Record<string, unknown>
 ): BrowserParsedMember[] {
+  if (isTelegram(formatId)) {
+    // Telegram members are derived from messages and carry only these two keys.
+    return members.map((member) => ({
+      platformId: member.platformId,
+      accountName: member.accountName,
+    }))
+  }
+
   if (formatId === 'weflow') {
     return members.map((member) => ({
       platformId: member.platformId,
@@ -234,6 +270,21 @@ function mapMessage(message: WasmNativeMessage, formatId: BrowserWasmFormatId): 
   const platformMessageId = optionalString(message.platformMessageId)
   const senderGroupNickname = optionalString(message.senderGroupNickname)
   const replyToMessageId = optionalString(message.replyToMessageId)
+  if (isTelegram(formatId)) {
+    const mapped: BrowserParsedMessage = {
+      platformMessageId,
+      senderPlatformId: message.senderPlatformId,
+      senderAccountName: message.senderAccountName,
+      timestamp: message.timestamp as number,
+      type: message.messageType,
+      content: message.content ?? null,
+      replyToMessageId,
+    }
+    // The TS browser parser drops media info; the kernel keeps attachments.
+    if (message.attachments?.length) mapped.attachments = message.attachments.map(mapAttachment)
+    return mapped
+  }
+
   if (formatId === 'weflow') {
     return {
       platformMessageId,
