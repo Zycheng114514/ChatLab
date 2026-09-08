@@ -486,9 +486,14 @@ async function* parseDiscordExporter(options: ParseOptions): AsyncGenerator<Pars
 
 // ==================== 导出解析器 ====================
 
+import { withNativeDiscord } from '../native/discord-native'
+
+// parseDiscordAccelerated：优先走 Rust 内核，native 不可用/失败时自动回退本文件的 TS 实现
+export const parseDiscordAccelerated = withNativeDiscord(parseDiscordExporter)
+
 export const parser_: Parser = {
   feature,
-  parse: parseDiscordExporter,
+  parse: parseDiscordAccelerated,
 }
 
 // ==================== 导出格式模块 ====================

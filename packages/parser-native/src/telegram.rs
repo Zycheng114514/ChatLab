@@ -17,8 +17,9 @@ use serde::Serialize;
 use serde_json::Value;
 
 use crate::input::KernelInput;
+use crate::jsutil::truthy_str;
 use crate::protocol::{KernelOutput, NativeAttachment, NativeMember, NativeMessage};
-use crate::scanner::{for_each_array_element, walk_top_level, ScanError, ScanResult};
+use crate::scanner::{for_each_array_element, scan_error, walk_top_level, ScanError, ScanResult};
 
 /// Sender name for a service message without an `actor`. The two TS parsers
 /// disagree here (`telegram-native.ts` uses '系统', `telegram-native-single.ts`
@@ -41,13 +42,6 @@ struct TelegramMeta {
 struct TelegramOptions {
     chat_index: u32,
     single: bool,
-}
-
-fn scan_error(message: impl Into<String>, offset: usize) -> ScanError {
-    ScanError {
-        message: message.into(),
-        offset,
-    }
 }
 
 /// `chatIndex` (default 0) and `single` from the JS `formatOptions` blob.
@@ -96,17 +90,6 @@ fn is_truthy(value: Option<&Value>) -> bool {
         Some(Value::Number(number)) => number.as_f64() != Some(0.0),
         Some(Value::String(text)) => !text.is_empty(),
         Some(_) => true,
-    }
-}
-
-/// JS truthiness for a string-typed field: absent, null, false, 0 and "" are
-/// falsy; any other non-string value would leave the TS parser's string path.
-fn truthy_str(value: Option<&Value>) -> ScanResult<Option<&str>> {
-    match value {
-        None | Some(Value::Null) | Some(Value::Bool(false)) => Ok(None),
-        Some(Value::String(text)) => Ok((!text.is_empty()).then_some(text.as_str())),
-        Some(Value::Number(number)) if number.as_f64() == Some(0.0) => Ok(None),
-        Some(_) => Err(scan_error("unsupported string field", 0)),
     }
 }
 
