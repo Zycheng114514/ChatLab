@@ -313,7 +313,7 @@ ChatLab 接收到 SSE 事件后，**触发一次该 session 的增量拉取**（
 
 ### 媒体文件
 
-如果数据源的消息中包含媒体引用，`attachments` 中的 `filePath` 或 `dataUri` 可指向数据源的媒体服务端点。ChatLab 当前按"协议预留"处理，未来版本将支持从数据源拉取媒体文件。
+如果数据源的消息中包含媒体引用，可在消息里携带 `attachments`，结构与 [ChatLab 格式规范](./chatlab-format.md#附件-attachments) 一致；`path` 为相对路径、绝对路径或 http(s) URL。ChatLab 会落库并展示这些附件信息，但当前不会从数据源拉取媒体文件本身。
 
 ---
 
