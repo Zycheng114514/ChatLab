@@ -78,6 +78,8 @@ export default {
     migrationV10Message: '記錄每個片段摘要涵蓋的訊息數量，以便重新產生已經過期的摘要',
     migrationV11Desc: '新增訊息搜尋的全文索引',
     migrationV11Message: '為訊息內容建立全文索引，加快關鍵字搜尋，聊天資料不受影響',
+    migrationV12Desc: '新增訊息附件儲存',
+    migrationV12Message: '新增媒體檔案資訊表，匯入的圖片、語音和檔案可以在聊天記錄中顯示；既有訊息不受影響',
     integrityError: '資料庫結構不完整：缺少 meta 資料表。建議刪除此資料庫檔案後重新匯入。',
     checkFailed: '資料庫檢查失敗: {{error}}',
   },

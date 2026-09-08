@@ -105,6 +105,66 @@ describe('writeParseResultToDb', () => {
 
     db.close()
   })
+
+  it('links each attachment to its own message', () => {
+    const raw = new DatabaseSync(':memory:')
+    const db = createNodeSqliteAdapter(raw)
+    db.exec(CHAT_DB_SCHEMA)
+
+    writeParseResultToDb(
+      db,
+      { name: 'Media fixture', platform: 'wechat', type: 'private' },
+      [{ platformId: 'alice', accountName: 'Alice' }],
+      [
+        {
+          senderPlatformId: 'alice',
+          senderAccountName: 'Alice',
+          timestamp: 2,
+          type: 1,
+          content: '[图片]',
+          attachments: [
+            { kind: 'image', path: 'images/second.jpg', name: 'second.jpg', mimeType: 'image/jpeg', size: 2048 },
+            { kind: 'file', path: 'files/second.pdf' },
+          ],
+        },
+        {
+          senderPlatformId: 'alice',
+          senderAccountName: 'Alice',
+          timestamp: 1,
+          type: 2,
+          content: '[语音]',
+          attachments: [{ kind: 'audio', path: 'voice/first.mp3', durationMs: 3200 }],
+        },
+        { senderPlatformId: 'alice', senderAccountName: 'Alice', timestamp: 3, type: 0, content: 'text only' },
+      ]
+    )
+
+    // Messages are written in timestamp order, so the audio attachment must land on the ts=1 message.
+    assert.deepEqual(
+      db
+        .prepare(
+          `SELECT m.ts AS ts, a.kind AS kind, a.relative_path AS path, a.file_name AS name,
+                  a.mime_type AS mimeType, a.size_bytes AS size, a.duration_ms AS durationMs
+           FROM message_attachment a JOIN message m ON m.id = a.message_id ORDER BY a.id`
+        )
+        .all(),
+      [
+        { ts: 1, kind: 'audio', path: 'voice/first.mp3', name: null, mimeType: null, size: null, durationMs: 3200 },
+        {
+          ts: 2,
+          kind: 'image',
+          path: 'images/second.jpg',
+          name: 'second.jpg',
+          mimeType: 'image/jpeg',
+          size: 2048,
+          durationMs: null,
+        },
+        { ts: 2, kind: 'file', path: 'files/second.pdf', name: null, mimeType: null, size: null, durationMs: null },
+      ]
+    )
+
+    db.close()
+  })
 })
 
 function createNodeSqliteAdapter(raw: DatabaseSync): DatabaseAdapter {

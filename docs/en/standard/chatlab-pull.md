@@ -313,7 +313,7 @@ All data responses must conform to the [ChatLab Standard Format Specification](.
 
 ### Media Files
 
-If messages in the data source contain media references, `attachments` fields (`filePath` or `dataUri`) may point to media endpoints on the data source. ChatLab currently treats this as a reserved protocol field; future versions will support pulling media files from the data source.
+If a source message references media, the message may carry `attachments` using the structure defined in the [ChatLab format specification](./chatlab-format.md#attachments); `path` is a relative path, an absolute path, or an http(s) URL. ChatLab stores and displays this attachment information but does not fetch the media files from the data source yet.
 
 ---
 

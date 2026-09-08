@@ -280,6 +280,7 @@ pub fn parse_weflow(
                 message_type: convert_message_type(obj.get("type").and_then(|v| v.as_str())),
                 content,
                 reply_to_message_id: None,
+                attachments: None,
             });
 
             on_progress(end_offset as u64, messages.len() as u64);

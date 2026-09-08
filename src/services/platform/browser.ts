@@ -57,6 +57,11 @@ export class BrowserPlatformAdapter implements PlatformAdapter {
     return { success: false, error: 'UI scale is only available on desktop' }
   }
 
+  getAttachmentUrl(): string | null {
+    // Web WASM has no file system access, so attachments stay metadata-only.
+    return null
+  }
+
   async getAnalyticsEnabled(): Promise<boolean> {
     return false
   }

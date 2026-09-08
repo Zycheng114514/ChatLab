@@ -1,3 +1,3 @@
 export { generateMessageKey } from './dedup'
-export { buildMemberIdMap, writeParseResultToDb } from './writers'
-export type { ImportMeta, WriteParseResultStats } from './writers'
+export { buildMemberIdMap, writeParseResultToDb, insertMessageAttachments, ATTACHMENT_INSERT_MAX_ROWS } from './writers'
+export type { ImportMeta, WriteParseResultStats, MessageAttachmentInsert } from './writers'

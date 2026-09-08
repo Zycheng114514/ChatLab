@@ -13,7 +13,7 @@ import type {
   PerformUpdateResult,
 } from './types'
 import type { AnalyticsEventName, DesktopCloseBehavior } from '@openchatlab/shared-types'
-import { fetchWithAuth } from '../utils/http'
+import { fetchWithAuth, getBaseUrl } from '../utils/http'
 import { reportError } from '../log-report'
 
 declare const __APP_VERSION__: string
@@ -62,6 +62,11 @@ export class CliWebPlatformAdapter implements PlatformAdapter {
 
   async setUiScale(_scale: number): Promise<{ success: boolean; error?: string }> {
     return { success: false, error: 'UI scale is only available on desktop' }
+  }
+
+  // No revealAttachment: the browser has no file manager, so chips download instead.
+  getAttachmentUrl(sessionId: string, attachmentId: number): string | null {
+    return `${getBaseUrl()}/sessions/${encodeURIComponent(sessionId)}/attachments/${attachmentId}`
   }
 
   async getAnalyticsEnabled(): Promise<boolean> {

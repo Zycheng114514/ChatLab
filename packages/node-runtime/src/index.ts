@@ -516,6 +516,7 @@ export {
   createNavigationLayoutService,
   NavigationLayoutValidationError,
   createDatabaseManagerAdapter,
+  resolveAttachmentFile,
   executePushImportUnlocked,
   DEFAULT_IMPORT_IDEMPOTENCY_TTL_MS,
   hashImportBody,
@@ -524,6 +525,7 @@ export {
 } from './services'
 export type {
   SessionRuntimeAdapter,
+  SessionAttachmentFile,
   AnalysisSessionDTO,
   ListSessionsOptions,
   MembersPaginatedDTO,

@@ -38,6 +38,22 @@ pub struct NativeMember {
 }
 
 #[cfg_attr(feature = "napi", napi(object))]
+#[derive(Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct NativeAttachment {
+    /// One of image / video / audio / file / sticker.
+    pub kind: String,
+    /// Relative to the export file's directory, an absolute path, or an http(s) URL.
+    pub path: String,
+    pub name: Option<String>,
+    pub mime_type: Option<String>,
+    pub size: Option<f64>,
+    pub duration_ms: Option<f64>,
+    pub width: Option<f64>,
+    pub height: Option<f64>,
+}
+
+#[cfg_attr(feature = "napi", napi(object))]
 #[derive(Default, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct NativeMessage {
@@ -51,6 +67,8 @@ pub struct NativeMessage {
     pub message_type: u32,
     pub content: Option<String>,
     pub reply_to_message_id: Option<String>,
+    /// None when the message carried no usable attachment.
+    pub attachments: Option<Vec<NativeAttachment>>,
 }
 
 /// What a format kernel returns: meta as format-specific JSON plus unified

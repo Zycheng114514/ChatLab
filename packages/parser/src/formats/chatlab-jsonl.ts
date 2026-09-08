@@ -31,6 +31,7 @@ import type {
   ParsedMessage,
 } from '../types'
 import { getFileSize, createProgress } from '../utils'
+import { inferAttachmentFromContent, normalizeAttachments } from './utils/attachments'
 
 // ==================== JSONL 行类型定义 ====================
 
@@ -76,6 +77,7 @@ interface JsonlMessage {
   type: number
   content: string | null
   replyToMessageId?: string
+  attachments?: unknown
 }
 
 /** 任意 JSONL 行 */
@@ -133,6 +135,7 @@ async function* parseChatLabJsonl(options: ParseOptions): AsyncGenerator<ParseEv
   const totalBytes = getFileSize(filePath)
   let bytesRead = 0
   let messagesProcessed = 0
+  let skippedAttachments = 0
 
   // 发送初始进度
   const initialProgress = createProgress('parsing', 0, totalBytes, 0, '')
@@ -220,16 +223,23 @@ async function* parseChatLabJsonl(options: ParseOptions): AsyncGenerator<ParseEv
           memberMap.set(parsed.sender, inferredMember)
         }
 
-        messageBatch.push({
-          senderPlatformId: parsed.sender,
-          senderAccountName: parsed.accountName,
-          senderGroupNickname: parsed.groupNickname,
-          timestamp: parsed.timestamp,
-          type: parsed.type as MessageType,
-          content: parsed.content,
-          platformMessageId: parsed.platformMessageId,
-          replyToMessageId: parsed.replyToMessageId,
-        })
+        {
+          const normalized = normalizeAttachments(parsed.attachments)
+          skippedAttachments += normalized.skipped
+          const inferred = normalized.attachments ? undefined : inferAttachmentFromContent(parsed.type, parsed.content)
+
+          messageBatch.push({
+            senderPlatformId: parsed.sender,
+            senderAccountName: parsed.accountName,
+            senderGroupNickname: parsed.groupNickname,
+            timestamp: parsed.timestamp,
+            type: parsed.type as MessageType,
+            content: parsed.content,
+            platformMessageId: parsed.platformMessageId,
+            replyToMessageId: parsed.replyToMessageId,
+            attachments: normalized.attachments ?? (inferred ? [inferred] : undefined),
+          })
+        }
         messagesProcessed++
 
         // Flush each batch immediately so large files do not retain every message or flood progress IPC.
@@ -287,6 +297,9 @@ async function* parseChatLabJsonl(options: ParseOptions): AsyncGenerator<ParseEv
   // 记录解析摘要
   const memberCount = members.length > 0 ? members.length : memberMap.size
   onLog?.('info', `解析完成: ${messagesProcessed} 条消息, ${memberCount} 个成员`)
+  if (skippedAttachments > 0) {
+    onLog?.('info', `跳过 ${skippedAttachments} 条结构非法的附件`)
+  }
 
   yield {
     type: 'done',

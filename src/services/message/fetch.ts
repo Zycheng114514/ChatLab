@@ -10,10 +10,18 @@ import {
   fetchMessagesBefore,
   fetchMessagesAfter,
   fetchMessageContext,
+  fetchMessageAttachments,
   searchMessagesLikeAsync,
   fetchAllRecentMessages,
 } from '@openchatlab/core'
-import type { MessageAdapter, TimeFilter, PaginatedMessages, MessageRecord, SearchResult } from './types'
+import type {
+  MessageAdapter,
+  MessageAttachment,
+  TimeFilter,
+  PaginatedMessages,
+  MessageRecord,
+  SearchResult,
+} from './types'
 import { getRegisteredAdapter } from '../registry'
 import type { DataAdapter } from '../data/types'
 
@@ -83,5 +91,10 @@ export class FetchMessageAdapter implements MessageAdapter {
   async getAllRecentMessages(sessionId: string, filter?: TimeFilter, limit: number = 100): Promise<SearchResult> {
     const executor = createPluginQueryExecutor(sessionId)
     return fetchAllRecentMessages(executor, filter, limit)
+  }
+
+  async getMessageAttachments(sessionId: string, messageIds: number[]): Promise<Record<number, MessageAttachment[]>> {
+    const executor = createPluginQueryExecutor(sessionId)
+    return fetchMessageAttachments(executor, messageIds)
   }
 }

@@ -42,6 +42,14 @@ export class ElectronPlatformAdapter implements PlatformAdapter {
     return window.api.app.setUiScale(scale)
   }
 
+  getAttachmentUrl(sessionId: string, attachmentId: number): string | null {
+    return `chatlab-media://session/${encodeURIComponent(sessionId)}/attachment/${attachmentId}`
+  }
+
+  revealAttachment(sessionId: string, attachmentId: number): Promise<boolean> {
+    return window.api.attachment.revealInFolder(sessionId, attachmentId)
+  }
+
   getAnalyticsEnabled(): Promise<boolean> {
     return window.api.app.getAnalyticsEnabled()
   }

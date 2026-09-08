@@ -3,7 +3,7 @@
  * 供 telegram-native（全量导出）和 telegram-native-single（单聊天导出）共用
  */
 
-import { ChatType, MessageType } from '@openchatlab/shared-types'
+import { ChatType, MessageType, type AttachmentKind, type ParsedAttachment } from '@openchatlab/shared-types'
 
 // ==================== 共享类型 ====================
 
@@ -29,6 +29,9 @@ export interface TelegramMessage {
   media_type?: string
   sticker_emoji?: string
   mime_type?: string
+  duration_seconds?: number
+  width?: number
+  height?: number
   members?: string[]
 }
 
@@ -145,4 +148,38 @@ export function buildContent(msg: TelegramMessage): string | null {
   }
 
   return text || null
+}
+
+/** Telegram media_type → attachment kind; `photo` messages have no media_type. */
+const ATTACHMENT_KIND_BY_MEDIA_TYPE: Record<string, AttachmentKind> = {
+  video_file: 'video',
+  video_message: 'video',
+  voice_message: 'audio',
+  audio_file: 'audio',
+  sticker: 'sticker',
+  animation: 'image',
+}
+
+/**
+ * Build the attachment of a Telegram media message.
+ * `photo` and `file` hold a path relative to the export directory.
+ */
+export function buildAttachments(msg: TelegramMessage): ParsedAttachment[] | undefined {
+  // `file` is the media itself; `photo` is only used by photo messages.
+  const filePath = msg.file || msg.photo
+  if (!filePath) return undefined
+
+  const kind = msg.file ? (ATTACHMENT_KIND_BY_MEDIA_TYPE[msg.media_type ?? ''] ?? 'file') : 'image'
+  return [
+    {
+      kind,
+      path: filePath,
+      name: msg.file_name || undefined,
+      mimeType: msg.mime_type || undefined,
+      size: undefined,
+      durationMs: msg.duration_seconds !== undefined ? msg.duration_seconds * 1000 : undefined,
+      width: msg.width,
+      height: msg.height,
+    },
+  ]
 }

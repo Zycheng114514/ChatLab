@@ -6,7 +6,7 @@
  */
 
 import type { DatabaseAdapter } from '../interfaces'
-import type { ParsedMember, ParsedMessage } from '@openchatlab/shared-types'
+import type { ParsedAttachment, ParsedMember, ParsedMessage } from '@openchatlab/shared-types'
 
 export interface ImportMeta {
   name: string
@@ -15,6 +15,63 @@ export interface ImportMeta {
   groupId?: string | null
   groupAvatar?: string | null
   ownerId?: string | null
+}
+
+const ATTACHMENT_COLUMN_COUNT = 9
+const SQLITE_LEGACY_VARIABLE_LIMIT = 999
+
+/** Same conservative variable bound the message inserter uses. */
+export const ATTACHMENT_INSERT_MAX_ROWS = Math.floor(SQLITE_LEGACY_VARIABLE_LIMIT / ATTACHMENT_COLUMN_COUNT)
+
+export interface MessageAttachmentInsert {
+  messageId: number
+  attachment: ParsedAttachment
+}
+
+/**
+ * Write attachment rows in batched multi-row INSERTs.
+ *
+ * Callers must run this inside the transaction that inserted the messages, so
+ * an interrupted import never leaves attachments pointing at missing rows.
+ *
+ * @returns the number of INSERT statements executed
+ */
+export function insertMessageAttachments(db: DatabaseAdapter, rows: readonly MessageAttachmentInsert[]): number {
+  let statementCount = 0
+  for (let offset = 0; offset < rows.length; offset += ATTACHMENT_INSERT_MAX_ROWS) {
+    const batch = rows.slice(offset, offset + ATTACHMENT_INSERT_MAX_ROWS)
+    const values = batch.map(() => '(?, ?, ?, ?, ?, ?, ?, ?, ?)').join(', ')
+    db.prepare(
+      `INSERT INTO message_attachment (
+         message_id,
+         kind,
+         relative_path,
+         file_name,
+         mime_type,
+         size_bytes,
+         duration_ms,
+         width,
+         height
+       ) VALUES ${values}`
+    ).run(...batch.flatMap(toAttachmentParams))
+    statementCount++
+  }
+  return statementCount
+}
+
+function toAttachmentParams(row: MessageAttachmentInsert): unknown[] {
+  const attachment = row.attachment
+  return [
+    row.messageId,
+    attachment.kind,
+    attachment.path,
+    attachment.name ?? null,
+    attachment.mimeType ?? null,
+    attachment.size ?? null,
+    attachment.durationMs ?? null,
+    attachment.width ?? null,
+    attachment.height ?? null,
+  ]
 }
 
 export interface WriteParseResultStats {
@@ -87,10 +144,13 @@ export function writeParseResultToDb(
     const sortedMessages = [...messages].sort((a, b) => a.timestamp - b.timestamp)
     const accountNameTracker = new Map<string, { currentName: string; lastSeenTs: number }>()
     const groupNicknameTracker = new Map<string, { currentName: string; lastSeenTs: number }>()
-    const insertMessage = db.prepare(
-      `INSERT INTO message (sender_id, sender_account_name, sender_group_nickname, ts, type, content, reply_to_message_id, platform_message_id)
+    const messageColumns = `INSERT INTO message (sender_id, sender_account_name, sender_group_nickname, ts, type, content, reply_to_message_id, platform_message_id)
        VALUES (?, ?, ?, ?, ?, ?, ?, ?)`
-    )
+    const insertMessage = db.prepare(messageColumns)
+    // RETURNING costs one materialized row per message, so it is only used for
+    // the messages that actually carry attachments.
+    const insertMessageReturningId = db.prepare(`${messageColumns} RETURNING id`)
+    const attachmentRows: MessageAttachmentInsert[] = []
     const insertNameHistory = db.prepare(
       'INSERT INTO member_name_history (member_id, name_type, name, start_ts, end_ts) VALUES (?, ?, ?, ?, ?)'
     )
@@ -107,7 +167,7 @@ export function writeParseResultToDb(
         continue
       }
 
-      insertMessage.run(
+      const messageParams = [
         senderId,
         message.senderAccountName || null,
         message.senderGroupNickname || null,
@@ -115,8 +175,18 @@ export function writeParseResultToDb(
         message.type,
         message.content,
         message.replyToMessageId || null,
-        message.platformMessageId || null
-      )
+        message.platformMessageId || null,
+      ]
+      if (message.attachments?.length) {
+        const inserted = insertMessageReturningId.get(...messageParams) as { id: number } | undefined
+        if (inserted) {
+          for (const attachment of message.attachments) {
+            attachmentRows.push({ messageId: inserted.id, attachment })
+          }
+        }
+      } else {
+        insertMessage.run(...messageParams)
+      }
       messageCount += 1
 
       trackMemberName({
@@ -140,6 +210,8 @@ export function writeParseResultToDb(
         updateNameHistoryEndTs,
       })
     }
+
+    insertMessageAttachments(db, attachmentRows)
 
     for (const [platformId, tracker] of accountNameTracker) {
       updateMemberAccountName.run(tracker.currentName, platformId)

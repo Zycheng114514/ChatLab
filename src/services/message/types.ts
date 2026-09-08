@@ -5,7 +5,7 @@
  * 来源：window.aiApi 的消息查询方法 / web-api-shim 垫片中的 SQL 查询
  */
 
-import type { MappedMessage } from '@openchatlab/core'
+import type { MappedMessage, MessageAttachment } from '@openchatlab/core'
 
 export interface TimeFilter {
   startTs?: number
@@ -57,4 +57,9 @@ export interface MessageAdapter {
   ): Promise<SearchResult>
 
   getAllRecentMessages(sessionId: string, filter?: TimeFilter, limit?: number): Promise<SearchResult>
+
+  /** Attachments of one page of messages, keyed by message id. Messages without attachments are absent. */
+  getMessageAttachments(sessionId: string, messageIds: number[]): Promise<Record<number, MessageAttachment[]>>
 }
+
+export type { MessageAttachment }

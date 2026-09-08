@@ -34,7 +34,13 @@ import type {
   ParsedMessage,
 } from '../types'
 import { getFileSize, createProgress } from '../utils'
-import { mapChatType, extractPlatformId, detectMessageType, buildContent } from './utils/telegram-utils'
+import {
+  mapChatType,
+  extractPlatformId,
+  detectMessageType,
+  buildContent,
+  buildAttachments,
+} from './utils/telegram-utils'
 import type { TelegramChat } from './utils/telegram-utils'
 
 const { chain } = streamChain
@@ -227,6 +233,7 @@ async function* parseTelegram(options: ParseOptions): AsyncGenerator<ParseEvent,
       type: detectMessageType(msg),
       content: buildContent(msg),
       replyToMessageId: msg.reply_to_message_id ? String(msg.reply_to_message_id) : undefined,
+      attachments: buildAttachments(msg),
     }
 
     messageBatch.push(parsedMsg)

@@ -14,7 +14,7 @@ use serde_json::Value;
 
 use crate::input::KernelInput;
 use crate::jsutil::{extract_name_from_file_path, non_empty_str};
-use crate::protocol::{KernelOutput, NativeMember, NativeMemberRole, NativeMessage};
+use crate::protocol::{KernelOutput, NativeAttachment, NativeMember, NativeMemberRole, NativeMessage};
 use crate::scanner::{for_each_array_element, walk_top_level, ScanError, ScanResult};
 
 /// Shape of `metaJson()` for the chatlab kernel (consumed by the TS adapter).
@@ -79,6 +79,112 @@ fn type_name(value: Option<&Value>) -> &'static str {
         Some(Value::Array(_)) => "array",
         Some(Value::Object(_)) => "object",
     }
+}
+
+const ATTACHMENT_KINDS: [&str; 5] = ["image", "video", "audio", "file", "sticker"];
+
+fn optional_f64(obj: &serde_json::Map<String, Value>, key: &str) -> Option<f64> {
+    match obj.get(key) {
+        Some(Value::Number(n)) => n.as_f64(),
+        _ => None,
+    }
+}
+
+fn optional_non_empty(obj: &serde_json::Map<String, Value>, key: &str) -> Option<String> {
+    match obj.get(key) {
+        Some(Value::String(s)) if !s.is_empty() => Some(s.clone()),
+        _ => None,
+    }
+}
+
+/// Parse `message.attachments`, skipping entries without a valid kind and path.
+/// Mirrors `normalizeAttachments` in formats/utils/attachments.ts.
+fn parse_attachments(value: Option<&Value>) -> Option<Vec<NativeAttachment>> {
+    let entries = match value {
+        Some(Value::Array(entries)) => entries,
+        _ => return None,
+    };
+
+    let mut attachments = Vec::new();
+    for entry in entries {
+        let Some(obj) = entry.as_object() else { continue };
+        let Some(Value::String(kind)) = obj.get("kind") else {
+            continue;
+        };
+        if !ATTACHMENT_KINDS.contains(&kind.as_str()) {
+            continue;
+        }
+        let Some(Value::String(path)) = obj.get("path") else {
+            continue;
+        };
+        if path.is_empty() {
+            continue;
+        }
+
+        attachments.push(NativeAttachment {
+            kind: kind.clone(),
+            path: path.clone(),
+            name: optional_non_empty(obj, "name"),
+            mime_type: optional_non_empty(obj, "mimeType"),
+            size: optional_f64(obj, "size"),
+            duration_ms: optional_f64(obj, "durationMs"),
+            width: optional_f64(obj, "width"),
+            height: optional_f64(obj, "height"),
+        });
+    }
+
+    (!attachments.is_empty()).then_some(attachments)
+}
+
+/// Attachment kind for a media message type (IMAGE / VOICE / VIDEO / FILE).
+fn attachment_kind_for_message_type(message_type: u32) -> Option<&'static str> {
+    match message_type {
+        1 => Some("image"),
+        2 => Some("audio"),
+        3 => Some("video"),
+        4 => Some("file"),
+        _ => None,
+    }
+}
+
+/// A single path: no whitespace, no URL scheme, and a short trailing extension.
+fn looks_like_file_path(value: &str) -> bool {
+    if value.is_empty() || value.contains("://") || value.chars().any(char::is_whitespace) {
+        return false;
+    }
+    let Some(dot) = value.rfind('.') else {
+        return false;
+    };
+    if dot == 0 {
+        return false;
+    }
+    let extension = &value[dot + 1..];
+    !extension.is_empty()
+        && extension.len() <= 8
+        && extension.chars().all(|c| c.is_ascii_alphanumeric())
+}
+
+/// Recover the file of a media message whose converter put the path in `content`
+/// and wrote no `attachments` (issue #170). Mirrors `inferAttachmentFromContent`.
+fn infer_attachment_from_content(
+    message_type: u32,
+    content: Option<&String>,
+) -> Option<Vec<NativeAttachment>> {
+    let kind = attachment_kind_for_message_type(message_type)?;
+    let content = content?;
+    if !looks_like_file_path(content) {
+        return None;
+    }
+    Some(vec![NativeAttachment {
+        kind: kind.to_string(),
+        path: content.clone(),
+        name: None,
+        mime_type: None,
+        size: None,
+        duration_ms: None,
+        width: None,
+        height: None,
+    }])
 }
 
 struct MetaOut {
@@ -350,6 +456,8 @@ pub fn parse_chatlab(
                 sender_group_nickname: group_nickname,
                 timestamp: Some(timestamp),
                 message_type,
+                attachments: parse_attachments(obj.get("attachments"))
+                    .or_else(|| infer_attachment_from_content(message_type, content.as_ref())),
                 content,
                 reply_to_message_id: optional_str(obj, "replyToMessageId", "message")?,
             });
@@ -530,5 +638,95 @@ mod tests {
         assert_eq!(m["groupId"], "");
         assert_eq!(out.messages[0].sender_platform_id, "");
         assert_eq!(out.messages[0].content.as_deref(), Some(""));
+    }
+
+    #[test]
+    fn keeps_valid_attachments_and_skips_malformed_entries() {
+        let doc = r#"{
+      "chatlab": {"version": "0.0.2"},
+      "meta": {"name": "Media", "platform": "weixin", "type": "group"},
+      "members": [{"platformId": "u1", "accountName": "Alice"}],
+      "messages": [
+        {"sender": "u1", "accountName": "Alice", "timestamp": 1, "type": 1, "content": "[图片]",
+         "attachments": [
+           {"kind": "image", "path": "images/a.jpg", "name": "a.jpg", "mimeType": "image/jpeg", "size": 2048, "width": 40, "height": 20},
+           {"kind": "audio", "path": "voice/a.mp3", "durationMs": 1500},
+           {"kind": "nope", "path": "b.bin"},
+           {"kind": "file"},
+           {"path": "c.bin"},
+           "not an object"
+         ]},
+        {"sender": "u1", "accountName": "Alice", "timestamp": 2, "type": 0, "content": "text"},
+        {"sender": "u1", "accountName": "Alice", "timestamp": 3, "type": 1, "content": "x", "attachments": [{"kind": "nope", "path": "b.bin"}]}
+      ]
+    }"#;
+        let out = parse(doc).expect("should parse");
+
+        let attachments = out.messages[0].attachments.as_ref().unwrap();
+        assert_eq!(attachments.len(), 2);
+        assert_eq!(attachments[0].kind, "image");
+        assert_eq!(attachments[0].path, "images/a.jpg");
+        assert_eq!(attachments[0].name.as_deref(), Some("a.jpg"));
+        assert_eq!(attachments[0].mime_type.as_deref(), Some("image/jpeg"));
+        assert_eq!(attachments[0].size, Some(2048.0));
+        assert_eq!(attachments[0].width, Some(40.0));
+        assert_eq!(attachments[0].height, Some(20.0));
+        assert_eq!(attachments[1].kind, "audio");
+        assert_eq!(attachments[1].duration_ms, Some(1500.0));
+
+        assert!(out.messages[1].attachments.is_none());
+        // Every entry was invalid and "x" is not a file path, so nothing is inferred.
+        assert!(out.messages[2].attachments.is_none());
+    }
+
+    #[test]
+    fn infers_an_attachment_from_a_media_message_whose_content_is_a_path() {
+        let doc = r#"{
+      "chatlab": {"version": "0.0.2"},
+      "meta": {"name": "WeFlow", "platform": "weixin", "type": "group"},
+      "members": [{"platformId": "u1", "accountName": "Alice"}],
+      "messages": [
+        {"sender": "u1", "accountName": "Alice", "timestamp": 1, "type": 1, "content": "images/a.jpg"},
+        {"sender": "u1", "accountName": "Alice", "timestamp": 2, "type": 2, "content": "voice/a.mp3"},
+        {"sender": "u1", "accountName": "Alice", "timestamp": 3, "type": 3, "content": "video/a.mp4"},
+        {"sender": "u1", "accountName": "Alice", "timestamp": 4, "type": 4, "content": "docs/a.pdf"},
+        {"sender": "u1", "accountName": "Alice", "timestamp": 5, "type": 1, "content": "http://x/a.jpg"},
+        {"sender": "u1", "accountName": "Alice", "timestamp": 6, "type": 1, "content": "你好 a.jpg"},
+        {"sender": "u1", "accountName": "Alice", "timestamp": 7, "type": 1, "content": "[图片]"},
+        {"sender": "u1", "accountName": "Alice", "timestamp": 8, "type": 1, "content": null},
+        {"sender": "u1", "accountName": "Alice", "timestamp": 9, "type": 0, "content": "a.jpg"},
+        {"sender": "u1", "accountName": "Alice", "timestamp": 10, "type": 1, "content": "images/a.jpg",
+         "attachments": [{"kind": "image", "path": "explicit.jpg"}]}
+      ]
+    }"#;
+        let out = parse(doc).expect("should parse");
+        let kinds: Vec<Option<(&str, &str)>> = out
+            .messages
+            .iter()
+            .map(|message| {
+                message
+                    .attachments
+                    .as_ref()
+                    .map(|list| (list[0].kind.as_str(), list[0].path.as_str()))
+            })
+            .collect();
+
+        assert_eq!(
+            kinds,
+            vec![
+                Some(("image", "images/a.jpg")),
+                Some(("audio", "voice/a.mp3")),
+                Some(("video", "video/a.mp4")),
+                Some(("file", "docs/a.pdf")),
+                None,
+                None,
+                None,
+                None,
+                None,
+                Some(("image", "explicit.jpg")),
+            ]
+        );
+        // The text marker is never rewritten by the heuristic.
+        assert_eq!(out.messages[0].content.as_deref(), Some("images/a.jpg"));
     }
 }

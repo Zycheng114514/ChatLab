@@ -59,6 +59,18 @@ export interface PlatformAdapter {
   showOpenDialog(options: OpenDialogOptions): Promise<OpenDialogResult>
   copyImageToClipboard(dataUrl: string): Promise<{ success: boolean; error?: string }>
 
+  /**
+   * URL the renderer can load a message attachment from.
+   * Null when the platform cannot serve local files (Web WASM).
+   */
+  getAttachmentUrl(sessionId: string, attachmentId: number): string | null
+
+  /**
+   * Reveal an attachment in the OS file manager; false when the file is gone.
+   * Only defined on platforms that have one, so its presence is the capability check.
+   */
+  revealAttachment?(sessionId: string, attachmentId: number): Promise<boolean>
+
   checkUpdate(): Promise<CheckUpdateResult | void>
   performUpdate(): Promise<PerformUpdateResult>
   relaunch(): Promise<void>

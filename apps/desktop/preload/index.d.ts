@@ -211,6 +211,9 @@ interface Api {
     getUiScale: () => Promise<number>
     setUiScale: (scale: number) => Promise<{ success: boolean; error?: string }>
   }
+  attachment: {
+    revealInFolder: (sessionId: string, attachmentId: number) => Promise<boolean>
+  }
 }
 
 /**

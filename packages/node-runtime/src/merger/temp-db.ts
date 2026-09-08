@@ -11,7 +11,12 @@
 import * as fs from 'fs'
 import * as path from 'path'
 import type { DatabaseAdapter } from '@openchatlab/core'
-import { CHATLAB_FORMAT_VERSION, type ParsedMember, type ParsedMessage } from '@openchatlab/shared-types'
+import {
+  CHATLAB_FORMAT_VERSION,
+  type ParsedAttachment,
+  type ParsedMember,
+  type ParsedMessage,
+} from '@openchatlab/shared-types'
 import type { MergerDataSource, MergerInputMessage, MergerSourceMeta } from './index'
 import type { MergerMember } from '@openchatlab/core'
 
@@ -43,7 +48,8 @@ export const TEMP_DB_SCHEMA = `
     timestamp INTEGER NOT NULL,
     type INTEGER NOT NULL,
     content TEXT,
-    reply_to_message_id TEXT
+    reply_to_message_id TEXT,
+    attachments TEXT
   );
 
   CREATE INDEX IF NOT EXISTS idx_message_ts ON message(timestamp);
@@ -92,8 +98,8 @@ export class TempDbWriter {
     const insert = this.db.prepare(
       `INSERT INTO message (
          platform_message_id, sender_platform_id, sender_account_name, sender_group_nickname,
-         timestamp, type, content, reply_to_message_id
-       ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)`
+         timestamp, type, content, reply_to_message_id, attachments
+       ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`
     )
     const memberInsert = this.db.prepare(
       'INSERT OR IGNORE INTO member (platform_id, account_name, group_nickname, avatar) VALUES (?, ?, ?, ?)'
@@ -111,7 +117,8 @@ export class TempDbWriter {
         msg.timestamp,
         msg.type,
         msg.content || null,
-        msg.replyToMessageId || null
+        msg.replyToMessageId || null,
+        msg.attachments?.length ? JSON.stringify(msg.attachments) : null
       )
       this.messageCount++
     }
@@ -132,6 +139,11 @@ export class TempDbWriter {
     }
     this.db.close()
   }
+}
+
+function parseAttachments(value: string | null): ParsedAttachment[] | undefined {
+  if (!value) return undefined
+  return JSON.parse(value) as ParsedAttachment[]
 }
 
 // ==================== TempDbReader ====================
@@ -197,7 +209,7 @@ export class TempDbReader {
   streamMessages(batchSize: number, callback: (messages: ParsedMessage[]) => void): void {
     const stmt = this.db.prepare(`
       SELECT platform_message_id, sender_platform_id, sender_account_name, sender_group_nickname,
-             timestamp, type, content, reply_to_message_id
+             timestamp, type, content, reply_to_message_id, attachments
       FROM message ORDER BY timestamp ASC, id ASC LIMIT ? OFFSET ?
     `)
 
@@ -212,6 +224,7 @@ export class TempDbReader {
         type: number
         content: string | null
         reply_to_message_id: string | null
+        attachments: string | null
       }>
 
       if (rows.length === 0) break
@@ -225,6 +238,7 @@ export class TempDbReader {
         type: r.type as ParsedMessage['type'],
         content: r.content,
         replyToMessageId: r.reply_to_message_id || undefined,
+        attachments: parseAttachments(r.attachments),
       }))
 
       callback(messages)
@@ -236,7 +250,7 @@ export class TempDbReader {
     const rows = this.db
       .prepare(
         `SELECT platform_message_id, sender_platform_id, sender_account_name, sender_group_nickname,
-                timestamp, type, content, reply_to_message_id
+                timestamp, type, content, reply_to_message_id, attachments
          FROM message ORDER BY timestamp ASC, id ASC`
       )
       .all() as Array<{
@@ -248,6 +262,7 @@ export class TempDbReader {
       type: number
       content: string | null
       reply_to_message_id: string | null
+      attachments: string | null
     }>
 
     return rows.map((r) => ({
@@ -259,6 +274,7 @@ export class TempDbReader {
       type: r.type as ParsedMessage['type'],
       content: r.content,
       replyToMessageId: r.reply_to_message_id || undefined,
+      attachments: parseAttachments(r.attachments),
     }))
   }
 
@@ -309,6 +325,7 @@ function createDataSourceFromReader(reader: TempDbReader): MergerDataSource {
             type: msg.type,
             content: msg.content,
             replyToMessageId: msg.replyToMessageId,
+            attachments: msg.attachments,
           }))
         )
       })

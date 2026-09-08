@@ -31,6 +31,7 @@ import {
   type ParseProgress,
 } from '@openchatlab/parser'
 import * as fs from 'fs'
+import * as path from 'path'
 import { performance } from 'node:perf_hooks'
 import { MessageBatchInserter, type MessageInsertRow } from './message-batch-inserter'
 import { createMessageDedupState, registerMessageAndCheckDuplicate, type DedupMessage } from './message-deduplicator'
@@ -325,6 +326,8 @@ async function streamImportSingle(
   logger?.init(sessionId)
 
   logger?.info(`File path: ${filePath}`)
+  // Attachment paths in an export are relative to the export file, not to the preprocessed temp copy.
+  const sourceDir = path.dirname(path.resolve(filePath))
   logger?.info(`Detected format: ${formatFeature.name} (${formatFeature.id})`)
   logger?.info(`Platform: ${formatFeature.platform}`)
   logger?.perf('Import started', 0)
@@ -381,7 +384,8 @@ async function streamImportSingle(
         ok: true as const,
         db,
         insertMeta: db.prepare(
-          `INSERT INTO meta (name, platform, type, imported_at, group_id, group_avatar, owner_id) VALUES (?, ?, ?, ?, ?, ?, ?)`
+          `INSERT INTO meta (name, platform, type, imported_at, group_id, group_avatar, owner_id, source_dir)
+           VALUES (?, ?, ?, ?, ?, ?, ?, ?)`
         ),
         insertMember: db.prepare(
           `INSERT INTO member (platform_id, account_name, group_nickname, aliases, avatar, roles)
@@ -586,7 +590,8 @@ async function streamImportSingle(
                 Math.floor(Date.now() / 1000),
                 meta.groupId || null,
                 meta.groupAvatar || null,
-                meta.ownerId || null
+                meta.ownerId || null,
+                sourceDir
               )
               metaInserted = true
             }
@@ -689,6 +694,7 @@ async function streamImportSingle(
                 content: dedupMessage.content,
                 replyToMessageId: msg.replyToMessageId || null,
                 platformMessageId: msg.platformMessageId || null,
+                attachments: msg.attachments,
               })
               messageCountInBatch++
               totalMessageCount++

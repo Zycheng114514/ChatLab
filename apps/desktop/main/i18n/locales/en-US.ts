@@ -82,6 +82,9 @@ export default {
     migrationV11Desc: 'Add a full-text index for message search',
     migrationV11Message:
       'Build a full-text index over message content to speed up keyword search; chat data is unchanged',
+    migrationV12Desc: 'Add storage for message attachments',
+    migrationV12Message:
+      'Add a table for media file information so imported images, voice messages and files can be shown; existing messages are unchanged',
     integrityError:
       'Database structure is incomplete: missing meta table. Please delete this database file and re-import.',
     checkFailed: 'Database check failed: {{error}}',

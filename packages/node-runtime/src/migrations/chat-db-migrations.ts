@@ -5,7 +5,7 @@
  * Migration scripts use only DatabaseAdapter — no Electron or Node-specific APIs.
  */
 
-import { ensureMessageSearchIndex } from '@openchatlab/core'
+import { ensureAttachmentSchema, ensureMessageSearchIndex } from '@openchatlab/core'
 import type { DatabaseAdapter } from '@openchatlab/core'
 import type { PathProvider } from '@openchatlab/core'
 import type { Migration as CoreMigration } from '@openchatlab/core'
@@ -395,6 +395,13 @@ export function getChatDbMigrations(): CoreMigration[] {
       description: 'Add trigram full-text index for message search',
       up: (db: DatabaseAdapter) => {
         ensureMessageSearchIndex(db)
+      },
+    },
+    {
+      version: 12,
+      description: 'Add message_attachment table and meta.source_dir',
+      up: (db: DatabaseAdapter) => {
+        ensureAttachmentSchema(db)
       },
     },
   ]

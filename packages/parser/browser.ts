@@ -24,6 +24,11 @@ export {
   type WeFlowJsonParseOptions,
   type WeFlowJsonParseResult,
 } from './src/browser/weflow'
+export {
+  inferAttachmentFromContent,
+  normalizeAttachments,
+  type NormalizedAttachments,
+} from './src/formats/utils/attachments'
 export { rebaseChatLabDemoDocuments, type RebasedChatLabDemoDocuments } from './src/chatlab-demo-timeline'
 export {
   PARSER_FORMAT_IDS,

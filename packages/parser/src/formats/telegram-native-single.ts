@@ -16,7 +16,13 @@ import type {
   Parser,
 } from '../types'
 import { createProgress, getFileSize } from '../utils'
-import { buildContent, detectMessageType, extractPlatformId, mapChatType } from './utils/telegram-utils'
+import {
+  buildAttachments,
+  buildContent,
+  detectMessageType,
+  extractPlatformId,
+  mapChatType,
+} from './utils/telegram-utils'
 import type { TelegramMessage } from './utils/telegram-utils'
 
 const { parser } = streamJson
@@ -179,6 +185,7 @@ function parseTelegramMessage(message: TelegramMessage, memberMap: Map<string, P
     type: detectMessageType(message),
     content: buildContent(message),
     replyToMessageId: message.reply_to_message_id ? String(message.reply_to_message_id) : undefined,
+    attachments: buildAttachments(message),
   }
 }
 

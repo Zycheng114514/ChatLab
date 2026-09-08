@@ -260,6 +260,24 @@ export interface ParsedMember {
   roles?: MemberRole[]
 }
 
+/** Attachment kinds carried by the ChatLab format's `attachments` field. */
+export const ATTACHMENT_KINDS = ['image', 'video', 'audio', 'file', 'sticker'] as const
+
+export type AttachmentKind = (typeof ATTACHMENT_KINDS)[number]
+
+export interface ParsedAttachment {
+  kind: AttachmentKind
+  /** Path relative to the export file's directory, an absolute path, or an http(s) URL. */
+  path: string
+  name?: string
+  mimeType?: string
+  /** File size in bytes. */
+  size?: number
+  durationMs?: number
+  width?: number
+  height?: number
+}
+
 export interface ParsedMessage {
   platformMessageId?: string
   senderPlatformId: string
@@ -269,6 +287,7 @@ export interface ParsedMessage {
   type: MessageType
   content: string | null
   replyToMessageId?: string
+  attachments?: ParsedAttachment[]
 }
 
 // ==================== Preferences (跨端偏好设置) ====================

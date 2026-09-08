@@ -13,7 +13,14 @@ import streamJson from 'stream-json'
 import pickModule from 'stream-json/filters/Pick.js'
 import streamValuesModule from 'stream-json/streamers/StreamValues.js'
 import streamChain from 'stream-chain'
-import { KNOWN_PLATFORMS, ChatType, MessageType, type MemberRole } from '@openchatlab/shared-types'
+import {
+  KNOWN_PLATFORMS,
+  ChatType,
+  MessageType,
+  type AttachmentKind,
+  type MemberRole,
+  type ParsedAttachment,
+} from '@openchatlab/shared-types'
 import { PARSER_FORMAT_IDS } from '../format-ids'
 import type {
   FormatFeature,
@@ -155,6 +162,29 @@ function mapDiscordMessageType(type: string): MessageType {
     default:
       return MessageType.OTHER
   }
+}
+
+/**
+ * 附件类型：与 getMessageTypeFromAttachment 使用同一组扩展名
+ */
+function getAttachmentKind(fileName: string): AttachmentKind {
+  if (/\.(png|jpg|jpeg|gif|webp|bmp|svg)$/i.test(fileName)) return 'image'
+  if (/\.(mp4|webm|mov|avi|mkv)$/i.test(fileName)) return 'video'
+  if (/\.(mp3|wav|ogg|flac|m4a)$/i.test(fileName)) return 'audio'
+  return 'file'
+}
+
+/**
+ * 构建附件列表
+ * DiscordChatExporter 下载媒体后 url 为相对路径，否则为 Discord CDN 的 http URL
+ */
+function buildAttachments(attachments: DiscordAttachment[]): ParsedAttachment[] {
+  return attachments.map((attachment) => ({
+    kind: getAttachmentKind(attachment.fileName),
+    path: attachment.url,
+    name: attachment.fileName,
+    size: attachment.fileSizeBytes,
+  }))
 }
 
 /**
@@ -395,6 +425,7 @@ async function* parseDiscordExporter(options: ParseOptions): AsyncGenerator<Pars
         type: messageType,
         content: content || null,
         replyToMessageId: msg.reference?.messageId || undefined,
+        attachments: msg.attachments?.length ? buildAttachments(msg.attachments) : undefined,
       })
 
       messagesProcessed++

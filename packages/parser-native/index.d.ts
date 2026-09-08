@@ -25,6 +25,19 @@ export declare class NativeParser {
   summaryJson(): string
 }
 
+export interface NativeAttachment {
+  /** One of image / video / audio / file / sticker. */
+  kind: string
+  /** Relative to the export file's directory, an absolute path, or an http(s) URL. */
+  path: string
+  name?: string
+  mimeType?: string
+  size?: number
+  durationMs?: number
+  width?: number
+  height?: number
+}
+
 export interface NativeMember {
   platformId: string
   accountName: string
@@ -51,6 +64,8 @@ export interface NativeMessage {
   messageType: number
   content?: string
   replyToMessageId?: string
+  /** None when the message carried no usable attachment. */
+  attachments?: Array<NativeAttachment>
 }
 
 export interface NativeParseProgress {

@@ -108,6 +108,51 @@ Here's a **minimal** ChatLab format example with only required fields:
 | `timestamp`     | number         | ✅       | Unix timestamp in seconds             |
 | `type`          | number         | ✅       | Message type (see table below)        |
 | `content`       | string \| null | ✅       | Message content (`null` for non-text) |
+| `attachments`   | Attachment[]   | -        | Media attachments (see below)         |
+
+#### Attachments (attachments)
+
+Media messages (images, voice, video, files) carry their original file information in `attachments`. A single message can have multiple attachments, for example several images sent at once.
+
+| Field        | Type   | Required | Description                                                                       |
+| ------------ | ------ | -------- | --------------------------------------------------------------------------------- |
+| `kind`       | string | ✅       | Attachment kind: `image` / `video` / `audio` / `file` / `sticker`                 |
+| `path`       | string | ✅       | Path relative to the export file's directory, an absolute path, or an http(s) URL |
+| `name`       | string | -        | Display file name; defaults to the last segment of `path`                         |
+| `mimeType`   | string | -        | MIME type, e.g. `image/jpeg`                                                      |
+| `size`       | number | -        | File size in bytes                                                                |
+| `durationMs` | number | -        | Audio/video duration in milliseconds                                              |
+| `width`      | number | -        | Image/video width in pixels                                                       |
+| `height`     | number | -        | Image/video height in pixels                                                      |
+
+`content` and `attachments` are independent: a media message can keep both its text marker (such as `[Image]`) and its structured attachments.
+
+::: tip Suggestion
+ChatLab does not copy media files; it stores the attachment path plus the directory the export file was imported from. Prefer relative paths and keep media files in the same directory tree as the export file, so the whole folder stays resolvable after it is moved. Once a file is moved or deleted, the attachment still shows its name but can no longer be opened.
+:::
+
+**Attachment example:**
+
+```json
+{
+  "sender": "abc123",
+  "accountName": "John",
+  "timestamp": 1703001620,
+  "type": 1,
+  "content": "[Image]",
+  "attachments": [
+    {
+      "kind": "image",
+      "path": "images/IMG_0001.jpg",
+      "name": "IMG_0001.jpg",
+      "mimeType": "image/jpeg",
+      "size": 204800,
+      "width": 1920,
+      "height": 1080
+    }
+  ]
+}
+```
 
 ---
 

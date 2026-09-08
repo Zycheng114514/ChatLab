@@ -147,6 +147,7 @@ ChatLab 定义了一套标准的聊天记录数据交换格式，用于支持多
 | `content`           | string \| null | ✅   | 消息内容（非文本消息可为 `null`） |
 | `platformMessageId` | string         | -    | 消息的平台原始 ID                 |
 | `replyToMessageId`  | string         | -    | 回复的目标消息 ID                 |
+| `attachments`       | Attachment[]   | -    | 媒体附件列表（见下方）            |
 
 #### 消息 ID 与回复关系说明
 
@@ -162,6 +163,51 @@ ChatLab 定义了一套标准的聊天记录数据交换格式，用于支持多
 - 通过与其他消息的 `platformMessageId` 关联，可查询被回复消息的内容和发送者
 - 仅当消息是回复类型时才有意义
 - 如果平台不支持或数据不包含回复关系，可省略此字段
+
+#### 附件 (attachments)
+
+图片、语音、视频、文件等媒体消息通过 `attachments` 携带原始文件信息。一条消息可以有多个附件（例如一次发送多张图片）。
+
+| 字段         | 类型   | 必填 | 说明                                                       |
+| ------------ | ------ | ---- | ---------------------------------------------------------- |
+| `kind`       | string | ✅   | 附件类型：`image` / `video` / `audio` / `file` / `sticker` |
+| `path`       | string | ✅   | 相对导出文件所在目录的路径，或绝对路径，或 http(s) URL     |
+| `name`       | string | -    | 显示用文件名，省略时取 `path` 的最后一段                   |
+| `mimeType`   | string | -    | MIME 类型，如 `image/jpeg`                                 |
+| `size`       | number | -    | 文件大小（字节）                                           |
+| `durationMs` | number | -    | 音频/视频时长（毫秒）                                      |
+| `width`      | number | -    | 图片/视频宽度（像素）                                      |
+| `height`     | number | -    | 图片/视频高度（像素）                                      |
+
+`content` 与 `attachments` 相互独立：媒体消息可以同时保留 `[图片]` 之类的文本标记和结构化附件。
+
+::: tip 提示
+ChatLab 不复制媒体文件，只记录附件路径和导入时导出文件所在的目录。推荐使用相对路径，并把媒体文件与导出文件放在同一目录树下，这样整个目录移动后仍然可以解析。文件被移动或删除后，附件仍会显示文件名，但无法打开。
+:::
+
+**附件示例：**
+
+```json
+{
+  "platformMessageId": "msg_003",
+  "sender": "abc123",
+  "accountName": "张三",
+  "timestamp": 1703001620,
+  "type": 1,
+  "content": "[图片]",
+  "attachments": [
+    {
+      "kind": "image",
+      "path": "images/IMG_0001.jpg",
+      "name": "IMG_0001.jpg",
+      "mimeType": "image/jpeg",
+      "size": 204800,
+      "width": 1920,
+      "height": 1080
+    }
+  ]
+}
+```
 
 ---
 

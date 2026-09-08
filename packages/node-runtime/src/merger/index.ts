@@ -17,7 +17,7 @@ import {
   type MergedMember,
   type MergedMessage,
 } from '@openchatlab/core'
-import { CHATLAB_FORMAT_VERSION } from '@openchatlab/shared-types'
+import { CHATLAB_FORMAT_VERSION, type ParsedAttachment } from '@openchatlab/shared-types'
 import {
   createMessageDedupState,
   generateFallbackMessageKey,
@@ -28,11 +28,13 @@ import {
 export interface MergerInputMessage extends MergerMessage {
   platformMessageId?: string
   replyToMessageId?: string
+  attachments?: ParsedAttachment[]
 }
 
 export interface ChatLabMergedMessage extends MergedMessage {
   platformMessageId?: string
   replyToMessageId?: string
+  attachments?: ParsedAttachment[]
 }
 
 // ==================== Data source abstraction ====================
@@ -408,6 +410,7 @@ export function buildMergedOutput(
           type: msg.type,
           content: msg.content,
           replyToMessageId,
+          attachments: msg.attachments,
         })
         if (!platformMessageId) {
           const retainedIndexes = fallbackOnlyMessageIndexes.get(fallbackKey) ?? []
