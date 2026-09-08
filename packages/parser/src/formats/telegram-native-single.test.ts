@@ -9,7 +9,18 @@ import { mock, test } from 'node:test'
 import type { ParseEvent } from '../types'
 import { parser_ } from './telegram-native-single'
 
+const NATIVE_SWITCH = 'CHATLAB_DISABLE_NATIVE_PERF'
+
 test('continues parsing Telegram messages after emitting a batch before the source finishes', async (t) => {
+  // parser_ is native-first; this test covers the TS stream-json pipeline it
+  // falls back to, which is what streams batches before the source ends.
+  const savedNativeSwitch = process.env[NATIVE_SWITCH]
+  process.env[NATIVE_SWITCH] = '1'
+  t.after(() => {
+    if (savedNativeSwitch === undefined) delete process.env[NATIVE_SWITCH]
+    else process.env[NATIVE_SWITCH] = savedNativeSwitch
+  })
+
   const dir = mkdtempSync(join(tmpdir(), 'chatlab-telegram-stream-'))
   const filePath = join(dir, 'result.json')
   writeFileSync(filePath, '{}', 'utf-8')

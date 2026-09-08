@@ -93,5 +93,8 @@ function resolveNativeKernelId(formatId: string): string {
   const canonicalId = normalizeParserFormatId(formatId)
   if (canonicalId === PARSER_FORMAT_IDS.QQ_SHUAKAMI) return 'shuakami-qq-exporter'
   if (canonicalId === PARSER_FORMAT_IDS.ECHOTRACE) return 'weflow'
+  if (canonicalId === PARSER_FORMAT_IDS.TELEGRAM_NATIVE || canonicalId === PARSER_FORMAT_IDS.TELEGRAM_NATIVE_SINGLE) {
+    return 'telegram'
+  }
   return canonicalId
 }
