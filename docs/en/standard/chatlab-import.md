@@ -426,11 +426,11 @@ Current version: **only one write import task is allowed at a time per user data
 
 ---
 
-## Media Attachments (Reserved)
+## Media Attachments
 
-The current version focuses on stable text message import. `attachments` is a reserved protocol field: callers may include it in messages, but ChatLab does not guarantee full persistence or rendering in this version.
+Messages may carry an `attachments` array. ChatLab persists every attachment and shows attachment chips in the chat record. See [ChatLab Format Specification](./chatlab-format.md#attachments-attachments) for the field structure.
 
-See [ChatLab Format Specification](./chatlab-format.md) for the reserved field structure.
+A push import has no corresponding local export directory, so `path` must be an absolute path or an http(s) URL; a relative path is stored as-is but ChatLab cannot locate the file.
 
 ---
 
