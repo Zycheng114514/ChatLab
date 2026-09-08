@@ -51,3 +51,22 @@ test('accepts supported desktop UI scales and rejects out-of-range or non-numeri
     assert.throws(() => configSchema.parse({ desktop: { ui_scale: uiScale } }))
   }
 })
+
+test('defaults transcription to the base model and automatic language', () => {
+  const config = configSchema.parse({})
+
+  assert.equal(config.transcription.model, 'base')
+  assert.equal(config.transcription.language, 'auto')
+})
+
+test('accepts supported transcription models and languages and rejects the rest', () => {
+  for (const model of ['tiny', 'base', 'small']) {
+    assert.equal(configSchema.parse({ transcription: { model } }).transcription.model, model)
+  }
+  for (const language of ['auto', 'zh', 'en']) {
+    assert.equal(configSchema.parse({ transcription: { language } }).transcription.language, language)
+  }
+
+  assert.throws(() => configSchema.parse({ transcription: { model: 'large' } }))
+  assert.throws(() => configSchema.parse({ transcription: { language: 'ja' } }))
+})

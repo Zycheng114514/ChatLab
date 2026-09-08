@@ -13,7 +13,15 @@
 
 import fs from 'node:fs/promises'
 import path from 'node:path'
-import { applyTranscript, listPendingAudioAttachments, type DatabaseAdapter } from '@openchatlab/core'
+import {
+  applyTranscript,
+  getMessageAttachmentById,
+  listPendingAudioAttachments,
+  resolveTranscriptionLanguage,
+  type DatabaseAdapter,
+  type ResolvedTranscriptionLanguage,
+  type TranscriptionLanguage,
+} from '@openchatlab/core'
 import { appLogger } from '../logging/app-logger'
 import { resolveAttachmentFile } from '../services/attachment-service'
 import {
@@ -24,7 +32,7 @@ import {
 import type { SemanticIndexModelDownloadSource } from '../semantic-index/config'
 import { findAudioDecoder, type AudioDecoder } from './decoders'
 import { DEFAULT_TRANSCRIPTION_PROFILE_ID, TRANSCRIPTION_PROFILES, type TranscriptionProfileId } from './profiles'
-import { resampleToMono16k } from './resample'
+import { resampleToMono16k, WHISPER_SAMPLE_RATE } from './resample'
 
 const LOG_SCOPE = 'transcription'
 
@@ -32,11 +40,20 @@ const LOG_SCOPE = 'transcription'
 export const TRANSCRIPTION_MODEL_CACHE_DIR_ENV = 'CHATLAB_MODEL_CACHE_DIR'
 
 /**
- * `auto` leaves the language token to Whisper. Transformers.js 4.2.0 has no
- * language detection: it warns and falls back to English, so Chinese sessions
- * should pass `zh` explicitly.
+ * Whisper never sees `auto`: Transformers.js 4.2.0 has no language detection and
+ * silently transcribes as English, so every entry point resolves the language
+ * against the session's messages first (`resolveTranscriptionLanguage`).
  */
-export type TranscriptionLanguage = 'auto' | 'zh' | 'en'
+export type { ResolvedTranscriptionLanguage, TranscriptionLanguage }
+
+/**
+ * Longest PCM buffer accepted in one call: 30 minutes at 16 kHz.
+ *
+ * A single voice message is seconds long; anything at this scale is a mistake
+ * (or a crafted request), and 30 minutes of Float32 samples is already 115 MB in
+ * memory. Callers get an error instead of silently transcribing a truncated clip.
+ */
+export const MAX_TRANSCRIPTION_PCM_SAMPLES = 30 * 60 * WHISPER_SAMPLE_RATE
 
 export interface CreateTranscriberOptions {
   loadTransformers: LoadTransformers
@@ -55,7 +72,10 @@ export interface TranscribePcmResult {
 
 export interface Transcriber {
   readonly modelId: string
-  transcribePcm(pcm16k: Float32Array, options?: { language?: TranscriptionLanguage }): Promise<TranscribePcmResult>
+  transcribePcm(
+    pcm16k: Float32Array,
+    options: { language: ResolvedTranscriptionLanguage }
+  ): Promise<TranscribePcmResult>
   dispose(): Promise<void>
 }
 
@@ -101,11 +121,11 @@ export function createTranscriber(options: CreateTranscriberOptions): Transcribe
   return {
     modelId: profile.modelId,
 
-    async transcribePcm(pcm16k, { language = 'auto' } = {}) {
+    async transcribePcm(pcm16k, { language }) {
       const pipeline = await getPipeline()
       const startedAt = Date.now()
       const output = await pipeline(pcm16k, {
-        ...(language === 'auto' ? {} : { language }),
+        language,
         task: 'transcribe',
         chunk_length_s: 30,
         stride_length_s: 5,
@@ -234,7 +254,10 @@ export function planSessionTranscription(db: DatabaseAdapter, attachmentIds?: re
 export async function transcribeSessionAttachments(
   options: TranscribeSessionAttachmentsOptions
 ): Promise<TranscribeSessionAttachmentsResult> {
-  const { db, transcriber, sessionId, language = 'auto', onProgress } = options
+  const { db, transcriber, sessionId, onProgress } = options
+  // Resolve `auto` once per run: the answer is the same for every attachment in
+  // the session, and Whisper must never be handed `auto`.
+  const language = resolveTranscriptionLanguage(db, options.language ?? 'auto')
   const { pending, skipped } = planSessionTranscription(db, options.attachmentIds)
   const failed: TranscriptionFailure[] = []
   let transcribed = 0
@@ -293,6 +316,80 @@ export async function transcribeSessionAttachments(
     elapsedMs: Date.now() - startedAt,
   })
   return { transcribed, skipped, failed }
+}
+
+// ---------- Single attachment (PCM decoded elsewhere) ----------
+
+/** Why a PCM transcription request was rejected before any inference ran. */
+export type TranscribeAttachmentPcmErrorCode = 'attachment-not-found' | 'not-audio' | 'pcm-too-long'
+
+export class TranscribeAttachmentPcmError extends Error {
+  readonly code: TranscribeAttachmentPcmErrorCode
+
+  constructor(code: TranscribeAttachmentPcmErrorCode, message: string) {
+    super(message)
+    this.name = 'TranscribeAttachmentPcmError'
+    this.code = code
+  }
+}
+
+export interface TranscribeAttachmentPcmOptions {
+  db: DatabaseAdapter
+  transcriber: Pick<Transcriber, 'modelId' | 'transcribePcm'>
+  attachmentId: number
+  /** Mono 16 kHz samples; the browser runtimes decode with Web Audio. */
+  pcm16k: Float32Array
+  language?: TranscriptionLanguage
+}
+
+export interface TranscribeAttachmentPcmResult {
+  text: string
+  /** Whether `message.content` was replaced by the labelled transcript. */
+  contentUpdated: boolean
+}
+
+/**
+ * Transcribe one attachment from PCM that was decoded outside this process.
+ *
+ * The desktop renderer and the CLI Web page decode audio with Web Audio (which
+ * reads mp3/m4a/ogg that the Node decoders cannot) and send the samples here, so
+ * this is the same write path as the headless queue minus the file reading.
+ *
+ * An empty transcript (silence) is still recorded on the attachment row so the
+ * queue does not offer it again, but it never replaces the message text.
+ */
+export async function transcribeAttachmentPcm(
+  options: TranscribeAttachmentPcmOptions
+): Promise<TranscribeAttachmentPcmResult> {
+  const { db, transcriber, attachmentId, pcm16k } = options
+
+  const attachment = getMessageAttachmentById(db, attachmentId)
+  if (!attachment) {
+    throw new TranscribeAttachmentPcmError('attachment-not-found', `Attachment ${attachmentId} not found`)
+  }
+  if (attachment.kind !== 'audio') {
+    throw new TranscribeAttachmentPcmError(
+      'not-audio',
+      `Attachment ${attachmentId} is a ${attachment.kind} attachment, not audio`
+    )
+  }
+  if (pcm16k.length > MAX_TRANSCRIPTION_PCM_SAMPLES) {
+    throw new TranscribeAttachmentPcmError(
+      'pcm-too-long',
+      `Audio is longer than the ${MAX_TRANSCRIPTION_PCM_SAMPLES / WHISPER_SAMPLE_RATE / 60} minute limit ` +
+        `(${pcm16k.length} samples at ${WHISPER_SAMPLE_RATE} Hz)`
+    )
+  }
+
+  const language = resolveTranscriptionLanguage(db, options.language ?? 'auto')
+  const { text } = await transcriber.transcribePcm(pcm16k, { language })
+  const { contentUpdated } = applyTranscript(db, {
+    attachmentId,
+    text,
+    model: transcriber.modelId,
+    now: Date.now(),
+  })
+  return { text, contentUpdated }
 }
 
 function errorMessage(error: unknown): string {

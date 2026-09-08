@@ -8,6 +8,7 @@
 
 import path from 'node:path'
 import type { Command } from 'commander'
+import { resolveTranscriptionLanguage } from '@openchatlab/core'
 import {
   SemanticIndexConfigStore,
   SEMANTIC_INDEX_CONFIG_FILE,
@@ -21,6 +22,7 @@ import {
   type TranscriptionProfileId,
   type TranscriptionSkip,
 } from '@openchatlab/node-runtime'
+import { loadConfig } from '@openchatlab/config'
 import { initRuntime } from '../runtime'
 import { resolveCliLocalEmbeddingRuntimeConfig } from '../semantic-index/local-runtime'
 
@@ -33,8 +35,8 @@ const SKIP_REASON_TEXT: Record<TranscriptionSkip['reason'], string> = {
 
 interface TranscribeCommandOptions {
   session: string
-  model: string
-  language: string
+  model?: string
+  language?: string
   attachment?: string[]
   dryRun?: boolean
 }
@@ -44,8 +46,11 @@ export function registerTranscribeCommand(program: Command): void {
     .command('transcribe')
     .description('Transcribe the voice attachments of a session with a local Whisper model')
     .requiredOption('--session <id>', 'Session ID whose voice attachments should be transcribed')
-    .option(`--model <${TRANSCRIPTION_PROFILE_IDS.join('|')}>`, 'Whisper model size', 'base')
-    .option(`--language <${LANGUAGES.join('|')}>`, 'Spoken language; auto leaves it to the model', 'auto')
+    .option(`--model <${TRANSCRIPTION_PROFILE_IDS.join('|')}>`, 'Whisper model size (default: [transcription] model)')
+    .option(
+      `--language <${LANGUAGES.join('|')}>`,
+      'Spoken language; auto reads it off the session (default: [transcription] language)'
+    )
     .option('--attachment <id...>', 'Restrict the run to these attachment IDs')
     .option('--dry-run', 'List what would be transcribed and why the rest is skipped')
     .action(async (options: TranscribeCommandOptions) => {
@@ -59,8 +64,10 @@ export function registerTranscribeCommand(program: Command): void {
 }
 
 async function runTranscribe(options: TranscribeCommandOptions): Promise<void> {
-  const profile = parseProfile(options.model)
-  const language = parseLanguage(options.language)
+  // Unset flags fall back to the shared setting the desktop app and CLI Web write.
+  const configured = loadConfig().transcription
+  const profile = parseProfile(options.model ?? configured.model)
+  const language = parseLanguage(options.language ?? configured.language)
   const attachmentIds = parseAttachmentIds(options.attachment)
 
   const { pathProvider, dbManager } = initRuntime()
@@ -69,6 +76,8 @@ async function runTranscribe(options: TranscribeCommandOptions): Promise<void> {
     const db = dbManager.openWritable(options.session)
     if (!db) throw new Error(`Session ${options.session} not found`)
 
+    // Resolve `auto` here so the summary line names the language Whisper is told.
+    const resolvedLanguage = resolveTranscriptionLanguage(db, language)
     const plan = planSessionTranscription(db, attachmentIds)
     printSkipped(plan.skipped)
 
@@ -95,14 +104,14 @@ async function runTranscribe(options: TranscribeCommandOptions): Promise<void> {
       profile,
     })
 
-    console.log(`Transcribing ${plan.pending.length} attachment(s) with ${transcriber.modelId} (${language})`)
+    console.log(`Transcribing ${plan.pending.length} attachment(s) with ${transcriber.modelId} (${resolvedLanguage})`)
     try {
       const result = await transcribeSessionAttachments({
         db,
         transcriber,
         sessionId: options.session,
         attachmentIds,
-        language,
+        language: resolvedLanguage,
         // stderr: stdout stays a clean summary for agent/script consumers.
         onProgress: (progress) =>
           console.error(`  [${progress.completed}/${progress.total}] #${progress.attachmentId} ${progress.status}`),

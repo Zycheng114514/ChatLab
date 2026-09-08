@@ -21,11 +21,18 @@ export {
   createTranscriber,
   planSessionTranscription,
   resolveTranscriptionModelCacheDir,
+  transcribeAttachmentPcm,
+  TranscribeAttachmentPcmError,
   transcribeSessionAttachments,
+  MAX_TRANSCRIPTION_PCM_SAMPLES,
   TRANSCRIPTION_MODEL_CACHE_DIR_ENV,
 } from './service'
 export type {
   CreateTranscriberOptions,
+  ResolvedTranscriptionLanguage,
+  TranscribeAttachmentPcmErrorCode,
+  TranscribeAttachmentPcmOptions,
+  TranscribeAttachmentPcmResult,
   TranscribePcmResult,
   TranscribeSessionAttachmentsOptions,
   TranscribeSessionAttachmentsResult,
