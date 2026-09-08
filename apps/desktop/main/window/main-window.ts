@@ -48,8 +48,10 @@ export async function createMainWindow(paths: MainWindowPaths): Promise<BrowserW
   currentMainWindow = win
 
   // Chromium may restore a persisted per-origin zoom level, which overrides zoomFactor.
+  // Read the config again here: the renderer is reloaded after a crash, and the
+  // setting may have changed since the window was created.
   win.webContents.on('did-finish-load', () => {
-    win.webContents.setZoomFactor(uiScale)
+    win.webContents.setZoomFactor(loadConfig().desktop.ui_scale)
   })
 
   win.once('ready-to-show', () => {
