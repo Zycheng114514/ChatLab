@@ -1,4 +1,10 @@
-import { CHAT_DB_INDEXES, CHAT_DB_TABLES, CURRENT_SCHEMA_VERSION, type DatabaseAdapter } from '@openchatlab/core'
+import {
+  CHAT_DB_INDEXES,
+  CHAT_DB_TABLES,
+  CURRENT_SCHEMA_VERSION,
+  ensureAttachmentSchema,
+  type DatabaseAdapter,
+} from '@openchatlab/core'
 import type { OpenDatabaseResult } from '../rpc/protocol'
 import { WebRuntimeError } from '../runtime-error'
 import type { WorkspaceDatabaseStage } from '../storage/workspace-database'
@@ -51,6 +57,9 @@ export class BrowserDatabaseRuntime {
         onStage?.('schema-initializing')
         database.exec(CHAT_DB_TABLES)
         database.exec(CHAT_DB_INDEXES)
+        // The browser has no migration runner: replaying the DDL creates new tables but
+        // cannot add a column to a table an older build already created.
+        ensureAttachmentSchema(database)
         onStage?.('schema-ready')
       } catch (error) {
         try {

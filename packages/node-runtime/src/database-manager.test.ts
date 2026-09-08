@@ -330,6 +330,76 @@ test('open adds summary coverage metadata without trusting legacy summaries', ()
   manager.closeAll()
 })
 
+test('open adds attachment storage to a v10 database without touching existing rows', () => {
+  const root = makeTempDir()
+  const dbDir = path.join(root, 'data', 'databases')
+  fs.mkdirSync(dbDir, { recursive: true })
+  const dbPath = path.join(dbDir, 'v10-attachments.db')
+
+  const rawDb = new Database(dbPath, { nativeBinding })
+  rawDb.exec(`
+    CREATE TABLE meta (
+      name TEXT NOT NULL,
+      platform TEXT NOT NULL,
+      type TEXT NOT NULL,
+      imported_at INTEGER NOT NULL,
+      group_id TEXT,
+      group_avatar TEXT,
+      owner_id TEXT,
+      schema_version INTEGER DEFAULT 10,
+      session_gap_threshold INTEGER
+    );
+    INSERT INTO meta (name, platform, type, imported_at, schema_version)
+    VALUES ('V10 Session', 'wechat', 'group', 1000, 10);
+
+    CREATE TABLE member (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      platform_id TEXT NOT NULL UNIQUE,
+      account_name TEXT
+    );
+    INSERT INTO member (platform_id, account_name) VALUES ('u1', 'Alice');
+
+    CREATE TABLE message (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      sender_id INTEGER NOT NULL,
+      sender_account_name TEXT,
+      sender_group_nickname TEXT,
+      ts INTEGER NOT NULL,
+      type INTEGER NOT NULL,
+      content TEXT,
+      reply_to_message_id TEXT,
+      platform_message_id TEXT
+    );
+    INSERT INTO message (sender_id, sender_account_name, ts, type, content)
+    VALUES (1, 'Alice', 1000, 1, '[图片]');
+
+    CREATE TABLE segment (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      start_ts INTEGER NOT NULL,
+      end_ts INTEGER NOT NULL,
+      message_count INTEGER DEFAULT 0,
+      is_manual INTEGER DEFAULT 0,
+      summary TEXT,
+      summary_message_count INTEGER
+    );
+  `)
+  rawDb.close()
+
+  const manager = new DatabaseManager(createPathProvider(root), { nativeBinding, allowMissingRuntimeForTests: true })
+  const db = manager.open('v10-attachments')
+  assert.ok(db)
+
+  assert.deepEqual(db.prepare('SELECT schema_version FROM meta').get(), { schema_version: CURRENT_SCHEMA_VERSION })
+  assert.deepEqual(db.prepare('SELECT name, source_dir FROM meta').get(), { name: 'V10 Session', source_dir: null })
+  assert.deepEqual(db.prepare('SELECT id, content, type FROM message').all(), [{ id: 1, content: '[图片]', type: 1 }])
+  assert.deepEqual(db.prepare('SELECT COUNT(*) AS count FROM message_attachment').get(), { count: 0 })
+  manager.closeAll()
+
+  const migrated = new Database(dbPath, { nativeBinding })
+  assert.ok(getIndexNames(migrated).includes('idx_attachment_message'))
+  migrated.close()
+})
+
 test('open migrates v7 databases to include analysis tool indexes', () => {
   const root = makeTempDir()
   const dbDir = path.join(root, 'data', 'databases')

@@ -5,7 +5,7 @@
  * Migration scripts use only DatabaseAdapter — no Electron or Node-specific APIs.
  */
 
-import type { DatabaseAdapter } from '@openchatlab/core'
+import { ensureAttachmentSchema, type DatabaseAdapter } from '@openchatlab/core'
 import type { PathProvider } from '@openchatlab/core'
 import type { Migration as CoreMigration } from '@openchatlab/core'
 import { raiseDataDirMinRuntimeVersion, type RuntimeIdentity } from '../data-dir-compat'
@@ -387,6 +387,13 @@ export function getChatDbMigrations(): CoreMigration[] {
         // Existing summaries may have been truncated or preserved after incremental imports.
         // Keep their text for users to review, but leave coverage unknown so the new runtime marks them stale.
         if (hasTable(db, 'segment')) addColumnIfMissing(db, 'segment', 'summary_message_count', 'INTEGER')
+      },
+    },
+    {
+      version: 11,
+      description: 'Add message_attachment table and meta.source_dir',
+      up: (db: DatabaseAdapter) => {
+        ensureAttachmentSchema(db)
       },
     },
   ]

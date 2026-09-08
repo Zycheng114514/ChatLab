@@ -9,7 +9,13 @@
  */
 
 import type { DatabaseAdapter, PreparedStatement } from '@openchatlab/core'
-import { generateSessionIndex, generateIncrementalSessionIndex, getSessionIndexStats } from '@openchatlab/core'
+import {
+  generateSessionIndex,
+  generateIncrementalSessionIndex,
+  getSessionIndexStats,
+  insertMessageAttachments,
+  type MessageAttachmentInsert,
+} from '@openchatlab/core'
 import {
   streamParseFile,
   detectFormat,
@@ -435,10 +441,20 @@ export async function incrementalImport(
 
     const getMemberId = db.prepare('SELECT id FROM member WHERE platform_id = ?')
 
-    const insertMessage = db.prepare(`
+    const insertMessageSql = `
       INSERT INTO message (sender_id, sender_account_name, sender_group_nickname, ts, type, content, reply_to_message_id, platform_message_id)
       VALUES (?, ?, ?, ?, ?, ?, ?, ?)
-    `)
+    `
+    const insertMessage = db.prepare(insertMessageSql)
+    // RETURNING materializes a row per message; only attachment messages need the id.
+    const insertMessageReturningId = db.prepare(`${insertMessageSql} RETURNING id`)
+    // Only messages that survived dedup get attachment rows, so a re-import adds no duplicates.
+    const attachmentRows: MessageAttachmentInsert[] = []
+    const flushAttachments = () => {
+      if (attachmentRows.length === 0) return
+      insertMessageAttachments(db, attachmentRows)
+      attachmentRows.length = 0
+    }
 
     const updateMeta = db.prepare(`
       UPDATE meta SET
@@ -586,7 +602,7 @@ export async function incrementalImport(
             }
             if (!memberId) continue
 
-            insertMessage.run(
+            const messageParams = [
               memberId,
               senderAccountName || null,
               senderGroupNickname || null,
@@ -594,12 +610,24 @@ export async function incrementalImport(
               msg.type,
               msg.content || null,
               msg.replyToMessageId || null,
-              msg.platformMessageId || null
-            )
+              msg.platformMessageId || null,
+            ]
+            if (msg.attachments?.length) {
+              const inserted = insertMessageReturningId.get(...messageParams) as { id: number } | undefined
+              if (inserted) {
+                for (const attachment of msg.attachments) {
+                  attachmentRows.push({ messageId: inserted.id, attachment })
+                }
+              }
+            } else {
+              insertMessage.run(...messageParams)
+            }
 
             if (timestamp < minWrittenTs) minWrittenTs = timestamp
             newMessageCount++
           }
+
+          flushAttachments()
 
           if (processedCount % BATCH_SIZE === 0) {
             deps.onProgress({
@@ -615,6 +643,8 @@ export async function incrementalImport(
       },
       options?.formatId
     )
+
+    flushAttachments()
 
     db.exec('COMMIT')
 

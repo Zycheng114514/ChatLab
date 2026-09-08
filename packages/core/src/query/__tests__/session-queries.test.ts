@@ -28,6 +28,7 @@ function makeMeta(overrides?: Partial<SessionMeta>): SessionMeta {
     groupId: 'g001',
     groupAvatar: null,
     ownerId: 'u001',
+    sourceDir: null,
     ...overrides,
   }
 }

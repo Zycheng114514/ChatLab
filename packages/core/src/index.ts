@@ -96,6 +96,8 @@ export {
   getMembersWithAliases,
   getMembersPaginated,
   executeParameterizedSql,
+  getMessageAttachments,
+  fetchMessageAttachments,
   getCatchphraseAnalysis,
   getMentionAnalysis,
   getGroupRelationshipGalaxy,
@@ -195,6 +197,7 @@ export type {
   QueryMessagesOptions,
   QueryMessagesResult,
   MessageResult,
+  MessageAttachment,
   PaginatedMessages,
   MemberDetailed,
   ContextMessage,
@@ -372,8 +375,17 @@ export {
 export type { OwnerMatchCandidate, OwnerMatchResult } from './owner'
 
 // Import utilities
-export { generateMessageKey, buildMemberIdMap, writeParseResultToDb } from './import'
-export type { ImportMeta, WriteParseResultStats } from './import'
+export {
+  generateMessageKey,
+  buildMemberIdMap,
+  writeParseResultToDb,
+  insertMessageAttachments,
+  ATTACHMENT_INSERT_MAX_ROWS,
+} from './import'
+export type { ImportMeta, WriteParseResultStats, MessageAttachmentInsert } from './import'
+
+// Attachment path resolution
+export { resolveAttachmentPath, isRemoteAttachmentPath, isAbsoluteAttachmentPath } from './attachments'
 
 // Merger algorithms
 export {
@@ -399,6 +411,9 @@ export {
   CHAT_DB_TABLES,
   CHAT_DB_INDEXES,
   CHAT_DB_SCHEMA,
+  MESSAGE_ATTACHMENT_TABLE,
+  MESSAGE_ATTACHMENT_INDEX,
+  ensureAttachmentSchema,
   getSchemaVersion,
   setSchemaVersion,
   needsMigration,
