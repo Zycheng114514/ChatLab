@@ -438,6 +438,84 @@ test('open adds attachment storage to a v10 database without touching existing r
   migrated.close()
 })
 
+test('open runs both the v11 search index and the v12 attachment migration on one v10 database', () => {
+  const root = makeTempDir()
+  const dbDir = path.join(root, 'data', 'databases')
+  fs.mkdirSync(dbDir, { recursive: true })
+  const dbPath = path.join(dbDir, 'v10-search-and-attachments.db')
+
+  // Hand-written v10 DDL: no message_fts, no message_attachment, no meta.source_dir.
+  // Replaying the current CHAT_DB_TABLES here would create them and hide the migrations.
+  const rawDb = new Database(dbPath, { nativeBinding })
+  rawDb.exec(`
+    CREATE TABLE meta (
+      name TEXT NOT NULL,
+      platform TEXT NOT NULL,
+      type TEXT NOT NULL,
+      imported_at INTEGER NOT NULL,
+      group_id TEXT,
+      group_avatar TEXT,
+      owner_id TEXT,
+      schema_version INTEGER DEFAULT 10,
+      session_gap_threshold INTEGER
+    );
+    INSERT INTO meta (name, platform, type, imported_at, schema_version)
+    VALUES ('V10 Session', 'wechat', 'group', 1000, 10);
+
+    CREATE TABLE member (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      platform_id TEXT NOT NULL UNIQUE,
+      account_name TEXT
+    );
+    INSERT INTO member (id, platform_id, account_name) VALUES (1, 'u1', 'Alice');
+
+    CREATE TABLE message (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      sender_id INTEGER NOT NULL,
+      sender_account_name TEXT,
+      sender_group_nickname TEXT,
+      ts INTEGER NOT NULL,
+      type INTEGER NOT NULL,
+      content TEXT,
+      reply_to_message_id TEXT,
+      platform_message_id TEXT
+    );
+    INSERT INTO message (id, sender_id, ts, type, content) VALUES (1, 1, 1000, 0, '周末一起打球吗');
+    INSERT INTO message (id, sender_id, ts, type, content) VALUES (2, 1, 1001, 1, '老地方见');
+
+    CREATE TABLE segment (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      start_ts INTEGER NOT NULL,
+      end_ts INTEGER NOT NULL,
+      message_count INTEGER DEFAULT 0,
+      is_manual INTEGER DEFAULT 0,
+      summary TEXT,
+      summary_message_count INTEGER
+    );
+  `)
+  rawDb.close()
+
+  const manager = new DatabaseManager(createPathProvider(root), { nativeBinding, allowMissingRuntimeForTests: true })
+  const db = manager.open('v10-search-and-attachments')
+  assert.ok(db)
+
+  // The literal is deliberate: search stayed at 11 and attachments moved to 12, so a
+  // dropped or renumbered migration must fail here rather than follow the constant.
+  assert.equal(CURRENT_SCHEMA_VERSION, 12)
+  assert.deepEqual(db.prepare('SELECT schema_version FROM meta').get(), { schema_version: 12 })
+
+  assertMessageSearchIndex(db)
+  assert.deepEqual(db.prepare(`SELECT rowid FROM message_fts WHERE message_fts MATCH '"老地方"'`).all(), [{ rowid: 2 }])
+  assert.deepEqual(db.prepare('SELECT name, source_dir FROM meta').get(), { name: 'V10 Session', source_dir: null })
+  assert.deepEqual(db.prepare('SELECT COUNT(*) AS count FROM message_attachment').get(), { count: 0 })
+
+  manager.closeAll()
+
+  const migrated = new Database(dbPath, { nativeBinding })
+  assert.ok(getIndexNames(migrated).includes('idx_attachment_message'))
+  migrated.close()
+})
+
 test('open migrates v7 databases to include analysis tool indexes', () => {
   const root = makeTempDir()
   const dbDir = path.join(root, 'data', 'databases')
