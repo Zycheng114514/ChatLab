@@ -49,6 +49,14 @@ export class BrowserPlatformAdapter implements PlatformAdapter {
     return { success: false, error: 'Desktop close behavior is not available in Web WASM' }
   }
 
+  async getUiScale(): Promise<number> {
+    return 1
+  }
+
+  async setUiScale(_scale: number): Promise<{ success: boolean; error?: string }> {
+    return { success: false, error: 'UI scale is only available on desktop' }
+  }
+
   async getAnalyticsEnabled(): Promise<boolean> {
     return false
   }
