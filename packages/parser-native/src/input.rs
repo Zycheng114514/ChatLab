@@ -11,10 +11,7 @@ use std::io;
 #[derive(Clone)]
 pub struct KernelInput {
     pub primary_path: String,
-    /// Format options from the JS side (e.g. telegram `chatIndex`); no
-    /// current kernel consumes it yet, but it is part of the stable N-API
-    /// constructor signature.
-    #[allow(dead_code)]
+    /// Format options from the JS side (e.g. telegram `chatIndex`).
     pub options_json: Option<String>,
 }
 

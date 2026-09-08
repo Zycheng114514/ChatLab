@@ -189,7 +189,12 @@ function parseTelegramMessage(message: TelegramMessage, memberMap: Map<string, P
   }
 }
 
-export const parser_: Parser = { feature, parse: parseTelegramSingle }
+import { withNativeTelegramSingle } from '../native/telegram-native'
+
+// parseTelegramSingleAccelerated：优先走 Rust 内核，native 不可用/失败时自动回退本文件的 TS 实现
+export const parseTelegramSingleAccelerated = withNativeTelegramSingle(parseTelegramSingle)
+
+export const parser_: Parser = { feature, parse: parseTelegramSingleAccelerated }
 
 const module_: FormatModule = { feature, parser: parser_ }
 

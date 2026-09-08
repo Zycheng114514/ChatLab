@@ -1,6 +1,8 @@
 #![deny(clippy::all)]
 
 mod chatlab;
+#[cfg(feature = "napi")]
+mod discord;
 mod input;
 mod jsutil;
 mod protocol;
@@ -9,6 +11,7 @@ mod scanner;
 mod shuakami_qq;
 #[cfg(feature = "napi")]
 mod shuakami_qq_v4;
+mod telegram;
 #[cfg(feature = "wasm")]
 mod wasm;
 mod weflow;
@@ -36,6 +39,11 @@ use protocol::{NativeMember, NativeParseProgress};
 enum FormatKind {
     Weflow,
     Chatlab,
+    Telegram,
+    /// napi only: the browser has no Discord detector, so the kernel stays out
+    /// of the WASM bundle.
+    #[cfg(feature = "napi")]
+    Discord,
     #[cfg(feature = "napi")]
     ShuakamiQqExporter,
 }
@@ -45,6 +53,9 @@ impl FormatKind {
         match id {
             "weflow" => Some(FormatKind::Weflow),
             "chatlab" => Some(FormatKind::Chatlab),
+            "telegram" => Some(FormatKind::Telegram),
+            #[cfg(feature = "napi")]
+            "discord" => Some(FormatKind::Discord),
             #[cfg(feature = "napi")]
             "shuakami-qq-exporter" => Some(FormatKind::ShuakamiQqExporter),
             _ => None,
@@ -60,6 +71,9 @@ impl FormatKind {
         match self {
             FormatKind::Weflow => weflow::parse_weflow(buf, input, on_progress),
             FormatKind::Chatlab => chatlab::parse_chatlab(buf, input, on_progress),
+            FormatKind::Telegram => telegram::parse_telegram(buf, input, on_progress),
+            #[cfg(feature = "napi")]
+            FormatKind::Discord => discord::parse_discord(buf, input, on_progress),
             #[cfg(feature = "napi")]
             FormatKind::ShuakamiQqExporter => {
                 shuakami_qq_v4::parse_shuakami_qq_v4(buf, input, on_progress)

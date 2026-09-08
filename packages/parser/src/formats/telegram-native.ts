@@ -34,6 +34,7 @@ import type {
   ParsedMessage,
 } from '../types'
 import { getFileSize, createProgress } from '../utils'
+import { loadNativeParser } from '../native/loader'
 import {
   mapChatType,
   extractPlatformId,
@@ -83,14 +84,39 @@ export const feature: FormatFeature = {
 
 // ==================== 扫描函数 ====================
 
+/** Shape of metaJson() from the Rust telegram kernel in scan mode. */
+interface TelegramScanMetaJson {
+  scan: true
+  chats: TelegramChatInfo[]
+}
+
+/**
+ * 用 Rust 内核扫描聊天列表；内核不可用、被 CHATLAB_DISABLE_NATIVE_PERF=1 关闭
+ * 或拒绝这个文件时返回 null，由调用方回退到下面的 stream-json 实现。
+ */
+async function scanChatsWithNative(filePath: string): Promise<TelegramChatInfo[] | null> {
+  const native = loadNativeParser()
+  if (!native) return null
+  try {
+    const parser = new native.NativeParser('telegram', filePath, JSON.stringify({ scan: true }))
+    await parser.parse()
+    return (JSON.parse(parser.metaJson()) as TelegramScanMetaJson).chats
+  } catch {
+    return null
+  }
+}
+
 /**
  * 快速扫描 Telegram 导出 JSON，提取聊天列表
- * 使用 stream-json 流式处理，避免全量加载大文件到内存
+ * 优先走 Rust 内核；不可用时用 stream-json 流式处理，避免全量加载大文件到内存
  *
  * @param filePath 文件路径
  * @returns 聊天列表信息
  */
 export async function scanChats(filePath: string): Promise<TelegramChatInfo[]> {
+  const nativeChats = await scanChatsWithNative(filePath)
+  if (nativeChats) return nativeChats
+
   const chats: TelegramChatInfo[] = []
 
   return new Promise<TelegramChatInfo[]>((resolve, reject) => {
@@ -279,9 +305,14 @@ async function* parseTelegram(options: ParseOptions): AsyncGenerator<ParseEvent,
 
 // ==================== 导出 ====================
 
+import { withNativeTelegram } from '../native/telegram-native'
+
+// parseTelegramAccelerated：优先走 Rust 内核，native 不可用/失败时自动回退本文件的 TS 实现
+export const parseTelegramAccelerated = withNativeTelegram(parseTelegram)
+
 export const parser_: Parser = {
   feature,
-  parse: parseTelegram,
+  parse: parseTelegramAccelerated,
 }
 
 const module_: FormatModule = {

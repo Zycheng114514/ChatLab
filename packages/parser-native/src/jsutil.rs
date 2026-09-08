@@ -4,6 +4,8 @@ use std::path::Path;
 
 use serde_json::Value;
 
+use crate::scanner::{scan_error, ScanResult};
+
 /// `path.basename(filePath).replace(/\.json$/i, '') || fallback`
 pub fn extract_name_from_file_path(file_path: &str, fallback: &str) -> String {
     let basename = Path::new(file_path)
@@ -36,6 +38,18 @@ pub fn js_trim(input: &str) -> &str {
     input.trim_matches(|c: char| (c.is_whitespace() && c != '\u{85}') || c == '\u{FEFF}')
 }
 
+/// JS truthiness for a string-typed field: absent, null, false, 0 and "" are
+/// falsy; any other non-string value would leave the TS parser's string path,
+/// so the kernel refuses it and the wrapper re-parses with TS.
+pub fn truthy_str(value: Option<&Value>) -> ScanResult<Option<&str>> {
+    match value {
+        None | Some(Value::Null) | Some(Value::Bool(false)) => Ok(None),
+        Some(Value::String(text)) => Ok((!text.is_empty()).then_some(text.as_str())),
+        Some(Value::Number(number)) if number.as_f64() == Some(0.0) => Ok(None),
+        Some(_) => Err(scan_error("unsupported string field", 0)),
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -56,6 +70,17 @@ mod tests {
     #[test]
     fn extract_name_uses_fallback_for_empty_basename() {
         assert_eq!(extract_name_from_file_path("", "fallback"), "fallback");
+    }
+
+    #[test]
+    fn truthy_str_treats_javascript_falsy_values_as_absent() {
+        assert_eq!(truthy_str(None).unwrap(), None);
+        assert_eq!(truthy_str(Some(&Value::Null)).unwrap(), None);
+        assert_eq!(truthy_str(Some(&Value::Bool(false))).unwrap(), None);
+        assert_eq!(truthy_str(Some(&Value::from(0))).unwrap(), None);
+        assert_eq!(truthy_str(Some(&Value::from(""))).unwrap(), None);
+        assert_eq!(truthy_str(Some(&Value::from("x"))).unwrap(), Some("x"));
+        assert!(truthy_str(Some(&Value::from(1))).is_err());
     }
 
     #[test]

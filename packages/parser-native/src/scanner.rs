@@ -31,6 +31,12 @@ impl ScanError {
     }
 }
 
+/// Build a `ScanError` from outside this module (format kernels reporting a
+/// value they refuse to guess at).
+pub fn scan_error(message: impl Into<String>, offset: usize) -> ScanError {
+    ScanError::new(message, offset)
+}
+
 impl std::fmt::Display for ScanError {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         write!(f, "{} (byte offset {})", self.message, self.offset)

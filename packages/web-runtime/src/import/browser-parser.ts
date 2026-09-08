@@ -26,7 +26,13 @@ import {
   type BrowserParseSource,
   type ChatLabBrowserFormatId,
 } from './chatlab-parser'
-import { parseWithWasm, type BrowserImportLogEvent, type BrowserWasmParserLoader } from './wasm-parser'
+import {
+  parseWithWasm,
+  scanTelegramChatsWithWasm,
+  type BrowserImportLogEvent,
+  type BrowserWasmFormatId,
+  type BrowserWasmParserLoader,
+} from './wasm-parser'
 
 export type BrowserImportFormatId =
   | ChatLabBrowserFormatId
@@ -88,16 +94,44 @@ export async function detectBrowserImportFormat(source: BrowserParseSource): Pro
 
 export async function scanBrowserMultiChatSource(
   source: BrowserParseSource,
-  options: Pick<ParseBrowserSourceOptions, 'checkCancelled' | 'yieldEvery'> = {}
+  options: Pick<ParseBrowserSourceOptions, 'checkCancelled' | 'yieldEvery' | 'wasmLoader' | 'onLog'> = {}
 ): Promise<TelegramChatInfo[]> {
   const formatId = await detectBrowserImportFormat(source)
   if (formatId !== PARSER_FORMAT_IDS.TELEGRAM_NATIVE) {
     throw new WebRuntimeError('NOT_MULTI_CHAT_FORMAT', 'The selected file is not a supported multi-chat export')
   }
   options.checkCancelled?.()
+  // Rust WASM first: the TS scanner JSON.parses the whole export, which a
+  // several-hundred-MB file cannot afford just to list its chats.
+  const wasmChats = await scanTelegramChatsWithWasm(source, {
+    checkCancelled: options.checkCancelled,
+    onLog: options.onLog,
+    loader: options.wasmLoader,
+  })
+  if (wasmChats) return wasmChats
+
   const content = await source.text()
   options.checkCancelled?.()
   return scanTelegramChatsJson(content, options)
+}
+
+/**
+ * The WASM call for a kernel-backed format, or null when the format has no
+ * kernel (or is a Telegram full export whose chat has not been selected yet).
+ */
+function resolveWasmRequest(
+  formatId: BrowserImportFormatId,
+  chatIndex: number | undefined
+): { formatId: BrowserWasmFormatId; optionsJson?: string } | null {
+  if (formatId === PARSER_FORMAT_IDS.CHATLAB) return { formatId }
+  if (formatId === PARSER_FORMAT_IDS.WEFLOW) return { formatId }
+  if (formatId === PARSER_FORMAT_IDS.TELEGRAM_NATIVE_SINGLE) {
+    return { formatId, optionsJson: JSON.stringify({ single: true }) }
+  }
+  if (formatId === PARSER_FORMAT_IDS.TELEGRAM_NATIVE && chatIndex !== undefined) {
+    return { formatId, optionsJson: JSON.stringify({ chatIndex }) }
+  }
+  return null
 }
 
 export async function parseBrowserImportSource(
@@ -114,12 +148,16 @@ export async function parseBrowserImportSource(
     )
   }
 
-  if (formatId === PARSER_FORMAT_IDS.CHATLAB || formatId === PARSER_FORMAT_IDS.WEFLOW) {
-    const wasmResult = await parseWithWasm(source, formatId, {
+  // Rust WASM first for the formats a kernel covers; every branch below stays
+  // reachable as the fallback when the kernel is unavailable or rejects a file.
+  const wasmRequest = resolveWasmRequest(formatId, options.chatIndex)
+  if (wasmRequest) {
+    const wasmResult = await parseWithWasm(source, wasmRequest.formatId, {
       checkCancelled: options.checkCancelled,
       onProgress: options.onProgress,
       onLog: options.onLog,
       loader: options.wasmLoader,
+      optionsJson: wasmRequest.optionsJson,
     })
     if (wasmResult) return wasmResult
   }
