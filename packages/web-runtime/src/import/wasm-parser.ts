@@ -5,6 +5,7 @@ import type {
   BrowserParseSource,
 } from './chatlab-parser'
 import type { BrowserImportParseResult } from './browser-parser'
+import type { AttachmentKind, ParsedAttachment } from '@openchatlab/shared-types'
 
 type BrowserWasmFormatId = 'chatlab' | 'weflow'
 
@@ -22,6 +23,17 @@ interface WasmNativeMember {
   roles?: WasmNativeRole[] | null
 }
 
+interface WasmNativeAttachment {
+  kind: string
+  path: string
+  name?: string | null
+  mimeType?: string | null
+  size?: number | null
+  durationMs?: number | null
+  width?: number | null
+  height?: number | null
+}
+
 interface WasmNativeMessage {
   platformMessageId?: string | null
   senderPlatformId: string
@@ -31,6 +43,7 @@ interface WasmNativeMessage {
   messageType: number
   content?: string | null
   replyToMessageId?: string | null
+  attachments?: WasmNativeAttachment[] | null
 }
 
 interface BrowserWasmParser {
@@ -243,11 +256,29 @@ function mapMessage(message: WasmNativeMessage, formatId: BrowserWasmFormatId): 
   if (platformMessageId !== undefined) mapped.platformMessageId = platformMessageId
   if (senderGroupNickname !== undefined) mapped.senderGroupNickname = senderGroupNickname
   if (replyToMessageId !== undefined) mapped.replyToMessageId = replyToMessageId
+  if (message.attachments?.length) mapped.attachments = message.attachments.map(mapAttachment)
   return mapped
+}
+
+function mapAttachment(attachment: WasmNativeAttachment): ParsedAttachment {
+  return {
+    kind: attachment.kind as AttachmentKind,
+    path: attachment.path,
+    name: optionalString(attachment.name),
+    mimeType: optionalString(attachment.mimeType),
+    size: optionalNumber(attachment.size),
+    durationMs: optionalNumber(attachment.durationMs),
+    width: optionalNumber(attachment.width),
+    height: optionalNumber(attachment.height),
+  }
 }
 
 function optionalString(value: unknown): string | undefined {
   return typeof value === 'string' ? value : undefined
+}
+
+function optionalNumber(value: unknown): number | undefined {
+  return typeof value === 'number' && Number.isFinite(value) ? value : undefined
 }
 
 function compact<T extends Record<string, unknown>>(value: T): T {

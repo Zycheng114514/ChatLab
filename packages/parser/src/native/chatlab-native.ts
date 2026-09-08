@@ -8,8 +8,8 @@
  * parser which replicates all JS passthrough quirks.
  */
 
-import type { ChatType, MessageType } from '@openchatlab/shared-types'
-import type { NativeMember, NativeMessage } from '@openchatlab/parser-native'
+import type { AttachmentKind, ChatType, MessageType, ParsedAttachment } from '@openchatlab/shared-types'
+import type { NativeAttachment, NativeMember, NativeMessage } from '@openchatlab/parser-native'
 import type { ParsedMember, ParsedMessage, ParsedMeta } from '../types'
 import { createNativeFirstParser, type NativeFormatAdapter, type ParseGenerator } from './create-native-parser'
 
@@ -50,6 +50,20 @@ function toParsedMember(member: NativeMember, fromHead: boolean): ParsedMember {
   }
 }
 
+/** Same key set as the TS parser's attachments, so parity assertions hold. */
+function toParsedAttachment(attachment: NativeAttachment): ParsedAttachment {
+  return {
+    kind: attachment.kind as AttachmentKind,
+    path: attachment.path,
+    name: attachment.name ?? undefined,
+    mimeType: attachment.mimeType ?? undefined,
+    size: attachment.size ?? undefined,
+    durationMs: attachment.durationMs ?? undefined,
+    width: attachment.width ?? undefined,
+    height: attachment.height ?? undefined,
+  }
+}
+
 const chatlabAdapter: NativeFormatAdapter = {
   kernelId: 'chatlab',
   label: 'ChatLab JSON',
@@ -85,6 +99,7 @@ const chatlabAdapter: NativeFormatAdapter = {
       content: message.content ?? null,
       platformMessageId: message.platformMessageId,
       replyToMessageId: message.replyToMessageId,
+      attachments: message.attachments?.map(toParsedAttachment),
     }
   },
 }

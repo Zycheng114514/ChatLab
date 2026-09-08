@@ -88,7 +88,8 @@ mod tests {
           "members": [{"platformId": "alice", "accountName": "Alice"}],
           "messages": [
             {"sender": "alice", "accountName": "Alice", "timestamp": 1, "type": 0, "content": "one"},
-            {"sender": "alice", "accountName": "Alice", "timestamp": 2, "type": 0, "content": "two"}
+            {"sender": "alice", "accountName": "Alice", "timestamp": 2, "type": 1, "content": "two",
+             "attachments": [{"kind": "image", "path": "images/a.jpg", "name": "a.jpg"}]}
           ]
         }"#;
         let mut parser =
@@ -115,10 +116,18 @@ mod tests {
         )
         .expect("batch JSON should be valid");
         assert_eq!(first[0]["content"], "one");
-        assert!(parser
-            .take_batch_json(10)
-            .expect("batch should serialize")
-            .is_some());
+
+        let second: Value = serde_json::from_str(
+            &parser
+                .take_batch_json(10)
+                .expect("batch should serialize")
+                .expect("second batch should exist"),
+        )
+        .expect("batch JSON should be valid");
+        assert_eq!(second[0]["attachments"][0]["kind"], "image");
+        assert_eq!(second[0]["attachments"][0]["path"], "images/a.jpg");
+        assert_eq!(second[0]["attachments"][0]["name"], "a.jpg");
+        assert_eq!(second[0]["attachments"][0]["mimeType"], Value::Null);
         assert!(parser
             .take_batch_json(10)
             .expect("empty batch should succeed")

@@ -3,7 +3,7 @@ import { mkdtempSync, rmSync, writeFileSync } from 'node:fs'
 import { join } from 'node:path'
 import { tmpdir } from 'node:os'
 import { describe, it } from 'node:test'
-import { ChatType, KNOWN_PLATFORMS, MessageType } from '@openchatlab/shared-types'
+import { ChatType, KNOWN_PLATFORMS, MessageType, type ParsedAttachment } from '@openchatlab/shared-types'
 
 import { detectFormat, parseFileSync } from '../index'
 import type { ParseResult } from '../types'
@@ -24,6 +24,8 @@ interface ParserFixture {
       timestamp: number
       type: MessageType
       content: string | null
+      /** Omitted when the message has no attachments. */
+      attachments?: ParsedAttachment[]
     }>
   }
 }
@@ -165,6 +167,31 @@ const fixtures: ParserFixture[] = [
           text: 'hello telegram',
           text_entities: [{ type: 'plain', text: 'hello telegram' }],
         },
+        {
+          id: 2,
+          type: 'message',
+          date: '2024-01-02T03:05:00',
+          date_unixtime: '1704164700',
+          from: 'Alice',
+          from_id: 'user10001',
+          photo: 'photos/photo_1@02-01-2024_03-05-00.jpg',
+          width: 1280,
+          height: 960,
+          text: '',
+        },
+        {
+          id: 3,
+          type: 'message',
+          date: '2024-01-02T03:06:00',
+          date_unixtime: '1704164760',
+          from: 'Alice',
+          from_id: 'user10001',
+          file: 'voice_messages/audio_1@02-01-2024_03-06-00.ogg',
+          media_type: 'voice_message',
+          mime_type: 'audio/ogg',
+          duration_seconds: 3,
+          text: '',
+        },
       ],
     }),
     formatId: 'telegram-native-single',
@@ -177,6 +204,42 @@ const fixtures: ParserFixture[] = [
           timestamp: 1704164645,
           type: MessageType.TEXT,
           content: 'hello telegram',
+        },
+        {
+          senderPlatformId: '10001',
+          timestamp: 1704164700,
+          type: MessageType.IMAGE,
+          content: '[photo]',
+          attachments: [
+            {
+              kind: 'image',
+              path: 'photos/photo_1@02-01-2024_03-05-00.jpg',
+              name: undefined,
+              mimeType: undefined,
+              size: undefined,
+              durationMs: undefined,
+              width: 1280,
+              height: 960,
+            },
+          ],
+        },
+        {
+          senderPlatformId: '10001',
+          timestamp: 1704164760,
+          type: MessageType.VOICE,
+          content: '[voice_message]',
+          attachments: [
+            {
+              kind: 'audio',
+              path: 'voice_messages/audio_1@02-01-2024_03-06-00.ogg',
+              name: undefined,
+              mimeType: 'audio/ogg',
+              size: undefined,
+              durationMs: 3000,
+              width: undefined,
+              height: undefined,
+            },
+          ],
         },
       ],
     },
@@ -299,6 +362,24 @@ const fixtures: ParserFixture[] = [
           type: MessageType.TEXT,
           content: 'hello chatlab json',
         },
+        {
+          sender: 'u1',
+          accountName: 'Alice',
+          timestamp: 1704164700,
+          type: MessageType.IMAGE,
+          content: '[图片]',
+          attachments: [
+            { kind: 'image', path: 'images/a.jpg', name: 'a.jpg', mimeType: 'image/jpeg', size: 2048 },
+            { kind: 'file', path: 'files/a.pdf' },
+          ],
+        },
+        {
+          sender: 'u1',
+          accountName: 'Alice',
+          timestamp: 1704164760,
+          type: MessageType.VOICE,
+          content: 'voice/a.mp3',
+        },
       ],
     }),
     formatId: 'chatlab',
@@ -311,6 +392,53 @@ const fixtures: ParserFixture[] = [
           timestamp: 1704164645,
           type: MessageType.TEXT,
           content: 'hello chatlab json',
+        },
+        {
+          senderPlatformId: 'u1',
+          timestamp: 1704164700,
+          type: MessageType.IMAGE,
+          content: '[图片]',
+          attachments: [
+            {
+              kind: 'image',
+              path: 'images/a.jpg',
+              name: 'a.jpg',
+              mimeType: 'image/jpeg',
+              size: 2048,
+              durationMs: undefined,
+              width: undefined,
+              height: undefined,
+            },
+            {
+              kind: 'file',
+              path: 'files/a.pdf',
+              name: undefined,
+              mimeType: undefined,
+              size: undefined,
+              durationMs: undefined,
+              width: undefined,
+              height: undefined,
+            },
+          ],
+        },
+        {
+          // #170: a converter that only wrote the path into content still yields an attachment.
+          senderPlatformId: 'u1',
+          timestamp: 1704164760,
+          type: MessageType.VOICE,
+          content: 'voice/a.mp3',
+          attachments: [
+            {
+              kind: 'audio',
+              path: 'voice/a.mp3',
+              name: undefined,
+              mimeType: undefined,
+              size: undefined,
+              durationMs: undefined,
+              width: undefined,
+              height: undefined,
+            },
+          ],
         },
       ],
     },
@@ -332,6 +460,15 @@ const fixtures: ParserFixture[] = [
         type: MessageType.TEXT,
         content: 'hello chatlab jsonl',
       }),
+      jsonLine({
+        _type: 'message',
+        sender: 'tg1',
+        accountName: 'Alice',
+        timestamp: 1704164700,
+        type: MessageType.VIDEO,
+        content: '[视频]',
+        attachments: [{ kind: 'video', path: 'video_files/a.mp4', durationMs: 12000, width: 720, height: 1280 }],
+      }),
       '',
     ].join('\n'),
     formatId: 'chatlab-jsonl',
@@ -344,6 +481,111 @@ const fixtures: ParserFixture[] = [
           timestamp: 1704164645,
           type: MessageType.TEXT,
           content: 'hello chatlab jsonl',
+        },
+        {
+          senderPlatformId: 'tg1',
+          timestamp: 1704164700,
+          type: MessageType.VIDEO,
+          content: '[视频]',
+          attachments: [
+            {
+              kind: 'video',
+              path: 'video_files/a.mp4',
+              name: undefined,
+              mimeType: undefined,
+              size: undefined,
+              durationMs: 12000,
+              width: 720,
+              height: 1280,
+            },
+          ],
+        },
+      ],
+    },
+  },
+  {
+    filename: 'discord.json',
+    content: json({
+      guild: { id: 'g1', name: 'Guild' },
+      channel: { id: 'c1', type: 'GuildTextChat', name: 'general' },
+      messages: [
+        {
+          id: 'd1',
+          type: 'Default',
+          timestamp: '2024-01-02T03:04:05.000+00:00',
+          content: 'hello discord',
+          author: { id: 'a1', name: 'Alice', nickname: 'Ally', isBot: false, roles: [] },
+        },
+        {
+          id: 'd2',
+          type: 'Default',
+          timestamp: '2024-01-02T03:05:05.000+00:00',
+          content: '',
+          author: { id: 'a1', name: 'Alice', nickname: 'Ally', isBot: false, roles: [] },
+          // DiscordChatExporter rewrites url to a relative path once media is downloaded.
+          attachments: [{ id: 'at1', url: 'general_Files/photo.png', fileName: 'photo.png', fileSizeBytes: 4096 }],
+        },
+      ],
+    }),
+    formatId: 'discord-tyrrrz',
+    expected: {
+      meta: { name: 'Guild - general', platform: KNOWN_PLATFORMS.DISCORD, type: ChatType.GROUP },
+      memberIds: ['a1'],
+      messages: [
+        {
+          senderPlatformId: 'a1',
+          timestamp: 1704164645,
+          type: MessageType.TEXT,
+          content: 'hello discord',
+        },
+        {
+          senderPlatformId: 'a1',
+          timestamp: 1704164705,
+          type: MessageType.IMAGE,
+          content: '[Image: photo.png]',
+          attachments: [{ kind: 'image', path: 'general_Files/photo.png', name: 'photo.png', size: 4096 }],
+        },
+      ],
+    },
+  },
+  {
+    filename: 'message_1.json',
+    content: json({
+      participants: [{ name: 'Alice' }, { name: 'Bob' }],
+      title: 'Bob',
+      thread_path: 'inbox/bob',
+      messages: [
+        {
+          sender_name: 'Alice',
+          timestamp_ms: 1704164700000,
+          photos: [{ uri: 'messages/inbox/bob/photos/1.jpg' }],
+          is_geoblocked_for_viewer: false,
+        },
+        {
+          sender_name: 'Alice',
+          timestamp_ms: 1704164645000,
+          content: 'hello instagram',
+          is_geoblocked_for_viewer: false,
+        },
+      ],
+    }),
+    formatId: 'instagram-native',
+    expected: {
+      meta: { name: 'Bob', platform: KNOWN_PLATFORMS.INSTAGRAM, type: ChatType.PRIVATE },
+      memberIds: ['Alice', 'Bob'],
+      messages: [
+        {
+          senderPlatformId: 'Alice',
+          timestamp: 1704164645,
+          type: MessageType.TEXT,
+          content: 'hello instagram',
+        },
+        {
+          senderPlatformId: 'Alice',
+          timestamp: 1704164700,
+          type: MessageType.IMAGE,
+          content: '[图片] messages/inbox/bob/photos/1.jpg',
+          attachments: [{ kind: 'image', path: 'messages/inbox/bob/photos/1.jpg' }],
         },
       ],
     },
@@ -370,6 +612,7 @@ describe('parser representative format fixtures', () => {
           timestamp: message.timestamp,
           type: message.type,
           content: message.content,
+          ...(message.attachments ? { attachments: message.attachments } : {}),
         })),
         fixture.expected.messages
       )
