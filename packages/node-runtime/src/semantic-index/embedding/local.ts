@@ -58,19 +58,39 @@ export async function createProxyFetch(proxyUrl: string): Promise<typeof fetch> 
   }) as typeof fetch
 }
 
+/** Model download options shared by the embedding and transcription pipelines. */
+export interface TransformersEnvOptions {
+  cacheDir?: string
+  modelDownloadProxyUrl?: string
+  modelDownloadSource?: SemanticIndexModelDownloadSource
+}
+
+/**
+ * Point the Transformers.js runtime at the configured download source, cache
+ * directory and proxy.
+ *
+ * `transformers.env` is a process-wide singleton, so every pipeline creation
+ * re-applies the host: otherwise a user who switches from the mirror back to
+ * the official source keeps downloading from the stale remoteHost.
+ */
+export async function configureTransformersEnv(
+  transformers: TransformersModule,
+  { cacheDir, modelDownloadProxyUrl, modelDownloadSource }: TransformersEnvOptions
+): Promise<void> {
+  transformers.env.remoteHost = resolveModelDownloadRemoteHost(modelDownloadSource)
+  if (cacheDir) {
+    transformers.env.cacheDir = cacheDir
+    transformers.env.allowRemoteModels = true
+  }
+  if (modelDownloadProxyUrl) {
+    transformers.env.fetch = await createProxyFetch(modelDownloadProxyUrl)
+  }
+}
+
 export function createTransformersPipelineFactory(loadTransformers: LoadTransformers): LocalPipelineFactory {
   return async ({ modelId, dtype, cacheDir, modelDownloadProxyUrl, modelDownloadSource }) => {
     const transformers = await loadTransformers()
-    // Transformers.js 的 env 是 worker 进程级全局对象，因此每次创建 pipeline 都显式覆盖 host，
-    // 避免用户从镜像切回官方源后继续复用旧的 remoteHost。
-    transformers.env.remoteHost = resolveModelDownloadRemoteHost(modelDownloadSource)
-    if (cacheDir) {
-      transformers.env.cacheDir = cacheDir
-      transformers.env.allowRemoteModels = true
-    }
-    if (modelDownloadProxyUrl) {
-      transformers.env.fetch = await createProxyFetch(modelDownloadProxyUrl)
-    }
+    await configureTransformersEnv(transformers, { cacheDir, modelDownloadProxyUrl, modelDownloadSource })
     const extractor = await transformers.pipeline('feature-extraction', modelId, {
       ...(dtype ? { dtype } : {}),
       session_options: LOCAL_ONNX_SESSION_OPTIONS,

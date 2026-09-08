@@ -148,6 +148,9 @@ export {
   ensureMessageSearchIndex,
   canUseFtsKeywords,
   buildFtsMatchExpression,
+  applyTranscript,
+  formatVoiceTranscription,
+  listPendingAudioAttachments,
 } from './query'
 
 // 查询类型
@@ -272,6 +275,9 @@ export type {
   ResponseTimeMessage,
   ResponseTimeStat,
   MessageSearchIndexResult,
+  ApplyTranscriptInput,
+  ApplyTranscriptResult,
+  PendingAudioAttachment,
 } from './query'
 
 // 消息类型语义映射

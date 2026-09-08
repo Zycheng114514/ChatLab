@@ -491,6 +491,34 @@ export type {
   LocalEmbeddingRuntimeConfig,
 } from './semantic-index'
 
+// Local voice transcription (Whisper via Transformers.js)
+export * as transcription from './transcription'
+export {
+  createTranscriber,
+  findAudioDecoder,
+  planSessionTranscription,
+  registerAudioDecoder,
+  resolveTranscriptionModelCacheDir,
+  transcribeSessionAttachments,
+  DEFAULT_TRANSCRIPTION_PROFILE_ID,
+  TRANSCRIPTION_MODEL_CACHE_DIR_ENV,
+  TRANSCRIPTION_PROFILE_IDS,
+  TRANSCRIPTION_PROFILES,
+  UnsupportedAudioFormatError,
+} from './transcription'
+export type {
+  AudioDecoder,
+  CreateTranscriberOptions,
+  Transcriber,
+  TranscriptionCandidate,
+  TranscriptionLanguage,
+  TranscriptionPlan,
+  TranscriptionProfileId,
+  TranscriptionProgress,
+  TranscriptionSkip,
+  TranscribeSessionAttachmentsResult,
+} from './transcription'
+
 export {
   CONTACTS_ALGORITHM_VERSION,
   PEOPLE_RELATIONSHIPS_ALGORITHM_VERSION,
