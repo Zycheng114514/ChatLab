@@ -28,6 +28,7 @@ import {
 } from './chatlab-parser'
 import {
   parseWithWasm,
+  scanTelegramChatsWithWasm,
   type BrowserImportLogEvent,
   type BrowserWasmFormatId,
   type BrowserWasmParserLoader,
@@ -93,13 +94,22 @@ export async function detectBrowserImportFormat(source: BrowserParseSource): Pro
 
 export async function scanBrowserMultiChatSource(
   source: BrowserParseSource,
-  options: Pick<ParseBrowserSourceOptions, 'checkCancelled' | 'yieldEvery'> = {}
+  options: Pick<ParseBrowserSourceOptions, 'checkCancelled' | 'yieldEvery' | 'wasmLoader' | 'onLog'> = {}
 ): Promise<TelegramChatInfo[]> {
   const formatId = await detectBrowserImportFormat(source)
   if (formatId !== PARSER_FORMAT_IDS.TELEGRAM_NATIVE) {
     throw new WebRuntimeError('NOT_MULTI_CHAT_FORMAT', 'The selected file is not a supported multi-chat export')
   }
   options.checkCancelled?.()
+  // Rust WASM first: the TS scanner JSON.parses the whole export, which a
+  // several-hundred-MB file cannot afford just to list its chats.
+  const wasmChats = await scanTelegramChatsWithWasm(source, {
+    checkCancelled: options.checkCancelled,
+    onLog: options.onLog,
+    loader: options.wasmLoader,
+  })
+  if (wasmChats) return wasmChats
+
   const content = await source.text()
   options.checkCancelled?.()
   return scanTelegramChatsJson(content, options)

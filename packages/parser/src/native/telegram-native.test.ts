@@ -14,6 +14,7 @@ import { tmpdir } from 'node:os'
 import { describe, it } from 'node:test'
 
 import { detectFormat, parseFile } from '../index'
+import { scanChats } from '../formats/telegram-native'
 import type { ParsedMember, ParsedMessage, ParsedMeta } from '../types'
 import { loadNativeParser } from './loader'
 
@@ -360,6 +361,31 @@ describe('telegram native parser parity', { skip: !nativeAvailable() && 'native 
         height: 960,
       },
     ])
+  })
+
+  it('lists the same chats as the stream-json scanner', async () => {
+    // The chat picker runs before any import, so a wrong list is user-visible
+    // even when the parse itself is fine.
+    const withEdgeCases = multiChatExport()
+    withEdgeCases.chats.list.push({ name: '', type: 'private_group', id: 904, messages: [] })
+    await withFixture('telegram.json', JSON.stringify(withEdgeCases, null, 2), async (filePath) => {
+      try {
+        delete process.env[ENV_KEY]
+        const nativeChats = await scanChats(filePath)
+        process.env[ENV_KEY] = '1'
+        const tsChats = await scanChats(filePath)
+        assert.deepEqual(nativeChats, tsChats)
+        assert.deepEqual(nativeChats, [
+          { index: 0, name: '干扰聊天 A', type: 'personal_chat', id: 901, messageCount: 1 },
+          { index: 1, name: '目标群 Target', type: 'private_supergroup', id: -1001234567890, messageCount: 12 },
+          // An empty name falls back to `Chat ${id}` in both scanners.
+          { index: 2, name: 'Chat 903', type: 'personal_chat', id: 903, messageCount: 0 },
+          { index: 3, name: 'Chat 904', type: 'private_group', id: 904, messageCount: 0 },
+        ])
+      } finally {
+        delete process.env[ENV_KEY]
+      }
+    })
   })
 
   it('falls back to the TS parser for values the kernel refuses to guess at', async () => {

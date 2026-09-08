@@ -5,9 +5,10 @@ import { join } from 'node:path'
 import { describe, it } from 'node:test'
 import type { ParsedAttachment } from '@openchatlab/shared-types'
 import { parseFile } from '@openchatlab/parser'
+import { scanTelegramChatsJson } from '@openchatlab/parser/browser'
 import initWasm, { initSync, WasmParser } from '../wasm/generated/parser_native.js'
 import { WebRuntimeError } from '../runtime-error'
-import { parseBrowserImportSource } from './browser-parser'
+import { parseBrowserImportSource, scanBrowserMultiChatSource } from './browser-parser'
 import type { BrowserImportParseResult } from './browser-parser'
 import type { BrowserParseSource } from './chatlab-parser'
 import type { BrowserWasmParserLoader } from './wasm-parser'
@@ -287,6 +288,33 @@ describe('browser Rust WASM parser', () => {
     assert.deepEqual(
       wasm.messages.map((message) => message.attachments),
       await nodeAttachments(content, { chatIndex: 1 })
+    )
+  })
+
+  it('lists the chats of a Telegram full export through WASM', async () => {
+    // The chat picker used to JSON.parse the whole export just to list chats.
+    const scanExport = {
+      ...TELEGRAM_MULTI_EXPORT,
+      chats: {
+        ...TELEGRAM_MULTI_EXPORT.chats,
+        // A chat with an empty name must fall back to `Chat ${id}` in both paths.
+        list: [...TELEGRAM_MULTI_EXPORT.chats.list, { name: '', type: 'private_group', id: 903, messages: [] }],
+      },
+    }
+    const content = JSON.stringify(scanExport, null, 2)
+    const wasmChats = await scanBrowserMultiChatSource(source('result.json', content), { wasmLoader })
+
+    assert.deepEqual(wasmChats, await scanTelegramChatsJson(content))
+    assert.deepEqual(wasmChats, [
+      { index: 0, name: '干扰聊天', type: 'personal_chat', id: 901, messageCount: 0 },
+      { index: 1, name: '目标群 Target', type: 'private_supergroup', id: -1001234567890, messageCount: 6 },
+      { index: 2, name: 'Chat 903', type: 'private_group', id: 903, messageCount: 0 },
+    ])
+
+    // Without the kernel the TS scanner still answers.
+    assert.deepEqual(
+      await scanBrowserMultiChatSource(source('result.json', content), { wasmLoader: async () => null }),
+      wasmChats
     )
   })
 

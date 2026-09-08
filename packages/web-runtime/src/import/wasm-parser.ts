@@ -5,6 +5,7 @@ import type {
   BrowserParseSource,
 } from './chatlab-parser'
 import type { BrowserImportParseResult } from './browser-parser'
+import type { TelegramChatInfo } from '@openchatlab/parser/browser'
 import type { AttachmentKind, ParsedAttachment } from '@openchatlab/shared-types'
 
 export type BrowserWasmFormatId = 'chatlab' | 'weflow' | 'telegram-native' | 'telegram-native-single'
@@ -95,6 +96,52 @@ export interface ParseWithWasmOptions {
 }
 
 let modulePromise: Promise<BrowserWasmParserModule> | undefined
+
+/** Shape of meta_json() from the Rust telegram kernel in scan mode. */
+interface WasmTelegramScanMeta {
+  scan: true
+  chats: TelegramChatInfo[]
+}
+
+/**
+ * List the chats of a Telegram full export with the Rust kernel, which walks
+ * the bytes instead of JSON.parse-ing the whole file. Returns null when the
+ * kernel is unavailable or rejects the file, so the caller falls back to
+ * scanTelegramChatsJson.
+ */
+export async function scanTelegramChatsWithWasm(
+  source: BrowserParseSource,
+  options: Pick<ParseWithWasmOptions, 'checkCancelled' | 'onLog' | 'loader'> = {}
+): Promise<TelegramChatInfo[] | null> {
+  const startedAt = performance.now()
+  let parser: BrowserWasmParser | undefined
+  try {
+    options.checkCancelled?.()
+    const module = await (options.loader ?? loadDefaultModule)()
+    if (!module) return null
+    await module.default()
+    const bytes = new Uint8Array(await source.arrayBuffer())
+    options.checkCancelled?.()
+    parser = new module.WasmParser('telegram', bytes, source.name, JSON.stringify({ scan: true }))
+    const { chats } = JSON.parse(parser.meta_json()) as WasmTelegramScanMeta
+    options.onLog?.({
+      level: 'info',
+      message: 'Rust WASM Telegram scan completed',
+      data: { size: source.size, durationMs: Math.round(performance.now() - startedAt), chatCount: chats.length },
+    })
+    return chats
+  } catch (error) {
+    options.checkCancelled?.()
+    options.onLog?.({
+      level: 'info',
+      message: 'Rust WASM Telegram scan failed; falling back to TS',
+      data: { error: error instanceof Error ? error.message : String(error) },
+    })
+    return null
+  } finally {
+    parser?.free()
+  }
+}
 
 export async function parseWithWasm(
   source: BrowserParseSource,

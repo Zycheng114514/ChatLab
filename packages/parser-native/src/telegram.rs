@@ -39,16 +39,38 @@ struct TelegramMeta {
     chat_index: Option<u32>,
 }
 
+/// One row of `metaJson()` in scan mode, matching the TelegramChatInfo shape
+/// both TS scanners return.
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+struct TelegramScanChat {
+    index: u32,
+    name: String,
+    #[serde(rename = "type")]
+    chat_type: String,
+    id: i64,
+    message_count: u64,
+}
+
+/// Shape of `metaJson()` in scan mode; members and messages stay empty.
+#[derive(Serialize)]
+struct TelegramScanMeta {
+    scan: bool,
+    chats: Vec<TelegramScanChat>,
+}
+
 struct TelegramOptions {
     chat_index: u32,
     single: bool,
+    scan: bool,
 }
 
-/// `chatIndex` (default 0) and `single` from the JS `formatOptions` blob.
+/// `chatIndex` (default 0), `single` and `scan` from the JS `formatOptions` blob.
 fn parse_options(options_json: Option<&str>) -> ScanResult<TelegramOptions> {
     let mut options = TelegramOptions {
         chat_index: 0,
         single: false,
+        scan: false,
     };
     let Some(raw) = options_json else {
         return Ok(options);
@@ -58,6 +80,7 @@ fn parse_options(options_json: Option<&str>) -> ScanResult<TelegramOptions> {
     };
 
     options.single = matches!(map.get("single"), Some(Value::Bool(true)));
+    options.scan = matches!(map.get("scan"), Some(Value::Bool(true)));
     options.chat_index = match map.get("chatIndex") {
         None | Some(Value::Null) => 0,
         Some(Value::Number(number)) => match number.as_u64() {
@@ -491,19 +514,8 @@ fn parse_chat(
     })
 }
 
-pub fn parse_telegram(
-    buf: &[u8],
-    input: &KernelInput,
-    on_progress: impl FnMut(u64, u64),
-) -> ScanResult<KernelOutput> {
-    let options = parse_options(input.options_json.as_deref())?;
-    if options.single {
-        let spans = collect_chat_spans(buf)?;
-        return parse_chat(buf, &spans, None, SERVICE_SENDER_SINGLE, on_progress);
-    }
-
-    // Full export: chats.list[chatIndex]. Non-target chats are skimmed by the
-    // scanner and never materialized.
+/// The raw `chats.list` array span of a full export.
+fn find_chat_list(buf: &[u8]) -> ScanResult<&[u8]> {
     let mut chats_raw: Option<&[u8]> = None;
     walk_top_level(buf, |key, raw| {
         if key == b"chats" {
@@ -520,7 +532,129 @@ pub fn parse_telegram(
         }
         Ok(())
     })?;
-    let list_raw = list_raw.ok_or_else(|| scan_error("missing chats.list array", 0))?;
+    list_raw.ok_or_else(|| scan_error("missing chats.list array", 0))
+}
+
+/// Scan mode: the chat picker's list, without materializing a single message.
+///
+/// Replicates `scanChats` in formats/telegram-native.ts and
+/// `scanTelegramChatsJson` in browser/telegram.ts, which agree on every field.
+/// A chat whose shape those two disagree on (a missing `name`, a non-array
+/// `messages`) is refused so each caller's TS scanner decides instead.
+fn scan_chats(buf: &[u8], mut on_progress: impl FnMut(u64, u64)) -> ScanResult<KernelOutput> {
+    let list_raw = find_chat_list(buf)?;
+    let base_offset = list_raw.as_ptr() as usize - buf.as_ptr() as usize;
+    let mut chats: Vec<TelegramScanChat> = Vec::new();
+
+    for_each_array_element(list_raw, base_offset, |element, end_offset| {
+        let element_offset = end_offset.saturating_sub(element.len());
+        let mut name: Option<String> = None;
+        let mut chat_type: Option<String> = None;
+        let mut id: Option<i64> = None;
+        let mut message_count: Option<u64> = None;
+
+        walk_top_level(element, |key, raw| {
+            let field = match key {
+                b"name" => "name",
+                b"type" => "type",
+                b"id" => "id",
+                b"messages" => {
+                    let mut count = 0u64;
+                    for_each_array_element(raw, 0, |_, _| {
+                        count += 1;
+                        Ok(())
+                    })?;
+                    message_count = Some(count);
+                    return Ok(());
+                }
+                _ => return Ok(()),
+            };
+            let value: Value = serde_json::from_slice(raw)
+                .map_err(|error| scan_error(format!("invalid chat {field}: {error}"), 0))?;
+            match (field, value) {
+                ("name", Value::String(value)) => name = Some(value),
+                ("type", Value::String(value)) => chat_type = Some(value),
+                ("id", Value::Number(value)) => {
+                    id = Some(
+                        value
+                            .as_i64()
+                            .ok_or_else(|| scan_error("unsupported chat id", 0))?,
+                    )
+                }
+                _ => return Err(scan_error(format!("unsupported chat {field}"), 0)),
+            }
+            Ok(())
+        })
+        .map_err(|error| scan_error(error.message, element_offset))?;
+
+        let (Some(name), Some(chat_type), Some(id), Some(message_count)) =
+            (name, chat_type, id, message_count)
+        else {
+            return Err(scan_error(
+                "chat is missing name, type, id or messages",
+                element_offset,
+            ));
+        };
+
+        chats.push(TelegramScanChat {
+            index: chats.len() as u32,
+            // `chat.name || `Chat ${chat.id}`` in both TS scanners.
+            name: if name.is_empty() {
+                format!("Chat {id}")
+            } else {
+                name
+            },
+            chat_type,
+            id,
+            message_count,
+        });
+        on_progress(end_offset as u64, chats.len() as u64);
+        Ok(())
+    })?;
+
+    let meta_json = serde_json::to_string(&TelegramScanMeta { scan: true, chats })
+        .map_err(|error| scan_error(format!("meta serialization failed: {error}"), 0))?;
+    Ok(KernelOutput {
+        meta_json,
+        members: Vec::new(),
+        messages: Vec::new(),
+    })
+}
+
+/// Both single-chat TS parsers reject an export without a string `name`, a
+/// string `type`, a numeric `id` and a `messages` array with
+/// `Invalid Telegram single-chat JSON export`; refusing them here lets the
+/// wrapper fall back and produce that same error.
+fn require_single_chat_header(spans: &ChatSpans<'_>) -> ScanResult<()> {
+    let valid = matches!(spans.header.get("name"), Some(Value::String(_)))
+        && matches!(spans.header.get("type"), Some(Value::String(_)))
+        && matches!(spans.header.get("id"), Some(Value::Number(number)) if number.as_f64().is_some())
+        && spans.messages.is_some();
+    if valid {
+        Ok(())
+    } else {
+        Err(scan_error("invalid Telegram single-chat export header", 0))
+    }
+}
+
+pub fn parse_telegram(
+    buf: &[u8],
+    input: &KernelInput,
+    on_progress: impl FnMut(u64, u64),
+) -> ScanResult<KernelOutput> {
+    let options = parse_options(input.options_json.as_deref())?;
+    if options.scan {
+        return scan_chats(buf, on_progress);
+    }
+    if options.single {
+        let spans = collect_chat_spans(buf)?;
+        require_single_chat_header(&spans)?;
+        return parse_chat(buf, &spans, None, SERVICE_SENDER_SINGLE, on_progress);
+    }
+
+    // Full export: chats.list[chatIndex]. Non-target chats are skimmed by the
+    // scanner and never materialized.
+    let list_raw = find_chat_list(buf)?;
 
     let mut target: Option<&[u8]> = None;
     let mut index: u32 = 0;
@@ -711,6 +845,74 @@ mod tests {
         assert_eq!(out.messages[0].content.as_deref(), Some("系统提示"));
         assert_eq!(out.members.len(), 1);
         assert_eq!(out.members[0].account_name, "System");
+    }
+
+    #[test]
+    fn scan_mode_lists_every_chat_without_materializing_messages() {
+        let out = parse(FULL_EXPORT, Some(r#"{"scan":true}"#));
+        assert!(out.members.is_empty());
+        assert!(out.messages.is_empty());
+        let scanned = meta(&out);
+        assert_eq!(scanned["scan"], true);
+        assert_eq!(
+            scanned["chats"],
+            serde_json::json!([
+                {"index": 0, "name": "干扰 A", "type": "personal_chat", "id": 11, "messageCount": 1},
+                {"index": 1, "name": "目标群", "type": "private_supergroup", "id": -1001, "messageCount": 5},
+                {"index": 2, "name": "干扰 B", "type": "personal_chat", "id": 13, "messageCount": 0}
+            ])
+        );
+    }
+
+    #[test]
+    fn scan_mode_names_chats_the_way_both_ts_scanners_do() {
+        // An empty name falls back to `Chat ${id}`; a chat the two TS scanners
+        // disagree on is refused so each caller's own scanner decides.
+        let doc = r#"{"about": "Telegram", "chats": {"list": [
+            {"name": "", "type": "personal_chat", "id": 77, "messages": []}
+        ]}}"#;
+        assert_eq!(
+            meta(&parse(doc, Some(r#"{"scan":true}"#)))["chats"][0]["name"],
+            "Chat 77"
+        );
+
+        for refused in [
+            r#"{"chats": {"list": [{"type": "personal_chat", "id": 77, "messages": []}]}}"#,
+            r#"{"chats": {"list": [{"name": "x", "type": "personal_chat", "id": 77}]}}"#,
+            r#"{"chats": {"list": [{"name": "x", "type": "personal_chat", "id": "77", "messages": []}]}}"#,
+        ] {
+            let input = KernelInput {
+                primary_path: "/tmp/telegram.json".to_string(),
+                options_json: Some(r#"{"scan":true}"#.to_string()),
+            };
+            assert!(
+                parse_telegram(refused.as_bytes(), &input, |_, _| {})
+                    .map(|_| ())
+                    .is_err(),
+                "{refused}"
+            );
+        }
+    }
+
+    #[test]
+    fn single_chat_mode_requires_the_header_the_ts_parsers_validate() {
+        for refused in [
+            r#"{"type": "personal_chat", "id": 1, "messages": []}"#,
+            r#"{"name": "x", "id": 1, "messages": []}"#,
+            r#"{"name": "x", "type": "personal_chat", "messages": []}"#,
+            r#"{"name": "x", "type": "personal_chat", "id": 1}"#,
+        ] {
+            let input = KernelInput {
+                primary_path: "/tmp/telegram.json".to_string(),
+                options_json: Some(r#"{"single":true}"#.to_string()),
+            };
+            assert!(
+                parse_telegram(refused.as_bytes(), &input, |_, _| {})
+                    .map(|_| ())
+                    .is_err(),
+                "{refused}"
+            );
+        }
     }
 
     #[test]

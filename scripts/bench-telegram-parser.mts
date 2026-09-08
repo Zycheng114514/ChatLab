@@ -12,11 +12,13 @@
  * Usage:
  *   pnpm exec tsx scripts/bench-telegram-parser.mts [messageCount]
  *   pnpm exec tsx scripts/bench-telegram-parser.mts --target-mb=100
+ *   pnpm exec tsx scripts/bench-telegram-parser.mts --target-mb=100 --scan
  *
  * `--target-mb` picks the message count that lands the whole file (target
  * chat + distractors) near that size; a bare number sets the target chat's
- * message count directly. Runs the TS path only when the Rust Telegram kernel
- * is not built (pnpm build:native).
+ * message count directly. `--scan` benchmarks the chat-picker scan
+ * (scanChats) instead of the parse. Runs the TS path only when the Rust
+ * Telegram kernel is not built (pnpm build:native).
  */
 
 import { createWriteStream, rmSync, statSync } from 'node:fs'
@@ -26,6 +28,7 @@ import { createChatLabTempDir } from './chatlab-temp.mjs'
 
 import { PARSER_FORMAT_IDS } from '../packages/parser/src/format-ids'
 import { parseFileWithFormat } from '../packages/parser/src/index'
+import { scanChats } from '../packages/parser/src/formats/telegram-native'
 import { isNativeFormatAvailable } from '../packages/parser/src/native/loader'
 
 const ENV_KEY = 'CHATLAB_DISABLE_NATIVE_PERF'
@@ -48,20 +51,26 @@ const SAMPLE_TEXTS = [
 interface CliOptions {
   messageCount: number
   targetMb?: number
+  scan: boolean
 }
 
 function parseCliOptions(argv: string[]): CliOptions {
   let messageCount = 500_000
   let targetMb: number | undefined
+  let scan = false
   for (const arg of argv) {
     const targetMatch = /^--target-mb=(\d+(?:\.\d+)?)$/.exec(arg)
     if (targetMatch) {
       targetMb = Number(targetMatch[1])
       continue
     }
+    if (arg === '--scan') {
+      scan = true
+      continue
+    }
     if (/^\d+$/.test(arg)) messageCount = Number(arg)
   }
-  return { messageCount, targetMb }
+  return { messageCount, targetMb, scan }
 }
 
 /** One synthetic message; the index drives which Telegram shape is produced. */
@@ -199,6 +208,48 @@ interface BenchResult {
   peakRssMb: number
 }
 
+/** Shared timing + peak-RSS harness; `run` returns the counters to report. */
+async function measure(
+  label: string,
+  disableNative: boolean,
+  run: () => Promise<{ messages: number; members: number }>
+): Promise<BenchResult> {
+  if (disableNative) process.env[ENV_KEY] = '1'
+  else delete process.env[ENV_KEY]
+
+  global.gc?.()
+  let peakRss = process.memoryUsage().rss
+  const sampler = setInterval(() => {
+    peakRss = Math.max(peakRss, process.memoryUsage().rss)
+  }, RSS_SAMPLE_INTERVAL_MS)
+
+  const start = performance.now()
+  let counts = { messages: 0, members: 0 }
+  try {
+    counts = await run()
+  } finally {
+    clearInterval(sampler)
+  }
+
+  return {
+    label,
+    durationMs: performance.now() - start,
+    ...counts,
+    peakRssMb: Math.max(peakRss, process.memoryUsage().rss) / 1024 / 1024,
+  }
+}
+
+/** Chat-picker scan: the list every multi-chat import starts from. */
+function benchScanOnce(label: string, filePath: string, disableNative: boolean): Promise<BenchResult> {
+  return measure(label, disableNative, async () => {
+    const chats = await scanChats(filePath)
+    return {
+      messages: chats.reduce((total, chat) => total + chat.messageCount, 0),
+      members: chats.length,
+    }
+  })
+}
+
 async function benchOnce(label: string, filePath: string, disableNative: boolean): Promise<BenchResult> {
   if (disableNative) process.env[ENV_KEY] = '1'
   else delete process.env[ENV_KEY]
@@ -250,22 +301,28 @@ async function main() {
   const dir = createChatLabTempDir('bench', 'telegram-')
   const filePath = join(dir, 'bench.json')
   try {
-    console.log(`Generating fixture: target chat ${messageCount.toLocaleString()} messages + 2 distractor chats...`)
+    console.log(
+      `Generating fixture (${options.scan ? 'scan' : 'parse'} mode): ` +
+        `target chat ${messageCount.toLocaleString()} messages + 2 distractor chats...`
+    )
     await generateFixture(filePath, messageCount)
     const sizeMb = statSync(filePath).size / 1024 / 1024
     console.log(`Fixture size: ${sizeMb.toFixed(1)} MB\n`)
 
     // Interleave runs to be fair about cache warmth, always one path at a time.
-    const results: BenchResult[] = [await benchOnce('ts #1', filePath, true)]
-    if (nativeAvailable) results.push(await benchOnce('native #1', filePath, false))
-    results.push(await benchOnce('ts #2', filePath, true))
-    if (nativeAvailable) results.push(await benchOnce('native #2', filePath, false))
+    const once = options.scan ? benchScanOnce : benchOnce
+    const results: BenchResult[] = [await once('ts #1', filePath, true)]
+    if (nativeAvailable) results.push(await once('native #1', filePath, false))
+    results.push(await once('ts #2', filePath, true))
+    if (nativeAvailable) results.push(await once('native #2', filePath, false))
 
+    const unit = options.scan ? 'scanned messages' : 'messages'
+    const group = options.scan ? 'chats' : 'members'
     for (const result of results) {
       console.log(
         `${result.label.padEnd(10)} ${result.durationMs.toFixed(0).padStart(8)} ms | ` +
           `${(sizeMb / (result.durationMs / 1000)).toFixed(1).padStart(6)} MB/s | ` +
-          `${result.messages.toLocaleString()} messages, ${result.members} members | ` +
+          `${result.messages.toLocaleString()} ${unit}, ${result.members} ${group} | ` +
           `peak rss ${result.peakRssMb.toFixed(0)} MB`
       )
     }
