@@ -1,7 +1,7 @@
 <script setup lang="ts">
 // 亲密关系事件列表：每行是一个事件的证据、标签和修订入口。
-// 四种 kind 共用这一行：个人分享只有本人的原话；倾诉后的回应与好消息回应左边是本人原话、右边是另一方的回复；
-// 事后追问上面是被问者更早的原话、下面是追问者的原话。
+// 五种 kind 共用这一行：个人分享只有本人的原话；倾诉后的回应与好消息回应左边是本人原话、右边是另一方的回复；
+// 事后追问上面是被问者更早的原话、下面是追问者的原话；共同安排是一条时间线，一步一格。
 import { computed, ref } from 'vue'
 import dayjs from 'dayjs'
 import { useI18n } from 'vue-i18n'
@@ -14,6 +14,8 @@ import type {
   IntimacyMember,
   IntimacyMessageSnippet,
   IntimacyReviewDetails,
+  SharedPlanDetails,
+  SharedPlanStage,
   SharingCategory,
   SharingDetails,
   SharingTopic,
@@ -26,6 +28,8 @@ import {
   GOOD_NEWS_RESPONSE_LABEL_KEYS,
   POSITIVE_FOR_SHARER_LABEL_KEYS,
   RESPONSE_OBSERVATION_LABEL_KEYS,
+  SHARED_PLAN_STAGES,
+  SHARED_PLAN_STAGE_LABEL_KEYS,
   SHARING_CATEGORIES,
   SHARING_CATEGORY_LABEL_KEYS,
   SHARING_TOPICS,
@@ -65,12 +69,17 @@ const editSupportLabels = ref<SupportResponseLabel[]>([])
 const editGoodNewsLabels = ref<GoodNewsResponseLabel[]>([])
 const editPositiveForSharer = ref(false)
 const editPriorIds = ref<number[]>([])
+const editLastStage = ref<SharedPlanStage>('proposed')
 
 const topicOptions = computed(() =>
   SHARING_TOPICS.map((topic) => ({ value: topic, label: t(SHARING_TOPIC_LABEL_KEYS[topic]) }))
 )
 
-/** 一次结果里混着四种 kind，类别与话题只属于个人分享事件。 */
+const stageOptions = computed(() =>
+  SHARED_PLAN_STAGES.map((stage) => ({ value: stage, label: t(SHARED_PLAN_STAGE_LABEL_KEYS[stage]) }))
+)
+
+/** 一次结果里混着五种 kind，类别与话题只属于个人分享事件。 */
 function sharingDetails(event: IntimacyEvent): SharingDetails | null {
   return event.details.kind === 'sharing' ? event.details : null
 }
@@ -89,6 +98,17 @@ function responseDetails(event: IntimacyEvent): SupportResponseDetails | GoodNew
 
 function followUpDetails(event: IntimacyEvent): FollowUpDetails | null {
   return event.details.kind === 'follow_up' ? event.details : null
+}
+
+function sharedPlanDetails(event: IntimacyEvent): SharedPlanDetails | null {
+  return event.details.kind === 'shared_plan' ? event.details : null
+}
+
+/** 行标题：共同安排用活动描述，事后追问用事情描述，其余的用事件主体的名字。 */
+function rowTitle(event: IntimacyEvent): string {
+  return (
+    sharedPlanDetails(event)?.activitySummary ?? followUpDetails(event)?.matter ?? memberName(event.subjectMemberId)
+  )
 }
 
 /** 标签只描述看得见的回复，所以没有可见回复的事件这里就是空的。 */
@@ -150,6 +170,7 @@ function canEditLabels(event: IntimacyEvent): boolean {
 function editButtonKey(event: IntimacyEvent): string {
   if (sharingDetails(event)) return 'views.intimacy.event.editLabels'
   if (followUpDetails(event)) return 'views.intimacy.k3.pickPrior'
+  if (sharedPlanDetails(event)) return 'views.intimacy.k5.editStage'
   return 'views.intimacy.event.editResponse'
 }
 
@@ -182,6 +203,11 @@ function quoteText(messageId: number): string | null {
   return snippet.content || `[${getMessageTypeName(snippet.type, t)}]`
 }
 
+/** 时间线里每条原话用它自己的时间；消息已不存在时退回这一步的时间。 */
+function quoteTime(messageId: number, fallback: number): number {
+  return props.messages[messageId]?.timestamp ?? fallback
+}
+
 function observationKey(event: IntimacyEvent): string | null {
   if (event.observation === 'boundary_limited') return 'views.intimacy.event.observationBoundaryLimited'
   if (event.observation === 'media_missing') return 'views.intimacy.event.observationMediaMissing'
@@ -203,6 +229,7 @@ function startEditing(event: IntimacyEvent) {
   editGoodNewsLabels.value = goodNews ? [...goodNews.responseLabels] : []
   editPositiveForSharer.value = goodNews?.positiveForSharer === 'explicit_or_context_supported'
   editPriorIds.value = priorEvidence(event).map((evidence) => evidence.messageId)
+  editLastStage.value = sharedPlanDetails(event)?.lastObservedStage ?? 'proposed'
 }
 
 function togglePrior(messageId: number) {
@@ -237,6 +264,8 @@ function toggleGoodNewsLabel(label: GoodNewsResponseLabel, checked: boolean) {
 function canSubmitEdit(event: IntimacyEvent): boolean {
   if (sharingDetails(event)) return editCategories.value.length > 0
   if (followUpDetails(event)) return editPriorIds.value.length > 0
+  // 共同安排改的是「最后看到的一步」，六选一总有一个选中值。
+  if (sharedPlanDetails(event)) return true
   if (supportDetails(event)) return editSupportLabels.value.length > 0
   const goodNews = goodNewsDetails(event)
   return goodNews?.responseObservation !== 'visible_response' || editGoodNewsLabels.value.length > 0
@@ -246,7 +275,10 @@ function submitEdit(event: IntimacyEvent) {
   if (!canSubmitEdit(event)) return
   const goodNews = goodNewsDetails(event)
   let details: IntimacyReviewDetails
-  if (followUpDetails(event)) {
+  if (sharedPlanDetails(event)) {
+    // 阶段本身是证据，修订只说这个安排在记录里最后走到哪一步。
+    details = { lastObservedStage: editLastStage.value }
+  } else if (followUpDetails(event)) {
     // 服务端会按选中的消息重新算配对（先前事件、间隔、时机），前端只提交选择本身。
     details = { priorMessageIds: [...editPriorIds.value] }
   } else if (goodNews) {
@@ -280,10 +312,14 @@ function submitEdit(event: IntimacyEvent) {
         >
           {{ t(resolveIntimacyStatusBadge(event.status).labelKey) }}
         </span>
-        <span class="text-sm font-medium text-gray-800 dark:text-gray-100">
-          {{ followUpDetails(event)?.matter ?? memberName(event.subjectMemberId) }}
-        </span>
+        <span class="text-sm font-medium text-gray-800 dark:text-gray-100">{{ rowTitle(event) }}</span>
         <span class="text-xs tabular-nums text-gray-400">{{ formatTime(event.anchorTs) }}</span>
+        <span
+          v-if="sharedPlanDetails(event)"
+          class="rounded bg-gray-100 px-1.5 py-0.5 text-[10px] text-gray-600 dark:bg-gray-800 dark:text-gray-300"
+        >
+          {{ t(SHARED_PLAN_STAGE_LABEL_KEYS[sharedPlanDetails(event)!.lastObservedStage]) }}
+        </span>
         <span
           v-for="category in sharingDetails(event)?.categories ?? []"
           :key="category"
@@ -330,8 +366,39 @@ function submitEdit(event: IntimacyEvent) {
         </p>
       </div>
 
+      <!-- 共同安排：一条时间线，每一步写清是哪一步、谁做的、引用的原话和时间 -->
+      <div v-if="sharedPlanDetails(event)" class="mt-2 space-y-1.5">
+        <p class="text-[11px] text-gray-500 dark:text-gray-400">
+          {{
+            sharedPlanDetails(event)!.priorCoverage === 'not_covered'
+              ? t('views.intimacy.k5.priorNotCovered')
+              : t('views.intimacy.k5.proposer', { name: memberName(sharedPlanDetails(event)!.proposerMemberId!) })
+          }}
+        </p>
+        <div
+          v-for="(stage, index) in sharedPlanDetails(event)!.stages"
+          :key="`${stage.stage}-${index}`"
+          class="rounded-lg bg-gray-50 px-3 py-2 dark:bg-gray-800/50"
+        >
+          <p class="text-[10px] text-gray-400">
+            {{ t(SHARED_PLAN_STAGE_LABEL_KEYS[stage.stage]) }} · {{ memberName(stage.actorMemberId) }}
+          </p>
+          <p
+            v-for="messageId in stage.messageIds"
+            :key="messageId"
+            class="mt-1 text-xs leading-relaxed"
+            :class="quoteText(messageId) === null ? 'text-gray-400 italic' : 'text-gray-700 dark:text-gray-200'"
+          >
+            <span class="mr-1.5 text-[10px] tabular-nums text-gray-400">
+              {{ formatTime(quoteTime(messageId, stage.at)) }}
+            </span>
+            {{ quoteText(messageId) ?? t('views.intimacy.event.missingMessage') }}
+          </p>
+        </div>
+      </div>
+
       <!-- 个人分享：只有本人的原话 -->
-      <div v-if="!responseDetails(event) && !followUpDetails(event)" class="mt-2 space-y-1">
+      <div v-else-if="!responseDetails(event) && !followUpDetails(event)" class="mt-2 space-y-1">
         <p
           v-for="evidence in event.evidence"
           :key="evidence.messageId"
@@ -447,6 +514,11 @@ function submitEdit(event: IntimacyEvent) {
       </div>
 
       <div v-if="editingId === event.id" class="mt-2 rounded-lg bg-gray-50 p-3 dark:bg-gray-800/50">
+        <div v-if="sharedPlanDetails(event)">
+          <p class="text-[11px] text-gray-400">{{ t('views.intimacy.k5.stagePickHint') }}</p>
+          <USelect v-model="editLastStage" :items="stageOptions" value-key="value" size="xs" class="mt-1 w-40" />
+        </div>
+
         <div v-if="followUpDetails(event)">
           <p class="text-[11px] text-gray-400">{{ t('views.intimacy.k3.pickPriorHint') }}</p>
           <ul class="mt-1.5 space-y-1">

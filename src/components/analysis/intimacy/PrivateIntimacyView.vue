@@ -1,5 +1,5 @@
 <script setup lang="ts">
-// 私聊洞察「亲密关系」子标签：K1 个人分享、K2 倾诉后的回应、K4 好消息回应、K3 事后追问。
+// 私聊洞察「亲密关系」子标签：K1 个人分享、K2 倾诉后的回应、K4 好消息回应、K3 事后追问、K5 共同安排。
 // 页面只报告「在所选范围内识别到多少个这样的事件」，不给分数、比例或好坏判断。
 import { computed, onUnmounted, ref, watch } from 'vue'
 import dayjs from 'dayjs'
@@ -32,12 +32,16 @@ import {
   SUPPORT_RESPONSE_LABEL_KEYS,
   buildFollowUpInitiationCounts,
   buildIntimacyTopicFilterOptions,
+  buildSharedPlanMemberCounts,
+  buildSharedPlanStageCounts,
   filterIntimacyEventsByTopic,
   partitionIntimacyEvents,
   selectFollowUpEvents,
   selectFollowUpSummary,
   selectGoodNewsEvents,
   selectResponseSummary,
+  selectSharedPlanEvents,
+  selectSharedPlanSummary,
   selectSharingEvents,
   selectSupportEvents,
   summarizeIntimacyEvents,
@@ -126,6 +130,23 @@ const followUpCard = computed(() => {
   const { listed, excluded } = partitionIntimacyEvents(selectFollowUpEvents(events.value))
   const members = selectFollowUpSummary(results.value?.summaries ?? [])
   return { members, initiations: buildFollowUpInitiationCounts(members), listed, excluded }
+})
+
+/**
+ * K5 卡片：本期新提议 / 本期有更新两个数字，加上「本期有更新」那组安排的三种拆分
+ * （最后看到的一步、谁提议、谁确认）。数字直接用后端汇总，这张卡也没有前端筛选。
+ */
+const sharedPlanCard = computed(() => {
+  const { listed, excluded } = partitionIntimacyEvents(selectSharedPlanEvents(events.value))
+  const summary = selectSharedPlanSummary(results.value?.summaries ?? [])
+  return {
+    newlyProposed: summary?.newlyProposed ?? 0,
+    updatedInRange: summary?.updatedInRange ?? 0,
+    stages: buildSharedPlanStageCounts(summary),
+    members: buildSharedPlanMemberCounts(summary, members.value),
+    listed,
+    excluded,
+  }
 })
 
 const activeRun = computed(() => run.value && ['pending', 'running'].includes(run.value.status))
@@ -217,7 +238,13 @@ async function openPreflight() {
 
 function analysisRequest() {
   return {
-    kinds: ['sharing' as const, 'support_response' as const, 'follow_up' as const, 'good_news_response' as const],
+    kinds: [
+      'sharing' as const,
+      'support_response' as const,
+      'follow_up' as const,
+      'good_news_response' as const,
+      'shared_plan' as const,
+    ],
     startTs: props.timeFilter?.startTs,
     endTs: props.timeFilter?.endTs,
     locale: locale.value,
@@ -718,6 +745,104 @@ onUnmounted(clearPollTimer)
         </template>
       </SectionCard>
 
+      <!-- K5 共同安排 -->
+      <SectionCard :title="t('views.intimacy.k5.title')" :description="t('views.intimacy.k5.definition')">
+        <div class="px-5 py-4">
+          <div class="grid gap-3 sm:grid-cols-2">
+            <div class="rounded-xl border border-gray-200 px-4 py-3 dark:border-gray-700">
+              <p class="font-mono text-2xl font-black tabular-nums text-gray-900 dark:text-white">
+                {{ sharedPlanCard.newlyProposed }}
+              </p>
+              <p class="text-[11px] text-gray-400">{{ t('views.intimacy.k5.newlyProposed') }}</p>
+            </div>
+            <div class="rounded-xl border border-gray-200 px-4 py-3 dark:border-gray-700">
+              <p class="font-mono text-2xl font-black tabular-nums text-gray-900 dark:text-white">
+                {{ sharedPlanCard.updatedInRange }}
+              </p>
+              <p class="text-[11px] text-gray-400">{{ t('views.intimacy.k5.updatedInRange') }}</p>
+            </div>
+          </div>
+
+          <p class="mt-3 text-[11px] text-gray-400">{{ t('views.intimacy.k5.scopeNote') }}</p>
+          <p class="mt-1 text-[11px] text-gray-400">{{ t('views.intimacy.k1.uncertainNote') }}</p>
+
+          <div class="mt-4">
+            <p class="text-xs font-medium text-gray-600 dark:text-gray-300">{{ t('views.intimacy.k5.stageTitle') }}</p>
+            <div class="mt-2 grid grid-cols-3 gap-3">
+              <div
+                v-for="cell in sharedPlanCard.stages"
+                :key="cell.stage"
+                class="rounded-lg bg-gray-50 px-3 py-2 dark:bg-gray-800/50"
+              >
+                <p class="text-[11px] leading-snug text-gray-400">{{ t(cell.labelKey) }}</p>
+                <p class="mt-0.5 font-mono text-sm font-bold tabular-nums text-gray-700 dark:text-gray-200">
+                  {{ cell.count }}
+                </p>
+              </div>
+            </div>
+            <p class="mt-1.5 text-[11px] text-gray-400">{{ t('views.intimacy.k5.stageNote') }}</p>
+          </div>
+
+          <div class="mt-4">
+            <p class="text-xs font-medium text-gray-600 dark:text-gray-300">
+              {{ t('views.intimacy.k5.byMemberTitle') }}
+            </p>
+            <div class="mt-2 grid gap-3 sm:grid-cols-2">
+              <div
+                v-for="summary in sharedPlanCard.members"
+                :key="summary.memberId"
+                class="rounded-lg bg-gray-50 px-3 py-2 dark:bg-gray-800/50"
+              >
+                <p class="truncate text-[11px] text-gray-400">{{ memberName(summary.memberId) }}</p>
+                <p class="mt-0.5 text-xs text-gray-700 dark:text-gray-200">
+                  {{
+                    t('views.intimacy.k5.byMemberBreakdown', {
+                      proposed: summary.proposed,
+                      confirmed: summary.confirmed,
+                    })
+                  }}
+                </p>
+              </div>
+            </div>
+            <p class="mt-1.5 text-[11px] text-gray-400">{{ t('views.intimacy.k5.byMemberNote') }}</p>
+          </div>
+        </div>
+
+        <EmptyState v-if="sharedPlanCard.listed.length === 0" :text="t('views.intimacy.k5.empty')" />
+        <IntimacyEventList
+          v-else
+          :events="sharedPlanCard.listed"
+          :messages="results?.messages ?? {}"
+          :members="members"
+          :busy="actionLoading"
+          @view="viewMessage"
+          @review="handleReview"
+        />
+
+        <template v-if="sharedPlanCard.excluded.length > 0">
+          <button
+            type="button"
+            class="flex w-full items-center gap-1 border-t border-gray-100 px-5 py-2 text-left text-[11px] text-gray-400 hover:text-gray-600 dark:border-gray-800 dark:hover:text-gray-300"
+            @click="showExcludedResponses.shared_plan = !showExcludedResponses.shared_plan"
+          >
+            <UIcon
+              :name="showExcludedResponses.shared_plan ? 'i-heroicons-chevron-down' : 'i-heroicons-chevron-right'"
+              class="h-3 w-3"
+            />
+            {{ t('views.intimacy.event.excludedGroup', { count: sharedPlanCard.excluded.length }) }}
+          </button>
+          <IntimacyEventList
+            v-if="showExcludedResponses.shared_plan"
+            :events="sharedPlanCard.excluded"
+            :messages="results?.messages ?? {}"
+            :members="members"
+            :busy="actionLoading"
+            @view="viewMessage"
+            @review="handleReview"
+          />
+        </template>
+      </SectionCard>
+
       <!-- 候选检索 -->
       <SectionCard :title="t('views.intimacy.candidates.title')" :capturable="false">
         <IntimacyCandidatePanel
@@ -808,6 +933,12 @@ onUnmounted(clearPollTimer)
             <p class="font-medium text-gray-600 dark:text-gray-300">{{ t('views.intimacy.methods.k3Title') }}</p>
             <p class="mt-0.5">{{ t('views.intimacy.methods.k3Body') }}</p>
             <p class="mt-1">{{ t('views.intimacy.methods.k3CountingBody') }}</p>
+          </div>
+          <div>
+            <p class="font-medium text-gray-600 dark:text-gray-300">{{ t('views.intimacy.methods.k5Title') }}</p>
+            <p class="mt-0.5">{{ t('views.intimacy.methods.k5Body') }}</p>
+            <p class="mt-1">{{ t('views.intimacy.methods.k5CountingBody') }}</p>
+            <p class="mt-1">{{ t('views.intimacy.methods.k5Citation') }}</p>
           </div>
           <div>
             <p class="font-medium text-gray-600 dark:text-gray-300">

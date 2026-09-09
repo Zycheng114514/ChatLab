@@ -232,7 +232,7 @@
     },
     "preflight": {
       "title": "Analyse this range",
-      "description": "Messages in the range are sent to the configured model segment by segment, in time order, and each segment is read for personal sharing, responses after a disclosure, follow-up questions and responses to good news. You can pause, resume or cancel once it starts.",
+      "description": "Messages in the range are sent to the configured model segment by segment, in time order, and each segment is read for personal sharing, responses after a disclosure, follow-up questions, responses to good news and shared plans. You can pause, resume or cancel once it starts.",
       "range": "{start} to {end}",
       "messages": "Messages",
       "windows": "Segments",
@@ -300,6 +300,26 @@
       "positiveToggle": "Clearly good news for this person",
       "empty": "No responses to good news identified in this range yet."
     },
+    "k5": {
+      "title": "Shared plans",
+      "definition": "Something specific the two of you do together: one person suggests it, and the chat then shows it being talked over, agreed, moved, called off or mentioned afterwards. Only the progress visible in the record is described; whether it happened is not inferred.",
+      "newlyProposed": "Newly suggested in range",
+      "updatedInRange": "Updated in range",
+      "scopeNote": "The three breakdowns below all split the plans updated in range, not the ones newly suggested.",
+      "stageTitle": "Last step seen",
+      "stageNote": "The six cells add up to the plans updated in range. They only say which step was last visible by the end of the range; anything after it is left out.",
+      "byMemberTitle": "Who suggested · who agreed",
+      "byMemberBreakdown": "Suggested {proposed} · Agreed explicitly {confirmed}",
+      "byMemberNote": "Only plans updated in range are counted. A plan counts as suggested only when its suggestion is visible, and agreeing counts towards whoever said yes, so both people can be counted for the same plan.",
+      "empty": "No shared plans identified in this range yet.",
+      "proposer": "Suggested by {name}",
+      "priorNotCovered": "Earlier suggestion not covered",
+      "editStage": "Change the last step",
+      "stagePickHint": "Pick the step this plan was last seen at in the record.",
+      "stageNeedsMessage": "Every step needs at least one message",
+      "oneSenderPerStage": "Apart from \"agreed by both\", the messages in one step have to come from the same person",
+      "confirmNeedsBoth": "\"Agreed by both\" needs two messages: one person putting something to act on, the other agreeing to it afterwards"
+    },
     "category": {
       "experienceOrUpdate": "Experience or update",
       "feeling": "Feeling",
@@ -333,6 +353,14 @@
     "positiveForSharer": {
       "supported": "Good news for this person",
       "uncertain": "Not clear it is good news"
+    },
+    "planStage": {
+      "proposed": "Suggested",
+      "discussed": "Talked over",
+      "mutuallyConfirmed": "Agreed by both",
+      "rescheduled": "Moved",
+      "cancelled": "Called off",
+      "retrospectiveMentioned": "Mentioned afterwards"
     },
     "initiation": {
       "title": "When the question came",
@@ -401,7 +429,15 @@
       "selectedPriors": "{count} earlier messages selected",
       "matter": "What it is about",
       "matterPlaceholder": "Describe the matter in one line",
-      "submitFollowUp": "Confirm as a follow-up question"
+      "submitFollowUp": "Confirm as a follow-up question",
+      "submitSharedPlan": "Confirm as a shared plan",
+      "planSelectHint": "Pick the message that suggests it first, then pick the later messages that move it along, in order, and say which step each one is. They all have to come from the same result.",
+      "planActivity": "What the plan is",
+      "planActivityPlaceholder": "Name the plan in a few words (40 characters)",
+      "planSteps": "Timeline",
+      "planStepHint": "Whoever sent a message is the one acting in that step. Click a message you picked again to drop it.",
+      "planConfirmNeedsSecond": "One more message needed — the next one you pick goes into this step.",
+      "selectedPlanSteps": "{count} steps"
     },
     "methods": {
       "title": "Method and sources",
@@ -424,6 +460,10 @@
       "k3Title": "Follow-up questions (K3)",
       "k3Body": "The unit is a pair of messages: something one person mentioned earlier, plus a later message where the other person asks about that same thing. This is an operationalisation built for this product, not a validated scale of how much someone cares. Laurenceau et al. (1998), cited above, is the background for the construct.",
       "k3CountingBody": "The search goes back 30 days before the question and never earlier than the start of the chat; each row says which day it searched back to. No pair only means no earlier message about that matter was found within that range, not that the matter was never mentioned; such questions are listed but not counted as pairs. Several questions about the same earlier matter count as one matter, so pairs can be more than matters. When the question came is read off the order of messages in the record, and stays \"cannot tell\" when the record does not show it.",
+      "k5Title": "Shared plans (K5)",
+      "k5Body": "The unit is one specific plan the two people take part in together. Suggesting it, talking it over, agreeing, moving it, calling it off and mentioning it afterwards all belong to the same plan, however many times the time changed. Work assigned by an employer, routines involving other people and open-ended wishes that cannot be acted on are left out.",
+      "k5CountingBody": "\"Newly suggested in range\" counts plans whose suggestion falls in the range; \"updated in range\" counts plans with any step in the range, and the three breakdowns split the latter. The step only describes what the chat last shows, not how the plan turned out; nothing after it simply means the record does not mention it again. These steps are an operationalisation built for this product, not a score on any scale.",
+      "k5Citation": "Background for the construct: Schaefer, M. T., & Olson, D. H. (1981). Assessing intimacy: The PAIR inventory. Journal of Marital and Family Therapy, 7(1), 47–60. No PAIR score is produced here.",
       "limitationTitle": "Limitations",
       "limitationBody": "These event definitions have not yet been validated for automatic detection on real chats, and the model can miss events or mistake them. A count only says how many such events were identified in the selected range. It is not a measure of intimacy and cannot be used to compare two people or two relationships."
     }

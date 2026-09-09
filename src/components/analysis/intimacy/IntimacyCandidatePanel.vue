@@ -13,6 +13,7 @@ import {
   type IntimacyCandidates,
   type IntimacyKind,
   type IntimacyMessageSnippet,
+  type SharedPlanStage,
   type SharingCategory,
   type SharingTopic,
   type SupportResponseLabel,
@@ -21,12 +22,16 @@ import type { TimeFilter } from '@openchatlab/shared-types'
 import {
   GOOD_NEWS_RESPONSE_LABELS,
   GOOD_NEWS_RESPONSE_LABEL_KEYS,
+  SHARED_PLAN_STAGES,
+  SHARED_PLAN_STAGE_LABEL_KEYS,
   SHARING_CATEGORIES,
   SHARING_CATEGORY_LABEL_KEYS,
   SHARING_TOPICS,
   SHARING_TOPIC_LABEL_KEYS,
   SUPPORT_RESPONSE_LABELS,
   SUPPORT_RESPONSE_LABEL_KEYS,
+  resolveSharedPlanStages,
+  type SharedPlanStageDraft,
 } from './intimacy-summary'
 
 const props = defineProps<{
@@ -53,6 +58,7 @@ const KIND_OPTIONS: Array<{ kind: IntimacyKind; labelKey: string; submitKey: str
     labelKey: 'views.intimacy.k4.title',
     submitKey: 'views.intimacy.candidates.submitGoodNews',
   },
+  { kind: 'shared_plan', labelKey: 'views.intimacy.k5.title', submitKey: 'views.intimacy.candidates.submitSharedPlan' },
 ]
 
 const kind = ref<IntimacyKind>('sharing')
@@ -63,7 +69,7 @@ const submitting = ref(false)
 
 /**
  * 选中的核心消息必须来自同一个人、同一条检索结果；回复是另一方在同一条结果里、锚点之后的消息，
- * 事后追问的先前消息则是另一方在锚点之前的消息。
+ * 事后追问的先前消息则是另一方在锚点之前的消息，共同安排的核心消息则是那条提议。
  */
 const selection = ref<{
   group: string
@@ -78,9 +84,13 @@ const supportLabels = ref<SupportResponseLabel[]>([])
 const goodNewsLabels = ref<GoodNewsResponseLabel[]>([])
 const positiveForSharer = ref(false)
 const matter = ref('')
+const activitySummary = ref('')
+/** 共同安排的时间线：第一步是提议（就是选中的核心消息），后面每点一条消息就多一步。 */
+const planSteps = ref<SharedPlanStageDraft[]>([])
 
 const isSharing = computed(() => kind.value === 'sharing')
 const isFollowUp = computed(() => kind.value === 'follow_up')
+const isSharedPlan = computed(() => kind.value === 'shared_plan')
 const submitKey = computed(() => KIND_OPTIONS.find((option) => option.kind === kind.value)!.submitKey)
 const responseLabelCount = computed(() =>
   kind.value === 'support_response' ? supportLabels.value.length : goodNewsLabels.value.length
@@ -88,8 +98,25 @@ const responseLabelCount = computed(() =>
 const topicOptions = computed(() =>
   SHARING_TOPICS.map((value) => ({ value, label: t(SHARING_TOPIC_LABEL_KEYS[value]) }))
 )
+const stageOptions = computed(() =>
+  SHARED_PLAN_STAGES.map((value) => ({ value, label: t(SHARED_PLAN_STAGE_LABEL_KEYS[value]) }))
+)
+/** 检索结果里的消息，按 id 取回原文与发送者：拼时间线和查发送者都用它。 */
+const snippetById = computed(() => {
+  const map = new Map<number, IntimacyMessageSnippet>()
+  for (const message of candidates.value?.keyword ?? []) map.set(message.messageId, message)
+  for (const chunk of candidates.value?.semantic ?? []) {
+    for (const message of chunk.messages) map.set(message.messageId, message)
+  }
+  return map
+})
+/** 提交前按后端同一套规则算出每一步的行为者；有问题时 errorKey 就是要显示的提示。 */
+const planStages = computed(() =>
+  resolveSharedPlanStages(planSteps.value, (messageId) => snippetById.value.get(messageId)?.senderId)
+)
 const selectHintKey = computed(() => {
   if (isSharing.value) return 'views.intimacy.candidates.selectHint'
+  if (isSharedPlan.value) return 'views.intimacy.candidates.planSelectHint'
   return isFollowUp.value
     ? 'views.intimacy.candidates.followUpSelectHint'
     : 'views.intimacy.candidates.responseSelectHint'
@@ -102,6 +129,8 @@ const canSubmit = computed(() => {
   const current = selection.value
   if (!current || current.messageIds.length === 0) return false
   if (isSharing.value) return categories.value.length > 0
+  // 安排要有一句活动描述，时间线也要过发送者那一关，否则后端会原样拒绝。
+  if (isSharedPlan.value) return activitySummary.value.trim() !== '' && planStages.value.errorKey === null
   // 追问必须配上被问者更早的消息和一句事情描述，否则它不是一个配对。
   if (isFollowUp.value) return current.priorMessageIds.length > 0 && matter.value.trim() !== ''
   // 后端只接受「有回复且有标签」或「两者都没有」，后者记为未见回复。
@@ -121,6 +150,8 @@ function resetSelection() {
   goodNewsLabels.value = []
   positiveForSharer.value = false
   matter.value = ''
+  activitySummary.value = ''
+  planSteps.value = []
 }
 
 async function search() {
@@ -149,13 +180,27 @@ function isCoreSelected(group: string, messageId: number): boolean {
 function isSecondarySelected(group: string, messageId: number): boolean {
   const current = selection.value
   if (current?.group !== group) return false
+  // 安排的第一步就是提议本身，它在核心那一栏里高亮，所以这里只看后面的步骤。
+  if (isSharedPlan.value) {
+    return planSteps.value.some((step, index) => index > 0 && step.messageIds.includes(messageId))
+  }
   return current.responseMessageIds.includes(messageId) || current.priorMessageIds.includes(messageId)
+}
+
+/** 被选进时间线的消息标出它属于哪一步；其它 kind 只有「回复」或「先前」一种说法。 */
+function secondaryTag(messageId: number): string {
+  if (!isSharedPlan.value) return t(secondaryLabelKey.value)
+  const step = planSteps.value.find((item) => item.messageIds.includes(messageId))
+  return step ? t(SHARED_PLAN_STAGE_LABEL_KEYS[step.stage]) : ''
 }
 
 /** 回复必须在倾诉 / 好消息之后；追问问的那件事必须在追问之前，所以两种方向刚好相反。 */
 function canPick(group: string, message: IntimacyMessageSnippet): boolean {
   const current = selection.value
-  if (isSharing.value || !current || current.group !== group || current.senderId === message.senderId) return true
+  if (!current || current.group !== group) return true
+  // 安排的每一步都要在提议之后；提议本身仍可点，用来重新开始。
+  if (isSharedPlan.value) return message.messageId >= Math.min(...current.messageIds)
+  if (isSharing.value || current.senderId === message.senderId) return true
   return isFollowUp.value
     ? message.messageId < Math.min(...current.messageIds)
     : message.messageId > Math.min(...current.messageIds)
@@ -165,6 +210,12 @@ function toggleMessage(group: string, message: IntimacyMessageSnippet) {
   const current = selection.value
   if (!current || current.group !== group) {
     selection.value = startSelection(group, message)
+    // 共同安排先点的是提议，它自己就是时间线的第一步。
+    if (isSharedPlan.value) planSteps.value = [{ stage: 'proposed', messageIds: [message.messageId] }]
+    return
+  }
+  if (isSharedPlan.value) {
+    togglePlanMessage(current, message)
     return
   }
   if (current.senderId === message.senderId) {
@@ -180,6 +231,39 @@ function toggleMessage(group: string, message: IntimacyMessageSnippet) {
   selection.value = isFollowUp.value
     ? { ...current, priorMessageIds: toggleId(current.priorMessageIds, message.messageId) }
     : { ...current, responseMessageIds: toggleId(current.responseMessageIds, message.messageId) }
+}
+
+/**
+ * 后面的每一条消息各成一步，谁发的就由谁行动；只有「双方确认」需要两条，
+ * 所以那一步还缺一条时，下一次点击补进同一步而不是新开一步。
+ */
+function togglePlanMessage(current: NonNullable<typeof selection.value>, message: IntimacyMessageSnippet) {
+  const messageId = message.messageId
+  // 取消提议等于重新开始：后面的步骤都是挂在这条提议上的。
+  if (current.messageIds.includes(messageId)) {
+    resetSelection()
+    return
+  }
+  const picked = planSteps.value.findIndex((step) => step.messageIds.includes(messageId))
+  if (picked >= 0) {
+    const messageIds = planSteps.value[picked]!.messageIds.filter((item) => item !== messageId)
+    planSteps.value =
+      messageIds.length === 0
+        ? planSteps.value.filter((_, index) => index !== picked)
+        : planSteps.value.map((step, index) => (index === picked ? { ...step, messageIds } : step))
+    return
+  }
+  const open = planSteps.value.findIndex((step) => step.stage === 'mutually_confirmed' && step.messageIds.length < 2)
+  planSteps.value =
+    open >= 0
+      ? planSteps.value.map((step, index) =>
+          index === open ? { ...step, messageIds: toggleId(step.messageIds, messageId) } : step
+        )
+      : [...planSteps.value, { stage: 'discussed', messageIds: [messageId] }]
+}
+
+function setStepStage(index: number, stage: SharedPlanStage) {
+  planSteps.value = planSteps.value.map((step, position) => (position === index ? { ...step, stage } : step))
 }
 
 function startSelection(group: string, message: IntimacyMessageSnippet): NonNullable<typeof selection.value> {
@@ -236,6 +320,14 @@ function buildRequest(current: NonNullable<typeof selection.value>): CreateIntim
       ...core,
       priorMessageIds: [...current.priorMessageIds],
       details: { matter: matter.value.trim() },
+    }
+  }
+  if (kind.value === 'shared_plan') {
+    // 核心消息是提议，所以 subjectMemberId 是提议者；每一步的行为者由发送者决定。
+    return {
+      kind: 'shared_plan',
+      ...core,
+      details: { activitySummary: activitySummary.value.trim(), stages: planStages.value.stages },
     }
   }
   if (kind.value === 'good_news_response') {
@@ -361,7 +453,7 @@ function errorMessage(error: unknown): string {
                   <span class="truncate">{{ message.senderName }}</span>
                   <span class="tabular-nums">{{ formatTime(message.timestamp) }}</span>
                   <span v-if="isSecondarySelected('keyword', message.messageId)" class="text-blue-500">
-                    {{ t(secondaryLabelKey) }}
+                    {{ secondaryTag(message.messageId) }}
                   </span>
                 </span>
                 <span class="mt-0.5 block text-xs leading-relaxed text-gray-700 dark:text-gray-200">
@@ -405,7 +497,7 @@ function errorMessage(error: unknown): string {
                       <span class="truncate">{{ message.senderName }}</span>
                       <span class="tabular-nums">{{ formatTime(message.timestamp) }}</span>
                       <span v-if="isSecondarySelected(`semantic:${index}`, message.messageId)" class="text-blue-500">
-                        {{ t(secondaryLabelKey) }}
+                        {{ secondaryTag(message.messageId) }}
                       </span>
                     </span>
                     <span class="mt-0.5 block text-xs leading-relaxed text-gray-700 dark:text-gray-200">
@@ -426,6 +518,10 @@ function errorMessage(error: unknown): string {
             <template v-if="isFollowUp">
               ·
               {{ t('views.intimacy.candidates.selectedPriors', { count: selection.priorMessageIds.length }) }}
+            </template>
+            <template v-else-if="isSharedPlan">
+              ·
+              {{ t('views.intimacy.candidates.selectedPlanSteps', { count: planSteps.length }) }}
             </template>
             <template v-else-if="!isSharing">
               ·
@@ -462,6 +558,55 @@ function errorMessage(error: unknown): string {
             size="xs"
             :placeholder="t('views.intimacy.candidates.matterPlaceholder')"
           />
+        </template>
+
+        <template v-else-if="isSharedPlan">
+          <p class="mt-2 text-[11px] text-gray-400">{{ t('views.intimacy.candidates.planActivity') }}</p>
+          <UInput
+            v-model="activitySummary"
+            class="mt-1 w-full"
+            size="xs"
+            :maxlength="40"
+            :placeholder="t('views.intimacy.candidates.planActivityPlaceholder')"
+          />
+
+          <p class="mt-2 text-[11px] text-gray-400">{{ t('views.intimacy.candidates.planSteps') }}</p>
+          <ul class="mt-1 space-y-1.5">
+            <li
+              v-for="(step, index) in planSteps"
+              :key="index"
+              class="rounded-lg border border-gray-200 px-2.5 py-1.5 dark:border-gray-700"
+            >
+              <USelect
+                :model-value="step.stage"
+                :items="stageOptions"
+                value-key="value"
+                size="xs"
+                class="w-32"
+                :disabled="index === 0"
+                @update:model-value="setStepStage(index, $event as SharedPlanStage)"
+              />
+              <p v-for="messageId in step.messageIds" :key="messageId" class="mt-1 text-xs leading-relaxed">
+                <span class="mr-1.5 text-[10px] text-gray-400">
+                  {{ snippetById.get(messageId)?.senderName }}
+                  <span class="tabular-nums">{{ formatTime(snippetById.get(messageId)?.timestamp ?? 0) }}</span>
+                </span>
+                <span class="text-gray-700 dark:text-gray-200">
+                  {{ snippetById.get(messageId) ? messageText(snippetById.get(messageId)!) : '' }}
+                </span>
+              </p>
+              <p
+                v-if="step.stage === 'mutually_confirmed' && step.messageIds.length < 2"
+                class="mt-1 text-[11px] text-amber-600 dark:text-amber-400"
+              >
+                {{ t('views.intimacy.candidates.planConfirmNeedsSecond') }}
+              </p>
+            </li>
+          </ul>
+          <p v-if="planStages.errorKey" class="mt-2 text-[11px] text-amber-600 dark:text-amber-400">
+            {{ t(planStages.errorKey) }}
+          </p>
+          <p class="mt-2 text-[11px] text-gray-400">{{ t('views.intimacy.candidates.planStepHint') }}</p>
         </template>
 
         <template v-else>

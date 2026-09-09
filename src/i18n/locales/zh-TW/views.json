@@ -232,7 +232,7 @@
     },
     "preflight": {
       "title": "分析本範圍",
-      "description": "按時間順序把範圍內的訊息分段送給已設定的模型，逐段辨識個人分享、傾訴後的回應、事後追問和好消息回應。開始後可以暫停、繼續或取消。",
+      "description": "按時間順序把範圍內的訊息分段送給已設定的模型，逐段辨識個人分享、傾訴後的回應、事後追問、好消息回應和共同安排。開始後可以暫停、繼續或取消。",
       "range": "{start} 至 {end}",
       "messages": "訊息",
       "windows": "分段",
@@ -300,6 +300,26 @@
       "positiveToggle": "對本人是明確的好事",
       "empty": "本範圍內還沒有辨識到好消息回應事件。"
     },
+    "k5": {
+      "title": "共同安排",
+      "definition": "雙方一起做一件具體的事：一方提出，之後在聊天裡商量、確認、改期、取消或事後提起。只描述記錄裡看得到的進展，不推斷這件事在現實中有沒有發生。",
+      "newlyProposed": "本期新提議",
+      "updatedInRange": "本期有更新",
+      "scopeNote": "下面三項都是「本期有更新」這一組安排的拆分，不是「本期新提議」的拆分。",
+      "stageTitle": "最後看到的一步",
+      "stageNote": "六格之和等於「本期有更新」。這只表示範圍截止時記錄裡最後看到的一步，之後的進展不算進來。",
+      "byMemberTitle": "誰提議 · 誰確認",
+      "byMemberBreakdown": "提議 {proposed} · 明確同意 {confirmed}",
+      "byMemberNote": "只統計「本期有更新」的安排；提議只計看得到提議訊息的安排，同意計在明確說同意的那一方，所以同一個安排兩個人可以各計一次。",
+      "empty": "本範圍內還沒有辨識到共同安排。",
+      "proposer": "提議：{name}",
+      "priorNotCovered": "較早提議未覆蓋",
+      "editStage": "改最後一步",
+      "stagePickHint": "選擇這個安排在記錄裡最後看到的一步。",
+      "stageNeedsMessage": "每一步至少要選一則訊息",
+      "oneSenderPerStage": "除「雙方確認」外，同一步裡的訊息要由同一個人發送",
+      "confirmNeedsBoth": "「雙方確認」要兩則訊息：對方提出可執行的安排，本人隨後明確同意"
+    },
     "category": {
       "experienceOrUpdate": "經歷與近況",
       "feeling": "感受",
@@ -333,6 +353,14 @@
     "positiveForSharer": {
       "supported": "對本人是好事",
       "uncertain": "是否好事無法判斷"
+    },
+    "planStage": {
+      "proposed": "提議",
+      "discussed": "商量",
+      "mutuallyConfirmed": "雙方確認",
+      "rescheduled": "改期",
+      "cancelled": "取消",
+      "retrospectiveMentioned": "事後提起"
     },
     "initiation": {
       "title": "問起的時機",
@@ -401,7 +429,15 @@
       "selectedPriors": "已選先前 {count} 則",
       "matter": "事情描述",
       "matterPlaceholder": "問的是哪件事，一句話寫清",
-      "submitFollowUp": "確認為事後追問"
+      "submitFollowUp": "確認為事後追問",
+      "submitSharedPlan": "確認為共同安排",
+      "planSelectHint": "先點提議的那句話，再按時間順序點後面推進這個安排的訊息，並為每則選一步。只能選同一筆檢索結果裡的訊息。",
+      "planActivity": "活動描述",
+      "planActivityPlaceholder": "這是什麼安排，最多 40 字",
+      "planSteps": "時間線",
+      "planStepHint": "每一步的行為者就是那則訊息的發送者；再點一次已選的訊息可以去掉它。",
+      "planConfirmNeedsSecond": "還缺一則：下一則點擊會補進這一步。",
+      "selectedPlanSteps": "已選 {count} 步"
     },
     "methods": {
       "title": "方法與來源",
@@ -424,6 +460,10 @@
       "k3Title": "事後追問（K3）",
       "k3Body": "統計單位是一對訊息：被問者更早提到的一件事，加上另一方之後明確問起同一件事。這是本產品的操作化指標，不是衡量關心程度的量表。構念背景同上面的 Laurenceau 等（1998）。",
       "k3CountingBody": "回查範圍預設是追問之前 30 天，且不早於聊天記錄的開始，每則追問都會寫明實際回查到哪一天。沒有配對只表示在這個範圍內沒有找到被問者更早提到那件事的訊息，不表示那件事沒被提過；這樣的追問會列出來，但不計入配對數。同一件事被問多次按先前事件去重，所以配對數可以大於涉及的事情數。「問起的時機」按記錄裡的先後順序判斷，判斷不出時寫「無法判斷」。",
+      "k5Title": "共同安排（K5）",
+      "k5Body": "統計單位是一個雙方共同參與的具體安排。提議、商量、確認、改期、取消、事後提起都屬於同一個安排，改過幾次時間也還是一個。公司派工、多人例行流程，以及「以後我們都要幸福」這類無法推進的說法不算。",
+      "k5CountingBody": "「本期新提議」按提議訊息落在範圍內計數，「本期有更新」按任一步落在範圍內計數，下面三項拆的都是後者。狀態只描述聊天裡看得到的最後一步，不推斷這件事在現實中怎麼樣；沒有後續記錄只表示記錄裡沒有再提到它。這些狀態是本產品為呈現記錄而定的操作化設計，不是任何量表的得分。",
+      "k5Citation": "構念背景：Schaefer, M. T., & Olson, D. H. (1981). Assessing intimacy: The PAIR inventory. Journal of Marital and Family Therapy, 7(1), 47–60. 頁面不輸出 PAIR 分數。",
       "limitationTitle": "侷限",
       "limitationBody": "這裡的事件定義還沒有在真實聊天上驗證過自動識別的準確度，模型可能漏掉或認錯。計數只表示在所選範圍內識別到多少個這樣的事件，不表示親密程度，也不能用來比較兩個人或兩段關係。"
     }
