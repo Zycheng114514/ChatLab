@@ -12,6 +12,7 @@ import type {
   GoodNewsResponseDetails,
   IntimacyEvent,
   IntimacyFollowUpMemberSummary,
+  IntimacyKind,
   IntimacyMemberSummary,
   IntimacyResponseMemberSummary,
   IntimacyResults,
@@ -1465,7 +1466,7 @@ test('a confirmed candidate is counted without a run and rejects messages the pa
   }
 })
 
-test('group chats, unimplemented kinds and a missing LLM are refused before any model call', async () => {
+test('group chats, unknown kinds and a missing LLM are refused before any model call', async () => {
   const groupHarness = createHarness(
     {
       modelId: 'test/model',
@@ -1483,7 +1484,7 @@ test('group chats, unimplemented kinds and a missing LLM are refused before any 
       (error: unknown) => (error as { statusCode?: number }).statusCode === 400
     )
     await assert.rejects(
-      () => withoutLlm.service.preflight('private', { kinds: ['repair_attempt'] }),
+      () => withoutLlm.service.preflight('private', { kinds: ['reconciliation' as IntimacyKind] }),
       (error: unknown) => (error as { statusCode?: number }).statusCode === 400
     )
     assert.throws(

@@ -96,7 +96,7 @@ test('intimacy routes expose run state and reject requests the analysis cannot h
   const unsupportedKind = await app.inject({
     method: 'POST',
     url: '/_web/sessions/private/intimacy/preflight',
-    payload: { kinds: ['repair_attempt'] },
+    payload: { kinds: ['reconciliation'] },
   })
   assert.equal(unsupportedKind.statusCode, 400)
 
@@ -211,7 +211,7 @@ test('confirmed events and reviews stay inside one session and refuse a stale re
   assert.equal(supportEvent.statusCode, 200)
   assert.deepEqual(
     supportEvent.json().summaries.map((summary: { kind: string }) => summary.kind),
-    ['sharing', 'support_response', 'follow_up', 'good_news_response', 'shared_plan'],
+    ['sharing', 'support_response', 'follow_up', 'good_news_response', 'shared_plan', 'repair_attempt'],
     'one request answers for every implemented kind'
   )
 
@@ -310,17 +310,17 @@ test('confirmed events and reviews stay inside one session and refuse a stale re
   })
   assert.equal(wrongSender.statusCode, 400, 'a reply the discloser sent themselves is refused')
 
-  const unimplementedKind = await app.inject({
+  const unknownKind = await app.inject({
     method: 'POST',
     url: '/_web/sessions/private/intimacy/events',
     payload: {
-      kind: 'repair_attempt',
+      kind: 'reconciliation',
       subjectMemberId: 1,
       coreMessageIds: [1],
       details: { categories: ['feeling'], topic: 'other', isDistressDisclosure: 'no' },
     },
   })
-  assert.equal(unimplementedKind.statusCode, 400)
+  assert.equal(unknownKind.statusCode, 400)
 
   const mixed = await app.inject({ method: 'GET', url: '/_web/sessions/private/intimacy/results' })
   assert.equal(mixed.statusCode, 200)

@@ -4,8 +4,10 @@ import {
   type GoodNewsResponseLabel,
   type IntimacyMember,
   type IntimacyObservation,
+  type RepairLabel,
   type ResponseObservation,
   type SharedPlanStage,
+  type SubsequentObservation,
   type SharingCategory,
   type SharingDetails,
   type SharingTopic,
@@ -64,6 +66,20 @@ export const SHARED_PLAN_STAGES: readonly SharedPlanStage[] = [
   'rescheduled',
   'cancelled',
   'retrospective_mentioned',
+]
+/** Display and counting order of the ways a repair attempt may be made, and of what followed it. */
+export const REPAIR_LABELS: readonly RepairLabel[] = [
+  'apology',
+  'clarification',
+  'acknowledges_part',
+  'deescalation_or_reconnect',
+]
+export const SUBSEQUENT_OBSERVATIONS: readonly SubsequentObservation[] = [
+  'explicit_acceptance_expression',
+  'continued_discussion',
+  'explicit_rejection_expression',
+  'no_visible_follow_up',
+  'uncertain',
 ]
 
 const MAX_EVENTS_PER_WINDOW = 30

@@ -6,13 +6,17 @@ export type IntimacyKind =
   | 'shared_plan'
   | 'repair_attempt'
 
-/** 已实现 K1 个人分享、K2 倾诉后的回应、K3 事后追问、K4 好消息回应、K5 共同安排；其余值先占位，服务端对未实现的 kind 返回 400 */
+/**
+ * 全部六种都已实现：K1 个人分享、K2 倾诉后的回应、K3 事后追问、K4 好消息回应、K5 共同安排、
+ * K6 分歧后的修复尝试。服务端对不在这个列表里的值返回 400。
+ */
 export const IMPLEMENTED_INTIMACY_KINDS: readonly IntimacyKind[] = [
   'sharing',
   'support_response',
   'follow_up',
   'good_news_response',
   'shared_plan',
+  'repair_attempt',
 ]
 
 export type IntimacyRunStatus = 'pending' | 'running' | 'paused' | 'completed' | 'failed' | 'cancelled'
@@ -24,9 +28,10 @@ export type IntimacyObservation = 'sufficient' | 'boundary_limited' | 'media_mis
 export type IntimacyEventStatus = 'auto' | 'uncertain' | 'confirmed' | 'excluded'
 /**
  * response = 另一方针对锚点消息的回复；prior = K3 里被问者更早提到那件事的消息；
- * stage = K5 里推进同一个安排的消息（提议之后的商量 / 确认 / 改期 / 取消 / 回顾）
+ * stage = K5 里推进同一个安排的消息（提议之后的商量 / 确认 / 改期 / 取消 / 回顾）；
+ * disagreement = K6 里修复之前双方表现出不一致的消息；subsequent = K6 里另一方在修复之后的回复
  */
-export type IntimacyEvidenceRole = 'core' | 'related' | 'response' | 'prior' | 'stage'
+export type IntimacyEvidenceRole = 'core' | 'related' | 'response' | 'prior' | 'stage' | 'disagreement' | 'subsequent'
 
 export interface IntimacyMember {
   memberId: number
@@ -210,12 +215,36 @@ export interface SharedPlanDetails {
   priorCoverage: 'covered' | 'not_covered'
 }
 
+/** K6 的修复方式，多标签；四种都是聊天里看得见的表达，不是对动机的判断 */
+export type RepairLabel = 'apology' | 'clarification' | 'acknowledges_part' | 'deescalation_or_reconnect'
+
+/**
+ * 修复之后另一方可见的后续。接纳表达只表示对方说了「我明白你的意思了」这类话，
+ * 不等于和解成功；没有后续也不等于对方不接受。
+ */
+export type SubsequentObservation =
+  | 'explicit_acceptance_expression'
+  | 'continued_discussion'
+  | 'explicit_rejection_expression'
+  | 'no_visible_follow_up'
+  | 'uncertain'
+
+export interface RepairAttemptDetails {
+  kind: 'repair_attempt'
+  /** `disagreement:<该组最早分歧消息 id>`；同一次分歧的多个修复尝试共用一个 */
+  disagreementGroupId: string
+  /** 非空，多标签 */
+  repairLabels: RepairLabel[]
+  subsequentObservation: SubsequentObservation
+}
+
 export type IntimacyEventDetails =
   | SharingDetails
   | SupportResponseDetails
   | GoodNewsResponseDetails
   | FollowUpDetails
   | SharedPlanDetails
+  | RepairAttemptDetails
 
 /**
  * K3 修订：用户从候选列表或被问者任意更早的消息里指定先前事件。客户端只传 `priorMessageIds`，
@@ -236,6 +265,12 @@ export interface SharedPlanReviewDetails {
   lastObservedStage: SharedPlanStage
 }
 
+/** K6 修订：改修复方式或后续表现；没有后续证据的事件不能改成接纳 / 继续讨论 / 拒绝 */
+export interface RepairReviewDetails {
+  repairLabels?: RepairLabel[]
+  subsequentObservation?: SubsequentObservation
+}
+
 /** 用户改写的标签；服务端按事件 kind 校验，只接受该 kind 可改写的字段 */
 export type IntimacyReviewDetails =
   | Partial<Omit<SharingDetails, 'kind'>>
@@ -243,6 +278,7 @@ export type IntimacyReviewDetails =
   | Partial<Omit<GoodNewsResponseDetails, 'kind'>>
   | FollowUpReviewDetails
   | SharedPlanReviewDetails
+  | RepairReviewDetails
 
 export interface IntimacyEvidence {
   messageId: number
@@ -266,9 +302,12 @@ export interface IntimacyEvent {
   /** 用户确认候选生成的事件为 null */
   runId: string | null
   kind: IntimacyKind
-  /** K1 = 分享者，K2 = 倾诉者，K3 = 被问者，K4 = 好消息的分享者，K5 = 提议者（没有提议时是最早阶段的行为者） */
+  /**
+   * K1 = 分享者，K2 = 倾诉者，K3 = 被问者，K4 = 好消息的分享者，
+   * K5 = 提议者（没有提议时是最早阶段的行为者），K6 = 修复发起者
+   */
   subjectMemberId: number
-  /** K2 / K4 = 回复方，K3 = 追问者，K5 = 另一方 */
+  /** K2 / K4 = 回复方，K3 = 追问者，K5 / K6 = 另一方 */
   otherMemberId: number
   anchorMessageId: number
   anchorTs: number
@@ -369,7 +408,26 @@ export interface SharedPlanSummary {
   confirmedBy: Record<number, number>
 }
 
-export type IntimacyKindSummary = SharingSummary | ResponseSummary | FollowUpSummary | SharedPlanSummary
+/** 修复发起者的计数；`bySubsequent` 各项之和 = `attempts`，因为每个尝试恰好有一种后续 */
+export interface IntimacyRepairMemberSummary {
+  /** 修复发起者 */
+  memberId: number
+  /** 该成员发起的修复尝试数（status ∈ auto、confirmed） */
+  attempts: number
+  /** 每尝试每标签一次，和可大于 attempts */
+  byLabel: Record<RepairLabel, number>
+  bySubsequent: Record<SubsequentObservation, number>
+}
+
+/** 分歧数与尝试数分开：同一次分歧里的两次修复是一个分歧、两个尝试 */
+export interface RepairSummary {
+  kind: 'repair_attempt'
+  /** 计入的尝试涉及的不同 disagreementGroupId 数 */
+  disagreements: number
+  members: IntimacyRepairMemberSummary[]
+}
+
+export type IntimacyKindSummary = SharingSummary | ResponseSummary | FollowUpSummary | SharedPlanSummary | RepairSummary
 
 export interface IntimacyResults {
   /** 提供事件的那次 run；只有用户确认事件时为 null */
@@ -431,6 +489,15 @@ export interface CreateSharedPlanDetails {
   stages: CreateSharedPlanStage[]
 }
 
+/**
+ * K6 用户确认：分歧组由服务端按最早的分歧消息定；没有勾选后续消息时后续表现也由服务端定为
+ * `no_visible_follow_up`，有后续消息时必须给出其余四种之一。
+ */
+export interface CreateRepairAttemptDetails {
+  repairLabels: RepairLabel[]
+  subsequentObservation?: SubsequentObservation
+}
+
 /** 服务端填 K2 的 disclosureEventId，并按有没有勾选回复消息派生 responseObservation */
 export type CreateIntimacyEventDetails =
   | Omit<SharingDetails, 'kind'>
@@ -438,18 +505,21 @@ export type CreateIntimacyEventDetails =
   | Omit<GoodNewsResponseDetails, 'kind' | 'responseObservation'>
   | CreateFollowUpDetails
   | CreateSharedPlanDetails
+  | CreateRepairAttemptDetails
 
 export interface CreateIntimacyEventRequest {
   kind: IntimacyKind
-  /** 核心消息的发送者：K1 / K2 / K4 是事件主体，K3 是追问者（事件主体是被问的另一方） */
+  /** 核心消息的发送者：K1 / K2 / K4 是事件主体，K3 是追问者（事件主体是被问的另一方），K6 是修复发起者 */
   subjectMemberId: number
-  /** 非空，全部由 subjectMemberId 发送；K3 是追问消息，K5 是提议消息 */
+  /** 非空，全部由 subjectMemberId 发送；K3 是追问消息，K5 是提议消息，K6 是修复消息 */
   coreMessageIds: number[]
   relatedMessageIds?: number[]
-  /** K2 / K4：另一方的回复消息，必须由 otherMemberId 发送且 id 大于锚点 */
+  /** K2 / K4：另一方的回复消息；K6：另一方在修复之后的后续消息。都必须由 otherMemberId 发送且晚于锚点 */
   responseMessageIds?: number[]
   /** K3：另一方更早提到那件事的消息，必须由 otherMemberId 发送且 id 小于锚点 */
   priorMessageIds?: number[]
+  /** K6：修复之前的分歧消息，双方各至少一条，全部早于修复锚点 */
+  disagreementMessageIds?: number[]
   details: CreateIntimacyEventDetails
 }
 

@@ -15,6 +15,10 @@ import type {
   IntimacyModelDecision,
   IntimacyObservation,
   IntimacyResponseMemberSummary,
+  RepairAttemptDetails,
+  RepairLabel,
+  RepairReviewDetails,
+  RepairSummary,
   ResponseObservation,
   SharedPlanDetails,
   SharedPlanReviewDetails,
@@ -23,6 +27,7 @@ import type {
   SharedPlanSummary,
   SharingCategory,
   SharingDetails,
+  SubsequentObservation,
   SupportResponseDetails,
   SupportResponseLabel,
 } from '@openchatlab/shared-types'
@@ -38,8 +43,10 @@ import type {
 } from './model-protocol'
 import {
   GOOD_NEWS_RESPONSE_LABELS,
+  REPAIR_LABELS,
   SHARED_PLAN_STAGES,
   SHARING_CATEGORIES,
+  SUBSEQUENT_OBSERVATIONS,
   SUPPORT_RESPONSE_LABELS,
 } from './model-protocol'
 import type { IntimacySourceMessage, IntimacyWindow } from './source'
@@ -624,6 +631,18 @@ export function applyReviewDetails(
     const revised = revision as SharedPlanReviewDetails
     return revised.lastObservedStage ? { ...details, lastObservedStage: revised.lastObservedStage } : details
   }
+  if (details.kind === 'repair_attempt') {
+    // The disagreement it belongs to is evidence; how the repair was made and what followed can be corrected.
+    const revised = revision as RepairReviewDetails
+    return {
+      ...details,
+      repairLabels:
+        revised.repairLabels && revised.repairLabels.length > 0
+          ? REPAIR_LABELS.filter((label) => revised.repairLabels!.includes(label))
+          : details.repairLabels,
+      subsequentObservation: revised.subsequentObservation ?? details.subsequentObservation,
+    }
+  }
   const revised = revision as Partial<Omit<GoodNewsResponseDetails, 'kind'>>
   return {
     ...details,
@@ -774,6 +793,39 @@ export function summarizeSharedPlans(
     }
   }
   return { kind: 'shared_plan', newlyProposed, updatedInRange, byLastStage, proposedBy, confirmedBy }
+}
+
+/**
+ * Count repair attempts per participant who made one. The disagreements they answer are counted separately: two
+ * repairs after one argument are two attempts of one disagreement, so neither number stands in for the other.
+ */
+export function summarizeRepairAttempts(events: IntimacyEvent[], members: IntimacyMember[]): RepairSummary {
+  const counted = events.filter(
+    (event) => event.kind === 'repair_attempt' && (event.status === 'auto' || event.status === 'confirmed')
+  )
+  return {
+    kind: 'repair_attempt',
+    disagreements: new Set(counted.flatMap((event) => repairDetailsOf(event)?.disagreementGroupId ?? [])).size,
+    members: members.map((member) => {
+      const own = counted.filter((event) => event.subjectMemberId === member.memberId)
+      const byLabel = Object.fromEntries(REPAIR_LABELS.map((label) => [label, 0])) as Record<RepairLabel, number>
+      const bySubsequent = Object.fromEntries(SUBSEQUENT_OBSERVATIONS.map((item) => [item, 0])) as Record<
+        SubsequentObservation,
+        number
+      >
+      for (const event of own) {
+        const details = repairDetailsOf(event)
+        if (!details) continue
+        for (const label of details.repairLabels) byLabel[label] += 1
+        bySubsequent[details.subsequentObservation] += 1
+      }
+      return { memberId: member.memberId, attempts: own.length, byLabel, bySubsequent }
+    }),
+  }
+}
+
+function repairDetailsOf(event: IntimacyEvent): RepairAttemptDetails | null {
+  return event.details.kind === 'repair_attempt' ? event.details : null
 }
 
 function withinPlanRange(timestamp: number, range?: SharedPlanRange): boolean {

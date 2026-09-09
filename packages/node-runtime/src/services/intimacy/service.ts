@@ -61,6 +61,7 @@ import {
   mergeSharedPlanEvents,
   resolveEventStatus,
   summarizeFollowUps,
+  summarizeRepairAttempts,
   summarizeResponses,
   summarizeSharedPlans,
   summarizeSharing,
@@ -600,6 +601,10 @@ export function createIntimacyService(deps: IntimacyServiceDeps): IntimacyServic
       }
       confirmEvent(sessionId, record, { currentEvents, coreMessageIds, timestamp })
       return getResults(sessionId)
+    }
+
+    if (kind === 'repair_attempt') {
+      throw Object.assign(new Error('Repair attempts are not implemented yet'), { statusCode: 400 })
     }
 
     // K2 counts a reply to a disclosure, so the disclosure has to exist as a K1 event of its own.
@@ -1575,6 +1580,7 @@ function buildSummaries(
     { kind: 'follow_up', members: summarizeFollowUps(events, members) },
     { kind: 'good_news_response', members: summarizeResponses(events, members, 'good_news_response') },
     summarizeSharedPlans(events, members, range),
+    summarizeRepairAttempts(events, members),
   ]
 }
 
@@ -1824,6 +1830,9 @@ function toReviewDetails(record: IntimacyEventRecord): IntimacyReviewDetails {
     return { positiveForSharer: details.positiveForSharer, responseLabels: details.responseLabels }
   }
   if (details.kind === 'shared_plan') return { lastObservedStage: details.lastObservedStage }
+  if (details.kind === 'repair_attempt') {
+    return { repairLabels: details.repairLabels, subsequentObservation: details.subsequentObservation }
+  }
   return {
     priorMessageIds: record.evidence
       .filter((evidence) => evidence.role === 'prior')
@@ -1840,6 +1849,9 @@ function toReviewDetails(record: IntimacyEventRecord): IntimacyReviewDetails {
 function requireRevisableDetails(event: IntimacyEvent, details: IntimacyReviewDetails): IntimacyReviewDetails {
   if (event.details.kind === 'sharing') return requirePartialSharingDetails(details)
   if (event.details.kind === 'shared_plan') return requireSharedPlanReviewDetails(details)
+  if (event.details.kind === 'repair_attempt') {
+    throw Object.assign(new Error('Repair attempts are not implemented yet'), { statusCode: 400 })
+  }
   if (event.details.kind === 'follow_up') {
     throw Object.assign(new Error('A follow-up revision needs the earlier messages it asks about'), {
       statusCode: 400,
