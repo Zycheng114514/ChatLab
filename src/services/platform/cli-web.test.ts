@@ -192,6 +192,103 @@ describe('CliWebPlatformAdapter', () => {
     }
   })
 
+  it('posts decoded PCM as little-endian octet-stream bytes with the chosen language', async () => {
+    const originalFetch = globalThis.fetch
+    const requests: Array<{ url: string; init?: RequestInit }> = []
+    globalThis.fetch = ((input: RequestInfo | URL, init?: RequestInit) => {
+      requests.push({ url: String(input), init })
+      return Promise.resolve(new Response(JSON.stringify({ text: 'hello', contentUpdated: true })))
+    }) as typeof fetch
+
+    try {
+      const pcm = new Float32Array([0, 0.5, -0.5])
+      const result = await new CliWebPlatformAdapter().transcription.transcribePcm('a/b', 7, pcm, 'zh')
+
+      assert.deepEqual(result, { text: 'hello', contentUpdated: true })
+      assert.equal(requests.length, 1)
+      assert.equal(requests[0].url, '/_web/sessions/a%2Fb/attachments/7/transcribe?language=zh')
+      assert.equal(requests[0].init?.method, 'POST')
+      assert.equal(new Headers(requests[0].init?.headers).get('content-type'), 'application/octet-stream')
+      const body = requests[0].init?.body as ArrayBuffer
+      assert.deepEqual([...new Uint8Array(body)], [...new Uint8Array(pcm.buffer)])
+    } finally {
+      globalThis.fetch = originalFetch
+    }
+  })
+
+  it('omits the language query when the caller leaves it to the stored setting', async () => {
+    const originalFetch = globalThis.fetch
+    const requestedUrls: string[] = []
+    globalThis.fetch = ((input: RequestInfo | URL) => {
+      requestedUrls.push(String(input))
+      return Promise.resolve(new Response(JSON.stringify({ text: '', contentUpdated: false })))
+    }) as typeof fetch
+
+    try {
+      await new CliWebPlatformAdapter().transcription.transcribePcm('s1', 3, new Float32Array(2))
+      assert.deepEqual(requestedUrls, ['/_web/sessions/s1/attachments/3/transcribe'])
+    } finally {
+      globalThis.fetch = originalFetch
+    }
+  })
+
+  it('surfaces the CLI web error envelope when a transcribe request is rejected', async () => {
+    const originalFetch = globalThis.fetch
+    const envelope = JSON.stringify({
+      success: false,
+      error: { code: 'INVALID_PAYLOAD', message: 'Attachment 999 not found' },
+    })
+    globalThis.fetch = (() => Promise.resolve(new Response(envelope, { status: 400 }))) as typeof fetch
+
+    try {
+      await assert.rejects(
+        new CliWebPlatformAdapter().transcription.transcribePcm('s1', 999, new Float32Array(2)),
+        /Attachment 999 not found/
+      )
+    } finally {
+      globalThis.fetch = originalFetch
+    }
+  })
+
+  it('reads and patches transcription settings on the shared config route', async () => {
+    const originalFetch = globalThis.fetch
+    const requests: Array<{ url: string; init?: RequestInit }> = []
+    globalThis.fetch = ((input: RequestInfo | URL, init?: RequestInit) => {
+      requests.push({ url: String(input), init })
+      return Promise.resolve(new Response(JSON.stringify({ model: 'small', language: 'auto' })))
+    }) as typeof fetch
+
+    try {
+      const adapter = new CliWebPlatformAdapter()
+      assert.deepEqual(await adapter.transcription.getConfig(), { model: 'small', language: 'auto' })
+      await adapter.transcription.setConfig({ model: 'small' })
+
+      assert.equal(requests[0].url, '/_web/transcription/config')
+      assert.equal(requests[1].url, '/_web/transcription/config')
+      assert.equal(requests[1].init?.method, 'PATCH')
+      assert.equal(requests[1].init?.body, JSON.stringify({ model: 'small' }))
+    } finally {
+      globalThis.fetch = originalFetch
+    }
+  })
+
+  it('unwraps the pending queue from the session transcription route', async () => {
+    const originalFetch = globalThis.fetch
+    const requestedUrls: string[] = []
+    const items = [{ id: 1, messageId: 2, fileName: 'a.amr', mimeType: 'audio/amr', durationMs: 3400 }]
+    globalThis.fetch = ((input: RequestInfo | URL) => {
+      requestedUrls.push(String(input))
+      return Promise.resolve(new Response(JSON.stringify({ items })))
+    }) as typeof fetch
+
+    try {
+      assert.deepEqual(await new CliWebPlatformAdapter().transcription.listPending('s 1'), items)
+      assert.deepEqual(requestedUrls, ['/_web/sessions/s%201/transcription/pending'])
+    } finally {
+      globalThis.fetch = originalFetch
+    }
+  })
+
   it('parses .json URLs as JSON even without an application/json content-type', async () => {
     const originalFetch = globalThis.fetch
     globalThis.fetch = (() =>

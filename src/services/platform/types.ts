@@ -1,4 +1,10 @@
 import type { AnalyticsEventName, DesktopCloseBehavior } from '@openchatlab/shared-types'
+import type {
+  PendingTranscriptionItem,
+  TranscriptionLanguage,
+  TranscriptionResult,
+  TranscriptionSettings,
+} from '../transcription/types'
 
 /**
  * PlatformAdapter — 平台能力领域适配器接口
@@ -71,7 +77,26 @@ export interface PlatformAdapter {
    */
   revealAttachment?(sessionId: string, attachmentId: number): Promise<boolean>
 
+  /**
+   * Local voice transcription, backed by Whisper in a Node worker thread.
+   * Only defined where that backend exists, so its presence is the capability check.
+   */
+  transcription?: TranscriptionCapability
+
   checkUpdate(): Promise<CheckUpdateResult | void>
   performUpdate(): Promise<PerformUpdateResult>
   relaunch(): Promise<void>
+}
+
+export interface TranscriptionCapability {
+  getConfig(): Promise<TranscriptionSettings>
+  setConfig(patch: Partial<TranscriptionSettings>): Promise<TranscriptionSettings>
+  listPending(sessionId: string): Promise<PendingTranscriptionItem[]>
+  /** `pcm` holds the mono 16 kHz samples the renderer decoded with Web Audio. */
+  transcribePcm(
+    sessionId: string,
+    attachmentId: number,
+    pcm: Float32Array,
+    language?: TranscriptionLanguage
+  ): Promise<TranscriptionResult>
 }

@@ -70,7 +70,28 @@ export type {
   CreateChatTopicsRequest,
 } from './chat-topics/types'
 export { usePlatformService } from './platform/service'
-export type { PlatformAdapter, OpenDialogOptions, OpenDialogResult, RemoteConfigResult } from './platform/types'
+export type {
+  PlatformAdapter,
+  OpenDialogOptions,
+  OpenDialogResult,
+  RemoteConfigResult,
+  TranscriptionCapability,
+} from './platform/types'
+export { useTranscriptionService } from './transcription'
+export type { TranscriptionService } from './transcription'
+export {
+  AudioTooLongError,
+  decodeAudioToPcm16k,
+  MAX_TRANSCRIPTION_DURATION_SECONDS,
+  UnsupportedAudioError,
+} from './transcription/decode-audio'
+export type {
+  PendingTranscriptionItem,
+  TranscriptionLanguage,
+  TranscriptionModel,
+  TranscriptionResult,
+  TranscriptionSettings,
+} from './transcription/types'
 export { useAIService } from './ai/service'
 export { usePreferencesService } from './preferences/service'
 export { useNavigationLayoutService } from './navigation-layout/service'

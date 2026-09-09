@@ -3,7 +3,15 @@
  */
 
 import type { AnalyticsEventName, DesktopCloseBehavior } from '@openchatlab/shared-types'
-import type { PlatformAdapter, OpenDialogOptions, OpenDialogResult, RemoteConfigResult } from './types'
+import type {
+  PlatformAdapter,
+  OpenDialogOptions,
+  OpenDialogResult,
+  RemoteConfigResult,
+  TranscriptionCapability,
+} from './types'
+import type { TranscriptionLanguage, TranscriptionSettings } from '../transcription/types'
+import { pcmToArrayBuffer } from '../transcription/decode-audio'
 
 export class ElectronPlatformAdapter implements PlatformAdapter {
   getVersion(): Promise<string> {
@@ -48,6 +56,15 @@ export class ElectronPlatformAdapter implements PlatformAdapter {
 
   revealAttachment(sessionId: string, attachmentId: number): Promise<boolean> {
     return window.api.attachment.revealInFolder(sessionId, attachmentId)
+  }
+
+  readonly transcription: TranscriptionCapability = {
+    getConfig: () => window.api.transcription.getConfig(),
+    setConfig: (patch: Partial<TranscriptionSettings>) => window.api.transcription.setConfig(patch),
+    listPending: async (sessionId: string) => (await window.api.transcription.listPending(sessionId)).items,
+    // structured clone copies the buffer, so the caller keeps its samples.
+    transcribePcm: (sessionId: string, attachmentId: number, pcm: Float32Array, language?: TranscriptionLanguage) =>
+      window.api.transcription.transcribePcm(sessionId, attachmentId, pcmToArrayBuffer(pcm), language),
   }
 
   getAnalyticsEnabled(): Promise<boolean> {
