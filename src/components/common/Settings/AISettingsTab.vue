@@ -8,10 +8,15 @@ import AIPreprocessTab from './AI/AIPreprocessTab.vue'
 import AIExportSettingsTab from './AI/AIExportSettingsTab.vue'
 import SessionIndexSection from './AI/SessionIndexSection.vue'
 import SemanticIndexSection from './AI/SemanticIndexSection.vue'
+import TranscriptionSection from './AI/TranscriptionSection.vue'
 import { CompactTabs } from '@/components/navigation'
 import { useAnchorNavigation } from '@/composables/useAnchorNavigation'
+import { usePlatformService } from '@/services'
 
 const { t } = useI18n()
+
+/** 转写要 Node 侧推理；Web WASM 没有，整个区块与它的锚点都不出现。 */
+const canTranscribe = !!usePlatformService().transcription
 
 // Emits
 const emit = defineEmits<{
@@ -23,6 +28,7 @@ const navItems = computed(() => [
   { id: 'model', label: t('settings.tabs.aiConfig') },
   { id: 'defaultModel', label: t('settings.tabs.aiDefaultModel') },
   { id: 'semanticIndex', label: t('settings.tabs.semanticIndex') },
+  ...(canTranscribe ? [{ id: 'transcription', label: t('settings.tabs.transcription') }] : []),
   { id: 'skill', label: t('settings.tabs.chatPreferences') },
   { id: 'chat', label: t('settings.aiPrompt.chatSettings.title') },
   { id: 'preprocess', label: t('settings.tabs.aiPreprocess') },
@@ -79,6 +85,11 @@ void aiModelConfigRef.value
         <!-- 语义索引 -->
         <div :ref="(el) => setSectionRef('semanticIndex', el as HTMLElement)">
           <SemanticIndexSection />
+        </div>
+
+        <!-- 语音转文字 -->
+        <div v-if="canTranscribe" :ref="(el) => setSectionRef('transcription', el as HTMLElement)">
+          <TranscriptionSection />
         </div>
 
         <!-- 工具设置 -->

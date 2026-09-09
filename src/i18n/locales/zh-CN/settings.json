@@ -7,6 +7,7 @@
     "aiConfig": "模型服务",
     "aiDefaultModel": "默认模型",
     "semanticIndex": "语义索引",
+    "transcription": "语音转文字",
     "chatPreferences": "对话偏好",
     "aiPreprocess": "预处理",
     "dataManage": "数据管理",
@@ -363,6 +364,13 @@
         "confirmRemoveTitle": "确认移除",
         "confirmRemoveMessage": "这些对话的语义索引将被立即删除，不可恢复。"
       }
+    },
+    "transcription": {
+      "title": "语音转文字",
+      "description": "在本地把语音消息转成文字，转写结果写回消息，可以被搜索和分析读到。",
+      "model": "模型",
+      "modelHint": "第一次使用会下载模型：tiny 约 42 MB、base 约 77 MB、small 约 260 MB。中文建议 base 及以上。",
+      "language": "默认语言"
     }
   },
   "aiPrompt": {
