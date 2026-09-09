@@ -365,6 +365,66 @@ export function canReadSubsequent(observation: SubsequentObservation, hasSubsequ
   return hasSubsequentEvidence || observation === 'no_visible_follow_up' || observation === 'uncertain'
 }
 
+/** 候选面板里正在拼的一次修复：分歧（双方）、修复（本人）、后续（另一方，可空）三步各自的消息。 */
+export interface RepairSelectionDraft {
+  disagreementMessageIds: number[]
+  repairMessageIds: number[]
+  subsequentMessageIds: number[]
+}
+
+export interface RepairSelectionResolution {
+  /** 修复消息的发送者；还没选修复消息时为 null */
+  repairerMemberId: number | null
+  /** 不能提交时的提示文案 key；null = 通过前端这一遍检查 */
+  errorKey: string | null
+}
+
+/**
+ * 与后端 `buildDisagreementEvidence` / `requireSubsequentMessage` 同一套规则：分歧要双方各至少一条且
+ * 早于第一条修复消息，修复消息由同一个人发送，后续消息由另一方发送且晚于最后一条修复消息。
+ * 顺序按「下一步该做什么」排，所以选到一半时提示的是还缺的那一步；后端仍会按聊天库里的真实发送者再查一次。
+ */
+export function resolveRepairSelection(
+  draft: RepairSelectionDraft,
+  senderOf: (messageId: number) => number | undefined
+): RepairSelectionResolution {
+  const sendersOf = (messageIds: number[]) =>
+    messageIds.flatMap((messageId) => {
+      const senderId = senderOf(messageId)
+      return senderId === undefined ? [] : [senderId]
+    })
+  const fail = (errorKey: string, repairerMemberId: number | null = null) => ({ repairerMemberId, errorKey })
+
+  const disagreementSenders = sendersOf(draft.disagreementMessageIds)
+  if (disagreementSenders.length !== draft.disagreementMessageIds.length || new Set(disagreementSenders).size < 2) {
+    return fail('views.intimacy.k6.disagreementNeedsBoth')
+  }
+  const repairSenders = sendersOf(draft.repairMessageIds)
+  if (draft.repairMessageIds.length === 0 || repairSenders.length !== draft.repairMessageIds.length) {
+    return fail('views.intimacy.k6.repairNeedsMessage')
+  }
+  const repairerMemberId = repairSenders[0]!
+  if (repairSenders.some((senderId) => senderId !== repairerMemberId)) {
+    return fail('views.intimacy.k6.repairNeedsOneSender')
+  }
+  const firstRepairId = Math.min(...draft.repairMessageIds)
+  if (draft.disagreementMessageIds.some((messageId) => messageId >= firstRepairId)) {
+    return fail('views.intimacy.k6.disagreementBeforeRepair', repairerMemberId)
+  }
+  const subsequentSenders = sendersOf(draft.subsequentMessageIds)
+  if (
+    subsequentSenders.length !== draft.subsequentMessageIds.length ||
+    subsequentSenders.some((senderId) => senderId === repairerMemberId)
+  ) {
+    return fail('views.intimacy.k6.subsequentFromOther', repairerMemberId)
+  }
+  const lastRepairId = Math.max(...draft.repairMessageIds)
+  if (draft.subsequentMessageIds.some((messageId) => messageId <= lastRepairId)) {
+    return fail('views.intimacy.k6.subsequentAfterRepair', repairerMemberId)
+  }
+  return { repairerMemberId, errorKey: null }
+}
+
 export interface IntimacyInitiationCount {
   initiation: FollowUpInitiation
   labelKey: string

@@ -1,5 +1,6 @@
 <script setup lang="ts">
-// 私聊洞察「亲密关系」子标签：K1 个人分享、K2 倾诉后的回应、K4 好消息回应、K3 事后追问、K5 共同安排。
+// 私聊洞察「亲密关系」子标签：K1 个人分享、K2 倾诉后的回应、K4 好消息回应、K3 事后追问、K5 共同安排、
+// K6 分歧后的修复尝试（默认折叠）。
 // 页面只报告「在所选范围内识别到多少个这样的事件」，不给分数、比例或好坏判断。
 import { computed, onUnmounted, ref, watch } from 'vue'
 import dayjs from 'dayjs'
@@ -32,13 +33,18 @@ import {
   SUPPORT_RESPONSE_LABEL_KEYS,
   buildFollowUpInitiationCounts,
   buildIntimacyTopicFilterOptions,
+  buildRepairLabelCounts,
+  buildRepairMemberCounts,
   buildSharedPlanMemberCounts,
   buildSharedPlanStageCounts,
+  buildSubsequentCounts,
   filterIntimacyEventsByTopic,
   partitionIntimacyEvents,
   selectFollowUpEvents,
   selectFollowUpSummary,
   selectGoodNewsEvents,
+  selectRepairEvents,
+  selectRepairSummary,
   selectResponseSummary,
   selectSharedPlanEvents,
   selectSharedPlanSummary,
@@ -66,6 +72,8 @@ const actionLoading = ref(false)
 const topicFilter = ref<IntimacyTopicFilter>('all')
 const showExcluded = ref(false)
 const showExcludedResponses = ref<Record<string, boolean>>({})
+// 分歧的自动识别更容易出错，也更私密，所以这张卡默认折叠，由用户主动打开。
+const showRepairCard = ref(false)
 const showMethods = ref(false)
 const showPreflightModal = ref(false)
 const showClearModal = ref(false)
@@ -144,6 +152,23 @@ const sharedPlanCard = computed(() => {
     updatedInRange: summary?.updatedInRange ?? 0,
     stages: buildSharedPlanStageCounts(summary),
     members: buildSharedPlanMemberCounts(summary, members.value),
+    listed,
+    excluded,
+  }
+})
+
+/**
+ * K6 卡片：分歧数与按发起者的尝试数分开，另加修复方式（多标签）与后续表现（每个尝试恰好一种）。
+ * 数字直接用后端汇总，这张卡也没有前端筛选。
+ */
+const repairCard = computed(() => {
+  const { listed, excluded } = partitionIntimacyEvents(selectRepairEvents(events.value))
+  const summary = selectRepairSummary(results.value?.summaries ?? [])
+  return {
+    disagreements: summary?.disagreements ?? 0,
+    members: buildRepairMemberCounts(summary, members.value),
+    labels: buildRepairLabelCounts(summary),
+    subsequent: buildSubsequentCounts(summary),
     listed,
     excluded,
   }
@@ -244,6 +269,7 @@ function analysisRequest() {
       'follow_up' as const,
       'good_news_response' as const,
       'shared_plan' as const,
+      'repair_attempt' as const,
     ],
     startTs: props.timeFilter?.startTs,
     endTs: props.timeFilter?.endTs,
@@ -843,6 +869,131 @@ onUnmounted(clearPollTimer)
         </template>
       </SectionCard>
 
+      <!-- K6 分歧后的修复尝试（默认折叠） -->
+      <SectionCard :title="t('views.intimacy.k6.title')" :description="t('views.intimacy.k6.definition')">
+        <div class="px-5 py-4">
+          <UButton
+            v-if="!showRepairCard"
+            size="xs"
+            color="neutral"
+            variant="soft"
+            icon="i-heroicons-chevron-right"
+            @click="showRepairCard = true"
+          >
+            {{ t('views.intimacy.k6.expand') }}
+          </UButton>
+
+          <template v-else>
+            <div class="flex items-center justify-between gap-2">
+              <p class="text-[11px] text-amber-600 dark:text-amber-400">{{ t('views.intimacy.k6.caution') }}</p>
+              <UButton size="xs" color="neutral" variant="ghost" @click="showRepairCard = false">
+                {{ t('views.intimacy.k6.collapse') }}
+              </UButton>
+            </div>
+
+            <template v-if="repairCard.listed.length > 0 || repairCard.excluded.length > 0">
+              <div class="mt-3 grid gap-3 sm:grid-cols-3">
+                <div class="rounded-xl border border-gray-200 px-4 py-3 dark:border-gray-700">
+                  <p class="font-mono text-2xl font-black tabular-nums text-gray-900 dark:text-white">
+                    {{ repairCard.disagreements }}
+                  </p>
+                  <p class="text-[11px] text-gray-400">{{ t('views.intimacy.k6.disagreementsLabel') }}</p>
+                </div>
+                <div
+                  v-for="summary in repairCard.members"
+                  :key="summary.memberId"
+                  class="rounded-xl border border-gray-200 px-4 py-3 dark:border-gray-700"
+                >
+                  <p class="truncate text-xs text-gray-500 dark:text-gray-400">
+                    {{ t('views.intimacy.k6.repairer', { name: memberName(summary.memberId) }) }}
+                  </p>
+                  <p class="mt-1 font-mono text-2xl font-black tabular-nums text-gray-900 dark:text-white">
+                    {{ summary.attempts }}
+                  </p>
+                  <p class="text-[11px] text-gray-400">{{ t('views.intimacy.k6.attemptsLabel') }}</p>
+                </div>
+              </div>
+
+              <p class="mt-3 text-[11px] text-gray-400">{{ t('views.intimacy.k1.uncertainNote') }}</p>
+
+              <div class="mt-4">
+                <p class="text-xs font-medium text-gray-600 dark:text-gray-300">
+                  {{ t('views.intimacy.k6.labelTitle') }}
+                </p>
+                <div class="mt-2 grid grid-cols-2 gap-3 sm:grid-cols-4">
+                  <div
+                    v-for="cell in repairCard.labels"
+                    :key="cell.label"
+                    class="rounded-lg bg-gray-50 px-3 py-2 dark:bg-gray-800/50"
+                  >
+                    <p class="text-[11px] leading-snug text-gray-400">{{ t(cell.labelKey) }}</p>
+                    <p class="mt-0.5 font-mono text-sm font-bold tabular-nums text-gray-700 dark:text-gray-200">
+                      {{ cell.count }}
+                    </p>
+                  </div>
+                </div>
+                <p class="mt-1.5 text-[11px] text-gray-400">{{ t('views.intimacy.k6.labelNote') }}</p>
+              </div>
+
+              <div class="mt-4">
+                <p class="text-xs font-medium text-gray-600 dark:text-gray-300">
+                  {{ t('views.intimacy.k6.subsequentTitle') }}
+                </p>
+                <div class="mt-2 grid grid-cols-2 gap-3 sm:grid-cols-5">
+                  <div
+                    v-for="cell in repairCard.subsequent"
+                    :key="cell.observation"
+                    class="rounded-lg bg-gray-50 px-3 py-2 dark:bg-gray-800/50"
+                  >
+                    <p class="text-[11px] leading-snug text-gray-400">{{ t(cell.labelKey) }}</p>
+                    <p class="mt-0.5 font-mono text-sm font-bold tabular-nums text-gray-700 dark:text-gray-200">
+                      {{ cell.count }}
+                    </p>
+                  </div>
+                </div>
+                <p class="mt-1.5 text-[11px] text-gray-400">{{ t('views.intimacy.k6.subsequentNote') }}</p>
+              </div>
+            </template>
+          </template>
+        </div>
+
+        <template v-if="showRepairCard">
+          <EmptyState v-if="repairCard.listed.length === 0" :text="t('views.intimacy.k6.empty')" />
+          <IntimacyEventList
+            v-else
+            :events="repairCard.listed"
+            :messages="results?.messages ?? {}"
+            :members="members"
+            :busy="actionLoading"
+            @view="viewMessage"
+            @review="handleReview"
+          />
+
+          <template v-if="repairCard.excluded.length > 0">
+            <button
+              type="button"
+              class="flex w-full items-center gap-1 border-t border-gray-100 px-5 py-2 text-left text-[11px] text-gray-400 hover:text-gray-600 dark:border-gray-800 dark:hover:text-gray-300"
+              @click="showExcludedResponses.repair_attempt = !showExcludedResponses.repair_attempt"
+            >
+              <UIcon
+                :name="showExcludedResponses.repair_attempt ? 'i-heroicons-chevron-down' : 'i-heroicons-chevron-right'"
+                class="h-3 w-3"
+              />
+              {{ t('views.intimacy.event.excludedGroup', { count: repairCard.excluded.length }) }}
+            </button>
+            <IntimacyEventList
+              v-if="showExcludedResponses.repair_attempt"
+              :events="repairCard.excluded"
+              :messages="results?.messages ?? {}"
+              :members="members"
+              :busy="actionLoading"
+              @view="viewMessage"
+              @review="handleReview"
+            />
+          </template>
+        </template>
+      </SectionCard>
+
       <!-- 候选检索 -->
       <SectionCard :title="t('views.intimacy.candidates.title')" :capturable="false">
         <IntimacyCandidatePanel
@@ -939,6 +1090,12 @@ onUnmounted(clearPollTimer)
             <p class="mt-0.5">{{ t('views.intimacy.methods.k5Body') }}</p>
             <p class="mt-1">{{ t('views.intimacy.methods.k5CountingBody') }}</p>
             <p class="mt-1">{{ t('views.intimacy.methods.k5Citation') }}</p>
+          </div>
+          <div>
+            <p class="font-medium text-gray-600 dark:text-gray-300">{{ t('views.intimacy.methods.k6Title') }}</p>
+            <p class="mt-0.5">{{ t('views.intimacy.methods.k6Body') }}</p>
+            <p class="mt-1">{{ t('views.intimacy.methods.k6CountingBody') }}</p>
+            <p class="mt-1">{{ t('views.intimacy.methods.k6Citation') }}</p>
           </div>
           <div>
             <p class="font-medium text-gray-600 dark:text-gray-300">

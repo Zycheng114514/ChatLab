@@ -232,7 +232,7 @@
     },
     "preflight": {
       "title": "Analyse this range",
-      "description": "Messages in the range are sent to the configured model segment by segment, in time order, and each segment is read for personal sharing, responses after a disclosure, follow-up questions, responses to good news and shared plans. You can pause, resume or cancel once it starts.",
+      "description": "Messages in the range are sent to the configured model segment by segment, in time order, and each segment is read for personal sharing, responses after a disclosure, follow-up questions, responses to good news, shared plans and repair attempts after a disagreement. You can pause, resume or cancel once it starts.",
       "range": "{start} to {end}",
       "messages": "Messages",
       "windows": "Segments",
@@ -320,6 +320,36 @@
       "oneSenderPerStage": "Apart from \"agreed by both\", the messages in one step have to come from the same person",
       "confirmNeedsBoth": "\"Agreed by both\" needs two messages: one person putting something to act on, the other agreeing to it afterwards"
     },
+    "k6": {
+      "title": "Repair attempts after a disagreement",
+      "definition": "After the two of them clearly disagree in what they wrote, either one may say something to repair it, and the other may say something back. Only the messages the chat actually shows are recorded.",
+      "expand": "Show repairs after a disagreement",
+      "collapse": "Hide",
+      "caution": "Disagreements are harder to identify automatically than the other kinds, so check the rows one by one.",
+      "disagreementsLabel": "Clear disagreements found",
+      "repairer": "Repaired by {name}",
+      "attemptsLabel": "Repair attempts made",
+      "labelTitle": "How the repair was made",
+      "labelNote": "One attempt can be made in several of these ways at once, so the four cells can add up to more than the number of attempts.",
+      "subsequentTitle": "What followed",
+      "subsequentNote": "The five cells add up to the number of attempts. They only say what the other person said next: an acceptance expression does not mean the two of them made up, and nothing following does not mean the repair failed.",
+      "disagreementColumn": "Disagreement",
+      "repairColumn": "Repair",
+      "subsequentColumn": "After",
+      "noSubsequent": "No follow-up seen",
+      "empty": "No records matching the rules were found.",
+      "editRepair": "Change the repair and what followed",
+      "labelsRequired": "Pick at least one way the repair was made",
+      "subsequentPickHint": "Pick what the record shows after this repair.",
+      "subsequentLocked": "This event cites nothing the other person said after the repair, so it can only be recorded as no follow-up seen or cannot tell.",
+      "disagreementNeedsBoth": "The disagreement needs at least one message from each of them",
+      "repairNeedsMessage": "Pick the repairing message from the person who repaired",
+      "repairNeedsOneSender": "The repairing messages have to come from the same person",
+      "disagreementBeforeRepair": "The disagreement has to come before the first repairing message",
+      "subsequentFromOther": "What followed has to come from the other person",
+      "subsequentAfterRepair": "What followed has to come after the last repairing message",
+      "subsequentRequired": "Say what the messages you picked after the repair showed"
+    },
     "category": {
       "experienceOrUpdate": "Experience or update",
       "feeling": "Feeling",
@@ -361,6 +391,19 @@
       "rescheduled": "Moved",
       "cancelled": "Called off",
       "retrospectiveMentioned": "Mentioned afterwards"
+    },
+    "repairLabel": {
+      "apology": "Apology",
+      "clarification": "Clarifying or explaining again",
+      "acknowledgesPart": "Admitting their own share",
+      "deescalationOrReconnect": "Calming it down or reaching back out"
+    },
+    "subsequent": {
+      "acceptance": "Acceptance expressed",
+      "continuedDiscussion": "Discussion continued",
+      "rejection": "Refusal expressed",
+      "noVisibleFollowUp": "No follow-up seen",
+      "uncertain": "Cannot tell"
     },
     "initiation": {
       "title": "When the question came",
@@ -439,7 +482,19 @@
       "planSteps": "Timeline",
       "planStepHint": "Whoever sent a message is the one acting in that step. Click a message you picked again to drop it.",
       "planConfirmNeedsSecond": "One more message needed — the next one you pick goes into this step.",
-      "selectedPlanSteps": "{count} steps"
+      "selectedPlanSteps": "{count} steps",
+      "submitRepair": "Confirm as a repair after a disagreement",
+      "repairSelectHint": "Three steps: pick the disagreement messages first (at least one from each of them), then the repairing messages from whoever repaired, and last, if the chat shows any, what the other person said afterwards. They all have to come from the same result.",
+      "repairStep": "Current step",
+      "repairStepDisagreement": "① Disagreement",
+      "repairStepRepair": "② Repair",
+      "repairStepSubsequent": "③ What followed (optional)",
+      "selectedDisagreements": "{count} disagreement messages selected",
+      "selectedRepairs": "{count} repairing messages selected",
+      "selectedSubsequents": "{count} follow-up messages selected",
+      "repairLabels": "How the repair was made (pick one or more)",
+      "subsequentChoice": "What followed (required once you pick messages after the repair)",
+      "subsequentNoneHint": "Picking nothing after the repair records the event as no follow-up seen."
     },
     "methods": {
       "title": "Method and sources",
@@ -466,6 +521,10 @@
       "k5Body": "The unit is one specific plan the two people take part in together. Suggesting it, talking it over, agreeing, moving it, calling it off and mentioning it afterwards all belong to the same plan, however many times the time changed. Work assigned by an employer, routines involving other people and open-ended wishes that cannot be acted on are left out.",
       "k5CountingBody": "\"Newly suggested in range\" counts plans whose suggestion falls in the range; \"updated in range\" counts plans with any step in the range, and the three breakdowns split the latter. The step only describes what the chat last shows, not how the plan turned out; nothing after it simply means the record does not mention it again. These steps are an operationalisation built for this product, not a score on any scale.",
       "k5Citation": "Background for the construct: Schaefer, M. T., & Olson, D. H. (1981). Assessing intimacy: The PAIR inventory. Journal of Marital and Family Therapy, 7(1), 47–60. No PAIR score is produced here.",
+      "k6Title": "Repair attempts after a disagreement (K6)",
+      "k6Body": "The unit is one clear disagreement, plus a repairing message from either of them and whatever the other person visibly said next. The disagreement has to be visible in what both of them wrote; a short reply or a silence is never read as conflict. A joking apology, an everyday apology for being late or slow to reply, and changing the subject when nothing was being argued about are all left out. How the repair was made is a multi-label field describing how it was said, not why.",
+      "k6CountingBody": "Disagreements and attempts are counted separately: if both of them repair the same disagreement once, that is one disagreement and two attempts. An event is only produced automatically when the same stretch of the record shows both the disagreement and the repair, and it only counts as identified automatically when the model read both of them clearly; otherwise it is listed for checking and left out of the counts. The five readings of what followed sit side by side with none better than another: an acceptance expression only means the other person said such a thing, and no follow-up only means the record shows nothing after it.",
+      "k6Citation": "Background for the construct: Gottman and colleagues (2015) on repair after conflict. It is background only — the full text has not been checked, this page uses a narrower definition, and no scale score is produced.",
       "limitationTitle": "Limitations",
       "limitationBody": "These event definitions have not yet been validated for automatic detection on real chats, and the model can miss events or mistake them. A count only says how many such events were identified in the selected range. It is not a measure of intimacy and cannot be used to compare two people or two relationships."
     }

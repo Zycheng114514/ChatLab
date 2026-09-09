@@ -15,23 +15,29 @@ import {
   type IntimacyKind,
   type IntimacyMessageSnippet,
   type MessageRecord,
+  type RepairLabel,
   type SharedPlanStage,
   type SharingCategory,
   type SharingTopic,
+  type SubsequentObservation,
   type SupportResponseLabel,
 } from '@/services'
 import type { TimeFilter } from '@openchatlab/shared-types'
 import {
   GOOD_NEWS_RESPONSE_LABELS,
   GOOD_NEWS_RESPONSE_LABEL_KEYS,
+  REPAIR_LABELS,
+  REPAIR_LABEL_KEYS,
   SHARED_PLAN_STAGES,
   SHARED_PLAN_STAGE_LABEL_KEYS,
   SHARING_CATEGORIES,
   SHARING_CATEGORY_LABEL_KEYS,
   SHARING_TOPICS,
   SHARING_TOPIC_LABEL_KEYS,
+  SUBSEQUENT_OBSERVATION_LABEL_KEYS,
   SUPPORT_RESPONSE_LABELS,
   SUPPORT_RESPONSE_LABEL_KEYS,
+  resolveRepairSelection,
   resolveSharedPlanStages,
   type SharedPlanStageDraft,
 } from './intimacy-summary'
@@ -61,6 +67,23 @@ const KIND_OPTIONS: Array<{ kind: IntimacyKind; labelKey: string; submitKey: str
     submitKey: 'views.intimacy.candidates.submitGoodNews',
   },
   { kind: 'shared_plan', labelKey: 'views.intimacy.k5.title', submitKey: 'views.intimacy.candidates.submitSharedPlan' },
+  { kind: 'repair_attempt', labelKey: 'views.intimacy.k6.title', submitKey: 'views.intimacy.candidates.submitRepair' },
+]
+
+/** K6 分三步选：分歧消息（双方）→ 修复消息（本人）→ 后续消息（另一方，可空）。 */
+type RepairStep = 'disagreement' | 'repair' | 'subsequent'
+const REPAIR_STEPS: Array<{ step: RepairStep; labelKey: string }> = [
+  { step: 'disagreement', labelKey: 'views.intimacy.candidates.repairStepDisagreement' },
+  { step: 'repair', labelKey: 'views.intimacy.candidates.repairStepRepair' },
+  { step: 'subsequent', labelKey: 'views.intimacy.candidates.repairStepSubsequent' },
+]
+
+/** 用户确认的后续表现只有四种可选：「未见后续」由服务端按有没有勾后续消息自己定。 */
+const CONFIRMABLE_SUBSEQUENT: SubsequentObservation[] = [
+  'explicit_acceptance_expression',
+  'continued_discussion',
+  'explicit_rejection_expression',
+  'uncertain',
 ]
 
 const kind = ref<IntimacyKind>('sharing')
@@ -86,6 +109,7 @@ const selection = ref<{
   messageIds: number[]
   responseMessageIds: number[]
   priorMessageIds: number[]
+  disagreementMessageIds: number[]
 } | null>(null)
 const categories = ref<SharingCategory[]>([])
 const topic = ref<SharingTopic>('daily_life')
@@ -96,10 +120,14 @@ const matter = ref('')
 const activitySummary = ref('')
 /** 共同安排的时间线：第一步是提议（就是选中的核心消息），后面每点一条消息就多一步。 */
 const planSteps = ref<SharedPlanStageDraft[]>([])
+const repairStep = ref<RepairStep>('disagreement')
+const repairLabels = ref<RepairLabel[]>([])
+const subsequentObservation = ref<SubsequentObservation | null>(null)
 
 const isSharing = computed(() => kind.value === 'sharing')
 const isFollowUp = computed(() => kind.value === 'follow_up')
 const isSharedPlan = computed(() => kind.value === 'shared_plan')
+const isRepair = computed(() => kind.value === 'repair_attempt')
 const submitKey = computed(() => KIND_OPTIONS.find((option) => option.kind === kind.value)!.submitKey)
 const responseLabelCount = computed(() =>
   kind.value === 'support_response' ? supportLabels.value.length : goodNewsLabels.value.length
@@ -126,9 +154,21 @@ const snippetById = computed(() => {
 const planStages = computed(() =>
   resolveSharedPlanStages(planSteps.value, (messageId) => snippetById.value.get(messageId)?.senderId)
 )
+/** 提交前按后端同一套规则查发送者与先后；有问题时 errorKey 就是要显示的提示。 */
+const repairSelection = computed(() =>
+  resolveRepairSelection(
+    {
+      disagreementMessageIds: selection.value?.disagreementMessageIds ?? [],
+      repairMessageIds: selection.value?.messageIds ?? [],
+      subsequentMessageIds: selection.value?.responseMessageIds ?? [],
+    },
+    (messageId) => snippetById.value.get(messageId)?.senderId
+  )
+)
 const selectHintKey = computed(() => {
   if (isSharing.value) return 'views.intimacy.candidates.selectHint'
   if (isSharedPlan.value) return 'views.intimacy.candidates.planSelectHint'
+  if (isRepair.value) return 'views.intimacy.candidates.repairSelectHint'
   return isFollowUp.value
     ? 'views.intimacy.candidates.followUpSelectHint'
     : 'views.intimacy.candidates.responseSelectHint'
@@ -141,6 +181,14 @@ const canSubmit = computed(() => {
   const current = selection.value
   if (!current || current.messageIds.length === 0) return false
   if (isSharing.value) return categories.value.length > 0
+  // 修复要选够三步里的前两步、过发送者与先后那一关，还要说清是怎么修复的。
+  if (isRepair.value) {
+    return (
+      repairSelection.value.errorKey === null &&
+      repairLabels.value.length > 0 &&
+      (current.responseMessageIds.length === 0 || subsequentObservation.value !== null)
+    )
+  }
   // 安排要有一句活动描述，时间线也要过发送者那一关，否则后端会原样拒绝。
   if (isSharedPlan.value) return activitySummary.value.trim() !== '' && planStages.value.errorKey === null
   // 追问必须配上被问者更早的消息和一句事情描述，否则它不是一个配对。
@@ -164,6 +212,9 @@ function resetSelection() {
   matter.value = ''
   activitySummary.value = ''
   planSteps.value = []
+  repairStep.value = 'disagreement'
+  repairLabels.value = []
+  subsequentObservation.value = null
 }
 
 async function search() {
@@ -239,20 +290,32 @@ function isSecondarySelected(group: string, messageId: number): boolean {
   if (isSharedPlan.value) {
     return planSteps.value.some((step, index) => index > 0 && step.messageIds.includes(messageId))
   }
+  if (isRepair.value) {
+    return current.disagreementMessageIds.includes(messageId) || current.responseMessageIds.includes(messageId)
+  }
   return current.responseMessageIds.includes(messageId) || current.priorMessageIds.includes(messageId)
 }
 
-/** 被选进时间线的消息标出它属于哪一步；其它 kind 只有「回复」或「先前」一种说法。 */
+/** 被选进时间线的消息标出它属于哪一步；修复分「分歧」「后续」，其它 kind 只有「回复」或「先前」一种说法。 */
 function secondaryTag(messageId: number): string {
-  if (!isSharedPlan.value) return t(secondaryLabelKey.value)
-  const step = planSteps.value.find((item) => item.messageIds.includes(messageId))
-  return step ? t(SHARED_PLAN_STAGE_LABEL_KEYS[step.stage]) : ''
+  if (isSharedPlan.value) {
+    const step = planSteps.value.find((item) => item.messageIds.includes(messageId))
+    return step ? t(SHARED_PLAN_STAGE_LABEL_KEYS[step.stage]) : ''
+  }
+  if (isRepair.value) {
+    return selection.value?.disagreementMessageIds.includes(messageId)
+      ? t('views.intimacy.k6.disagreementColumn')
+      : t('views.intimacy.k6.subsequentColumn')
+  }
+  return t(secondaryLabelKey.value)
 }
 
 /** 回复必须在倾诉 / 好消息之后；追问问的那件事必须在追问之前，所以两种方向刚好相反。 */
 function canPick(group: string, message: IntimacyMessageSnippet): boolean {
   const current = selection.value
   if (!current || current.group !== group) return true
+  // 修复的三步互相约束（谁发的、谁在前），点错时用可读的提示说明，而不是把消息变灰。
+  if (isRepair.value) return true
   // 安排的每一步都要在提议之后；提议本身仍可点，用来重新开始。
   if (isSharedPlan.value) return message.messageId >= Math.min(...current.messageIds)
   if (isSharing.value || current.senderId === message.senderId) return true
@@ -262,6 +325,10 @@ function canPick(group: string, message: IntimacyMessageSnippet): boolean {
 }
 
 function toggleMessage(group: string, message: IntimacyMessageSnippet) {
+  if (isRepair.value) {
+    toggleRepairMessage(group, message)
+    return
+  }
   const current = selection.value
   if (!current || current.group !== group) {
     selection.value = startSelection(group, message)
@@ -317,6 +384,31 @@ function togglePlanMessage(current: NonNullable<typeof selection.value>, message
       : [...planSteps.value, { stage: 'discussed', messageIds: [messageId] }]
 }
 
+/** 每一步各管自己那一组消息：点在哪一步就进哪一组，再点一次去掉，换检索结果则重新开始。 */
+function toggleRepairMessage(group: string, message: IntimacyMessageSnippet) {
+  const current = selection.value?.group === group ? selection.value : null
+  const base = current ?? {
+    group,
+    senderId: message.senderId,
+    messageIds: [],
+    responseMessageIds: [],
+    priorMessageIds: [],
+    disagreementMessageIds: [],
+  }
+  if (repairStep.value === 'disagreement') {
+    selection.value = {
+      ...base,
+      disagreementMessageIds: toggleId(base.disagreementMessageIds, message.messageId),
+    }
+    return
+  }
+  if (repairStep.value === 'subsequent') {
+    selection.value = { ...base, responseMessageIds: toggleId(base.responseMessageIds, message.messageId) }
+    return
+  }
+  selection.value = { ...base, messageIds: toggleId(base.messageIds, message.messageId) }
+}
+
 function setStepStage(index: number, stage: SharedPlanStage) {
   planSteps.value = planSteps.value.map((step, position) => (position === index ? { ...step, stage } : step))
 }
@@ -328,6 +420,7 @@ function startSelection(group: string, message: IntimacyMessageSnippet): NonNull
     messageIds: [message.messageId],
     responseMessageIds: [],
     priorMessageIds: [],
+    disagreementMessageIds: [],
   }
 }
 
@@ -358,6 +451,13 @@ function toggleGoodNewsLabel(label: GoodNewsResponseLabel, checked: boolean) {
   goodNewsLabels.value = GOOD_NEWS_RESPONSE_LABELS.filter((item) => next.has(item))
 }
 
+function toggleRepairLabel(label: RepairLabel, checked: boolean) {
+  const next = new Set(repairLabels.value)
+  if (checked) next.add(label)
+  else next.delete(label)
+  repairLabels.value = REPAIR_LABELS.filter((item) => next.has(item))
+}
+
 function buildRequest(current: NonNullable<typeof selection.value>): CreateIntimacyEventRequest {
   const core = { subjectMemberId: current.senderId, coreMessageIds: [...current.messageIds] }
   if (kind.value === 'support_response') {
@@ -383,6 +483,23 @@ function buildRequest(current: NonNullable<typeof selection.value>): CreateIntim
       kind: 'shared_plan',
       ...core,
       details: { activitySummary: activitySummary.value.trim(), stages: planStages.value.stages },
+    }
+  }
+  if (kind.value === 'repair_attempt') {
+    // 核心消息是修复消息，修复者就是它们的发送者，用户不用自己指认；
+    // 没有勾后续消息时后续表现由服务端记为「未见后续」。
+    return {
+      kind: 'repair_attempt',
+      subjectMemberId: repairSelection.value.repairerMemberId!,
+      coreMessageIds: [...current.messageIds],
+      disagreementMessageIds: [...current.disagreementMessageIds],
+      responseMessageIds: [...current.responseMessageIds],
+      details: {
+        repairLabels: [...repairLabels.value],
+        ...(current.responseMessageIds.length > 0 && subsequentObservation.value !== null
+          ? { subsequentObservation: subsequentObservation.value }
+          : {}),
+      },
     }
   }
   if (kind.value === 'good_news_response') {
@@ -479,6 +596,24 @@ function errorMessage(error: unknown): string {
       <p v-if="isSharing" class="text-[11px] text-gray-400">
         {{ t('views.intimacy.candidates.sameGroupOnly') }}
       </p>
+
+      <div v-if="isRepair" class="mt-2 flex flex-wrap items-center gap-1.5">
+        <span class="mr-1 text-[11px] text-gray-400">{{ t('views.intimacy.candidates.repairStep') }}</span>
+        <button
+          v-for="option in REPAIR_STEPS"
+          :key="option.step"
+          type="button"
+          class="rounded-full px-2 py-0.5 text-[11px] transition-colors"
+          :class="
+            repairStep === option.step
+              ? 'bg-pink-100 text-pink-700 dark:bg-pink-950/40 dark:text-pink-300'
+              : 'bg-gray-100 text-gray-500 hover:bg-gray-200 dark:bg-gray-800 dark:text-gray-400'
+          "
+          @click="repairStep = option.step"
+        >
+          {{ t(option.labelKey) }}
+        </button>
+      </div>
 
       <div class="mt-3 grid gap-4 md:grid-cols-2">
         <section>
@@ -594,7 +729,18 @@ function errorMessage(error: unknown): string {
 
       <div v-if="selection" class="mt-4 rounded-xl border border-gray-200 p-3 dark:border-gray-700">
         <div class="flex flex-wrap items-center justify-between gap-2">
-          <span class="text-xs text-gray-500 dark:text-gray-400">
+          <span v-if="isRepair" class="text-xs text-gray-500 dark:text-gray-400">
+            {{
+              t('views.intimacy.candidates.selectedDisagreements', {
+                count: selection.disagreementMessageIds.length,
+              })
+            }}
+            ·
+            {{ t('views.intimacy.candidates.selectedRepairs', { count: selection.messageIds.length }) }}
+            ·
+            {{ t('views.intimacy.candidates.selectedSubsequents', { count: selection.responseMessageIds.length }) }}
+          </span>
+          <span v-else class="text-xs text-gray-500 dark:text-gray-400">
             {{ t('views.intimacy.candidates.selected', { count: selection.messageIds.length }) }}
             <template v-if="isFollowUp">
               ·
@@ -688,6 +834,56 @@ function errorMessage(error: unknown): string {
             {{ t(planStages.errorKey) }}
           </p>
           <p class="mt-2 text-[11px] text-gray-400">{{ t('views.intimacy.candidates.planStepHint') }}</p>
+        </template>
+
+        <template v-else-if="isRepair">
+          <p class="mt-2 text-[11px] text-gray-400">{{ t('views.intimacy.candidates.repairLabels') }}</p>
+          <div class="mt-1 flex flex-wrap items-center gap-3">
+            <UCheckbox
+              v-for="label in REPAIR_LABELS"
+              :key="label"
+              :model-value="repairLabels.includes(label)"
+              :label="t(REPAIR_LABEL_KEYS[label])"
+              size="xs"
+              @update:model-value="toggleRepairLabel(label, $event === true)"
+            />
+          </div>
+
+          <p class="mt-2 text-[11px] text-gray-400">{{ t('views.intimacy.candidates.subsequentChoice') }}</p>
+          <div class="mt-1 flex flex-wrap items-center gap-1.5">
+            <button
+              v-for="observation in CONFIRMABLE_SUBSEQUENT"
+              :key="observation"
+              type="button"
+              class="rounded-full px-2 py-0.5 text-[11px] transition-colors"
+              :disabled="selection.responseMessageIds.length === 0"
+              :class="[
+                subsequentObservation === observation
+                  ? 'bg-pink-100 text-pink-700 dark:bg-pink-950/40 dark:text-pink-300'
+                  : 'bg-gray-100 text-gray-500 dark:bg-gray-800 dark:text-gray-400',
+                selection.responseMessageIds.length === 0
+                  ? 'cursor-not-allowed opacity-50'
+                  : 'hover:bg-gray-200 dark:hover:bg-gray-700',
+              ]"
+              @click="subsequentObservation = observation"
+            >
+              {{ t(SUBSEQUENT_OBSERVATION_LABEL_KEYS[observation]) }}
+            </button>
+          </div>
+          <p class="mt-2 text-[11px] text-gray-400">{{ t('views.intimacy.candidates.subsequentNoneHint') }}</p>
+
+          <p v-if="repairSelection.errorKey" class="mt-2 text-[11px] text-amber-600 dark:text-amber-400">
+            {{ t(repairSelection.errorKey) }}
+          </p>
+          <p v-else-if="repairLabels.length === 0" class="mt-2 text-[11px] text-amber-600 dark:text-amber-400">
+            {{ t('views.intimacy.k6.labelsRequired') }}
+          </p>
+          <p
+            v-else-if="selection.responseMessageIds.length > 0 && subsequentObservation === null"
+            class="mt-2 text-[11px] text-amber-600 dark:text-amber-400"
+          >
+            {{ t('views.intimacy.k6.subsequentRequired') }}
+          </p>
         </template>
 
         <template v-else>

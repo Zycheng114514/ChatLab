@@ -232,7 +232,7 @@
     },
     "preflight": {
       "title": "分析本範圍",
-      "description": "按時間順序把範圍內的訊息分段送給已設定的模型，逐段辨識個人分享、傾訴後的回應、事後追問、好消息回應和共同安排。開始後可以暫停、繼續或取消。",
+      "description": "按時間順序把範圍內的訊息分段送給已設定的模型，逐段辨識個人分享、傾訴後的回應、事後追問、好消息回應、共同安排和分歧後的修復嘗試。開始後可以暫停、繼續或取消。",
       "range": "{start} 至 {end}",
       "messages": "訊息",
       "windows": "分段",
@@ -320,6 +320,36 @@
       "oneSenderPerStage": "除「雙方確認」外，同一步裡的訊息要由同一個人發送",
       "confirmNeedsBoth": "「雙方確認」要兩則訊息：對方提出可執行的安排，本人隨後明確同意"
     },
+    "k6": {
+      "title": "分歧後的修復嘗試",
+      "definition": "雙方在文字裡明確表現出不一致之後，任一方主動做出的修復表達，以及另一方接下來說了什麼。只記錄聊天裡看得到的這幾則訊息。",
+      "expand": "查看分歧後的修復",
+      "collapse": "收起",
+      "caution": "分歧的自動辨識比其它幾項更容易出錯，建議逐條核對。",
+      "disagreementsLabel": "找到的明確分歧",
+      "repairer": "修復發起者：{name}",
+      "attemptsLabel": "發起的修復嘗試",
+      "labelTitle": "修復方式",
+      "labelNote": "一個嘗試可以同時屬於多種修復方式，所以四格之和可能大於嘗試數。",
+      "subsequentTitle": "後續表現",
+      "subsequentNote": "五格之和等於嘗試數。這只描述另一方接下來說了什麼：出現接納表達不表示兩人已經和解，未見後續也不表示這次修復失敗。",
+      "disagreementColumn": "分歧",
+      "repairColumn": "修復",
+      "subsequentColumn": "後續",
+      "noSubsequent": "未見後續",
+      "empty": "未找到符合規則的記錄。",
+      "editRepair": "改修復方式與後續",
+      "labelsRequired": "至少選擇一種修復方式",
+      "subsequentPickHint": "選擇這次修復之後記錄裡看到的後續表現。",
+      "subsequentLocked": "這個事件沒有引用另一方在修復之後的訊息，所以只能記為「未見後續」或「無法判斷」。",
+      "disagreementNeedsBoth": "分歧訊息要雙方各至少一則",
+      "repairNeedsMessage": "還要選修復者本人的修復訊息",
+      "repairNeedsOneSender": "修復訊息要由同一個人發送",
+      "disagreementBeforeRepair": "分歧訊息要早於第一則修復訊息",
+      "subsequentFromOther": "後續訊息要由另一方發送",
+      "subsequentAfterRepair": "後續訊息要晚於最後一則修復訊息",
+      "subsequentRequired": "選了後續訊息就要說明後續表現"
+    },
     "category": {
       "experienceOrUpdate": "經歷與近況",
       "feeling": "感受",
@@ -361,6 +391,19 @@
       "rescheduled": "改期",
       "cancelled": "取消",
       "retrospectiveMentioned": "事後提起"
+    },
+    "repairLabel": {
+      "apology": "道歉",
+      "clarification": "澄清或重新解釋",
+      "acknowledgesPart": "承認自己的部分",
+      "deescalationOrReconnect": "緩和或重新靠近"
+    },
+    "subsequent": {
+      "acceptance": "出現接納表達",
+      "continuedDiscussion": "繼續討論",
+      "rejection": "出現拒絕表達",
+      "noVisibleFollowUp": "未見後續",
+      "uncertain": "無法判斷"
     },
     "initiation": {
       "title": "問起的時機",
@@ -439,7 +482,19 @@
       "planSteps": "時間線",
       "planStepHint": "每一步的行為者就是那則訊息的發送者；再點一次已選的訊息可以去掉它。",
       "planConfirmNeedsSecond": "還缺一則：下一則點擊會補進這一步。",
-      "selectedPlanSteps": "已選 {count} 步"
+      "selectedPlanSteps": "已選 {count} 步",
+      "submitRepair": "確認為分歧後的修復",
+      "repairSelectHint": "分三步：先點分歧訊息（雙方各至少一則），再點修復者本人的修復訊息，最後可以點另一方在修復之後的後續訊息。只能選同一筆檢索結果裡的訊息。",
+      "repairStep": "目前這一步",
+      "repairStepDisagreement": "① 分歧訊息",
+      "repairStepRepair": "② 修復訊息",
+      "repairStepSubsequent": "③ 後續訊息（可選）",
+      "selectedDisagreements": "已選分歧 {count} 則",
+      "selectedRepairs": "已選修復 {count} 則",
+      "selectedSubsequents": "已選後續 {count} 則",
+      "repairLabels": "修復方式（可多選）",
+      "subsequentChoice": "後續表現（選了後續訊息時必選）",
+      "subsequentNoneHint": "沒有點後續訊息時記為「未見後續」。"
     },
     "methods": {
       "title": "方法與來源",
@@ -466,6 +521,10 @@
       "k5Body": "統計單位是一個雙方共同參與的具體安排。提議、商量、確認、改期、取消、事後提起都屬於同一個安排，改過幾次時間也還是一個。公司派工、多人例行流程，以及「以後我們都要幸福」這類無法推進的說法不算。",
       "k5CountingBody": "「本期新提議」按提議訊息落在範圍內計數，「本期有更新」按任一步落在範圍內計數，下面三項拆的都是後者。狀態只描述聊天裡看得到的最後一步，不推斷這件事在現實中怎麼樣；沒有後續記錄只表示記錄裡沒有再提到它。這些狀態是本產品為呈現記錄而定的操作化設計，不是任何量表的得分。",
       "k5Citation": "構念背景：Schaefer, M. T., & Olson, D. H. (1981). Assessing intimacy: The PAIR inventory. Journal of Marital and Family Therapy, 7(1), 47–60. 頁面不輸出 PAIR 分數。",
+      "k6Title": "分歧後的修復嘗試（K6）",
+      "k6Body": "統計單位是一次明確的分歧，加上之後任一方的修復表達和另一方可見的後續。分歧要在雙方寫下的文字裡看得出來，不用短回覆或沉默推定衝突；玩笑式的「對不起嘛」、遲到或回覆慢的普通道歉、無爭執時的換話題都不算。修復方式是多標籤，只描述話是怎麼說的，不判斷動機。",
+      "k6CountingBody": "分歧數和嘗試數分開：同一次分歧裡兩個人各修復一次，是一個分歧、兩個嘗試。自動辨識只在同一段記錄裡同時看到分歧和修復時才產出事件，模型對兩者都判斷清楚時才記為「自動識別」，否則列為「待核對」並且不計入次數。後續表現五種並列，沒有好壞之分：出現接納表達只表示另一方說了那樣一句話，未見後續也只表示記錄裡沒有接下來的話。",
+      "k6Citation": "構念背景：Gottman 等（2015）關於衝突後修復的論述。這裡只把它當背景，全文未複核，頁面用的是比它更窄的定義，也不輸出任何量表分數。",
       "limitationTitle": "侷限",
       "limitationBody": "這裡的事件定義還沒有在真實聊天上驗證過自動識別的準確度，模型可能漏掉或認錯。計數只表示在所選範圍內識別到多少個這樣的事件，不表示親密程度，也不能用來比較兩個人或兩段關係。"
     }

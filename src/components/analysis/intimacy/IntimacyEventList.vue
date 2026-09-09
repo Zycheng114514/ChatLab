@@ -1,7 +1,8 @@
 <script setup lang="ts">
 // 亲密关系事件列表：每行是一个事件的证据、标签和修订入口。
-// 五种 kind 共用这一行：个人分享只有本人的原话；倾诉后的回应与好消息回应左边是本人原话、右边是另一方的回复；
-// 事后追问上面是被问者更早的原话、下面是追问者的原话；共同安排是一条时间线，一步一格。
+// 六种 kind 共用这一行：个人分享只有本人的原话；倾诉后的回应与好消息回应左边是本人原话、右边是另一方的回复；
+// 事后追问上面是被问者更早的原话、下面是追问者的原话；共同安排是一条时间线，一步一格；
+// 分歧后的修复是三段：分歧原话（双方）→ 修复原话（发起者）→ 后续原话（另一方）或「未见后续」。
 import { computed, ref } from 'vue'
 import dayjs from 'dayjs'
 import { useI18n } from 'vue-i18n'
@@ -14,11 +15,14 @@ import type {
   IntimacyMember,
   IntimacyMessageSnippet,
   IntimacyReviewDetails,
+  RepairAttemptDetails,
+  RepairLabel,
   SharedPlanDetails,
   SharedPlanStage,
   SharingCategory,
   SharingDetails,
   SharingTopic,
+  SubsequentObservation,
   SupportResponseDetails,
   SupportResponseLabel,
 } from '@/services'
@@ -27,6 +31,8 @@ import {
   GOOD_NEWS_RESPONSE_LABELS,
   GOOD_NEWS_RESPONSE_LABEL_KEYS,
   POSITIVE_FOR_SHARER_LABEL_KEYS,
+  REPAIR_LABELS,
+  REPAIR_LABEL_KEYS,
   RESPONSE_OBSERVATION_LABEL_KEYS,
   SHARED_PLAN_STAGES,
   SHARED_PLAN_STAGE_LABEL_KEYS,
@@ -34,8 +40,11 @@ import {
   SHARING_CATEGORY_LABEL_KEYS,
   SHARING_TOPICS,
   SHARING_TOPIC_LABEL_KEYS,
+  SUBSEQUENT_OBSERVATIONS,
+  SUBSEQUENT_OBSERVATION_LABEL_KEYS,
   SUPPORT_RESPONSE_LABELS,
   SUPPORT_RESPONSE_LABEL_KEYS,
+  canReadSubsequent,
   formatIntimacyGap,
   resolveIntimacyStatusBadge,
 } from './intimacy-summary'
@@ -70,6 +79,8 @@ const editGoodNewsLabels = ref<GoodNewsResponseLabel[]>([])
 const editPositiveForSharer = ref(false)
 const editPriorIds = ref<number[]>([])
 const editLastStage = ref<SharedPlanStage>('proposed')
+const editRepairLabels = ref<RepairLabel[]>([])
+const editSubsequent = ref<SubsequentObservation>('uncertain')
 
 const topicOptions = computed(() =>
   SHARING_TOPICS.map((topic) => ({ value: topic, label: t(SHARING_TOPIC_LABEL_KEYS[topic]) }))
@@ -104,6 +115,10 @@ function sharedPlanDetails(event: IntimacyEvent): SharedPlanDetails | null {
   return event.details.kind === 'shared_plan' ? event.details : null
 }
 
+function repairDetails(event: IntimacyEvent): RepairAttemptDetails | null {
+  return event.details.kind === 'repair_attempt' ? event.details : null
+}
+
 /** 行标题：共同安排用活动描述，事后追问用事情描述，其余的用事件主体的名字。 */
 function rowTitle(event: IntimacyEvent): string {
   return (
@@ -131,11 +146,21 @@ function observationLabelKey(event: IntimacyEvent): string {
 }
 
 function coreEvidence(event: IntimacyEvent) {
-  return event.evidence.filter((evidence) => evidence.role !== 'response' && evidence.role !== 'prior')
+  return event.evidence.filter((evidence) => evidence.role === 'core' || evidence.role === 'related')
 }
 
 function responseEvidence(event: IntimacyEvent) {
   return event.evidence.filter((evidence) => evidence.role === 'response')
+}
+
+/** K6 的分歧证据来自双方，所以每条都要写清是谁说的。 */
+function disagreementEvidence(event: IntimacyEvent) {
+  return event.evidence.filter((evidence) => evidence.role === 'disagreement')
+}
+
+/** K6 的后续证据：另一方在修复之后说的话；没有引用时这一段写「未见后续」。 */
+function subsequentEvidence(event: IntimacyEvent) {
+  return event.evidence.filter((evidence) => evidence.role === 'subsequent')
 }
 
 /** K3 的「先前」证据：被问者更早提到那件事的消息；没找到配对时是空的。 */
@@ -171,12 +196,14 @@ function editButtonKey(event: IntimacyEvent): string {
   if (sharingDetails(event)) return 'views.intimacy.event.editLabels'
   if (followUpDetails(event)) return 'views.intimacy.k3.pickPrior'
   if (sharedPlanDetails(event)) return 'views.intimacy.k5.editStage'
+  if (repairDetails(event)) return 'views.intimacy.k6.editRepair'
   return 'views.intimacy.event.editResponse'
 }
 
 function requiredHintKey(event: IntimacyEvent): string {
   if (sharingDetails(event)) return 'views.intimacy.event.categoriesRequired'
   if (followUpDetails(event)) return 'views.intimacy.k3.priorRequired'
+  if (repairDetails(event)) return 'views.intimacy.k6.labelsRequired'
   return 'views.intimacy.event.labelsRequired'
 }
 
@@ -230,6 +257,8 @@ function startEditing(event: IntimacyEvent) {
   editPositiveForSharer.value = goodNews?.positiveForSharer === 'explicit_or_context_supported'
   editPriorIds.value = priorEvidence(event).map((evidence) => evidence.messageId)
   editLastStage.value = sharedPlanDetails(event)?.lastObservedStage ?? 'proposed'
+  editRepairLabels.value = [...(repairDetails(event)?.repairLabels ?? [])]
+  editSubsequent.value = repairDetails(event)?.subsequentObservation ?? 'uncertain'
 }
 
 function togglePrior(messageId: number) {
@@ -260,12 +289,20 @@ function toggleGoodNewsLabel(label: GoodNewsResponseLabel, checked: boolean) {
   editGoodNewsLabels.value = GOOD_NEWS_RESPONSE_LABELS.filter((item) => next.has(item))
 }
 
+function toggleRepairLabel(label: RepairLabel, checked: boolean) {
+  const next = new Set(editRepairLabels.value)
+  if (checked) next.add(label)
+  else next.delete(label)
+  editRepairLabels.value = REPAIR_LABELS.filter((item) => next.has(item))
+}
+
 /** 有可见回复的事件至少要留一个回复标签；没有可见回复的好消息事件只改「对本人是否好消息」。 */
 function canSubmitEdit(event: IntimacyEvent): boolean {
   if (sharingDetails(event)) return editCategories.value.length > 0
   if (followUpDetails(event)) return editPriorIds.value.length > 0
   // 共同安排改的是「最后看到的一步」，六选一总有一个选中值。
   if (sharedPlanDetails(event)) return true
+  if (repairDetails(event)) return editRepairLabels.value.length > 0
   if (supportDetails(event)) return editSupportLabels.value.length > 0
   const goodNews = goodNewsDetails(event)
   return goodNews?.responseObservation !== 'visible_response' || editGoodNewsLabels.value.length > 0
@@ -287,6 +324,9 @@ function submitEdit(event: IntimacyEvent) {
       // 后端拒绝给看不见的回复贴标签，所以这时只提交「对本人是否好消息」。
       responseLabels: goodNews.responseObservation === 'visible_response' ? [...editGoodNewsLabels.value] : [],
     }
+  } else if (repairDetails(event)) {
+    // 修复方式和后续表现都是对同一批证据的读法，证据本身不动。
+    details = { repairLabels: [...editRepairLabels.value], subsequentObservation: editSubsequent.value }
   } else if (supportDetails(event)) {
     details = { responseLabels: [...editSupportLabels.value] }
   } else {
@@ -343,6 +383,16 @@ function submitEdit(event: IntimacyEvent) {
         >
           {{ t(labelKey) }}
         </span>
+        <span
+          v-for="label in repairDetails(event)?.repairLabels ?? []"
+          :key="label"
+          class="rounded bg-gray-100 px-1.5 py-0.5 text-[10px] text-gray-600 dark:bg-gray-800 dark:text-gray-300"
+        >
+          {{ t(REPAIR_LABEL_KEYS[label]) }}
+        </span>
+        <span v-if="repairDetails(event)" class="text-[10px] text-gray-400">
+          {{ t(SUBSEQUENT_OBSERVATION_LABEL_KEYS[repairDetails(event)!.subsequentObservation]) }}
+        </span>
       </div>
 
       <p v-if="observationKey(event)" class="mt-1.5 text-[11px] text-gray-400">
@@ -393,6 +443,66 @@ function submitEdit(event: IntimacyEvent) {
               {{ formatTime(quoteTime(messageId, stage.at)) }}
             </span>
             {{ quoteText(messageId) ?? t('views.intimacy.event.missingMessage') }}
+          </p>
+        </div>
+      </div>
+
+      <!-- 分歧后的修复：分歧原话（双方）→ 修复原话（发起者）→ 后续原话（另一方）或「未见后续」 -->
+      <div v-else-if="repairDetails(event)" class="mt-2 space-y-1.5">
+        <div class="rounded-lg bg-gray-50 px-3 py-2 dark:bg-gray-800/50">
+          <p class="text-[10px] text-gray-400">{{ t('views.intimacy.k6.disagreementColumn') }}</p>
+          <p
+            v-for="evidence in disagreementEvidence(event)"
+            :key="evidence.messageId"
+            class="mt-1 text-xs leading-relaxed"
+            :class="
+              quoteText(evidence.messageId) === null ? 'text-gray-400 italic' : 'text-gray-700 dark:text-gray-200'
+            "
+          >
+            <span class="mr-1.5 text-[10px] text-gray-400">
+              {{ memberName(evidence.senderId) }}
+              <span class="tabular-nums">{{ formatTime(evidence.timestamp) }}</span>
+            </span>
+            {{ quoteText(evidence.messageId) ?? t('views.intimacy.event.missingMessage') }}
+          </p>
+        </div>
+
+        <div class="rounded-lg bg-gray-50 px-3 py-2 dark:bg-gray-800/50">
+          <p class="text-[10px] text-gray-400">
+            {{ t('views.intimacy.k6.repairColumn') }} · {{ memberName(event.subjectMemberId) }}
+          </p>
+          <p
+            v-for="evidence in coreEvidence(event)"
+            :key="evidence.messageId"
+            class="mt-1 text-xs leading-relaxed"
+            :class="
+              quoteText(evidence.messageId) === null
+                ? 'text-gray-400 italic'
+                : 'font-semibold text-gray-800 dark:text-gray-100'
+            "
+          >
+            <span class="mr-1.5 text-[10px] tabular-nums text-gray-400">{{ formatTime(evidence.timestamp) }}</span>
+            {{ quoteText(evidence.messageId) ?? t('views.intimacy.event.missingMessage') }}
+          </p>
+        </div>
+
+        <div class="rounded-lg bg-gray-50 px-3 py-2 dark:bg-gray-800/50">
+          <p class="text-[10px] text-gray-400">
+            {{ t('views.intimacy.k6.subsequentColumn') }} · {{ memberName(event.otherMemberId) }}
+          </p>
+          <p
+            v-for="evidence in subsequentEvidence(event)"
+            :key="evidence.messageId"
+            class="mt-1 text-xs leading-relaxed"
+            :class="
+              quoteText(evidence.messageId) === null ? 'text-gray-400 italic' : 'text-gray-700 dark:text-gray-200'
+            "
+          >
+            <span class="mr-1.5 text-[10px] tabular-nums text-gray-400">{{ formatTime(evidence.timestamp) }}</span>
+            {{ quoteText(evidence.messageId) ?? t('views.intimacy.event.missingMessage') }}
+          </p>
+          <p v-if="subsequentEvidence(event).length === 0" class="mt-1 text-xs text-gray-400">
+            {{ t('views.intimacy.k6.noSubsequent') }}
           </p>
         </div>
       </div>
@@ -543,6 +653,43 @@ function submitEdit(event: IntimacyEvent) {
               </button>
             </li>
           </ul>
+        </div>
+
+        <div v-if="repairDetails(event)">
+          <div class="flex flex-wrap items-center gap-3">
+            <UCheckbox
+              v-for="label in REPAIR_LABELS"
+              :key="label"
+              :model-value="editRepairLabels.includes(label)"
+              :label="t(REPAIR_LABEL_KEYS[label])"
+              size="xs"
+              @update:model-value="toggleRepairLabel(label, $event === true)"
+            />
+          </div>
+          <p class="mt-2 text-[11px] text-gray-400">{{ t('views.intimacy.k6.subsequentPickHint') }}</p>
+          <div class="mt-1 flex flex-wrap items-center gap-1.5">
+            <button
+              v-for="observation in SUBSEQUENT_OBSERVATIONS"
+              :key="observation"
+              type="button"
+              class="rounded-full px-2 py-0.5 text-[11px] transition-colors"
+              :disabled="!canReadSubsequent(observation, subsequentEvidence(event).length > 0)"
+              :class="[
+                editSubsequent === observation
+                  ? 'bg-pink-100 text-pink-700 dark:bg-pink-950/40 dark:text-pink-300'
+                  : 'bg-gray-100 text-gray-500 dark:bg-gray-800 dark:text-gray-400',
+                canReadSubsequent(observation, subsequentEvidence(event).length > 0)
+                  ? 'hover:bg-gray-200 dark:hover:bg-gray-700'
+                  : 'cursor-not-allowed opacity-50',
+              ]"
+              @click="editSubsequent = observation"
+            >
+              {{ t(SUBSEQUENT_OBSERVATION_LABEL_KEYS[observation]) }}
+            </button>
+          </div>
+          <p v-if="subsequentEvidence(event).length === 0" class="mt-1 text-[11px] text-gray-400">
+            {{ t('views.intimacy.k6.subsequentLocked') }}
+          </p>
         </div>
 
         <div v-if="sharingDetails(event)" class="flex flex-wrap items-center gap-3">
