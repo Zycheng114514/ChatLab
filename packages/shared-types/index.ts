@@ -300,8 +300,14 @@ export type {
 
 export { IMPLEMENTED_INTIMACY_KINDS } from './intimacy'
 export type {
+  CreateFollowUpDetails,
   CreateIntimacyEventDetails,
   CreateIntimacyEventRequest,
+  FollowUpDetails,
+  FollowUpInitiation,
+  FollowUpMatchConfidence,
+  FollowUpReviewDetails,
+  FollowUpSummary,
   GoodNewsResponseDetails,
   GoodNewsResponseLabel,
   IntimacyAnalysisRequest,
@@ -314,6 +320,7 @@ export type {
   IntimacyEventStatus,
   IntimacyEvidence,
   IntimacyEvidenceRole,
+  IntimacyFollowUpMemberSummary,
   IntimacyKind,
   IntimacyKindSummary,
   IntimacyMember,

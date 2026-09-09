@@ -6,8 +6,13 @@ export type IntimacyKind =
   | 'shared_plan'
   | 'repair_attempt'
 
-/** 已实现 K1 个人分享、K2 倾诉后的回应、K4 好消息回应；其余值先占位，服务端对未实现的 kind 返回 400 */
-export const IMPLEMENTED_INTIMACY_KINDS: readonly IntimacyKind[] = ['sharing', 'support_response', 'good_news_response']
+/** 已实现 K1 个人分享、K2 倾诉后的回应、K3 事后追问、K4 好消息回应；其余值先占位，服务端对未实现的 kind 返回 400 */
+export const IMPLEMENTED_INTIMACY_KINDS: readonly IntimacyKind[] = [
+  'sharing',
+  'support_response',
+  'follow_up',
+  'good_news_response',
+]
 
 export type IntimacyRunStatus = 'pending' | 'running' | 'paused' | 'completed' | 'failed' | 'cancelled'
 export type IntimacyEventOrigin = 'model' | 'user'
@@ -16,8 +21,8 @@ export type IntimacyReviewDecision = 'included' | 'excluded'
 export type IntimacyObservation = 'sufficient' | 'boundary_limited' | 'media_missing'
 /** 展示状态（服务端派生）：auto 自动识别、uncertain 待核对、confirmed 用户确认、excluded 已排除 */
 export type IntimacyEventStatus = 'auto' | 'uncertain' | 'confirmed' | 'excluded'
-/** response = 另一方针对锚点消息的回复 */
-export type IntimacyEvidenceRole = 'core' | 'related' | 'response'
+/** response = 另一方针对锚点消息的回复；prior = K3 里被问者更早提到那件事的消息 */
+export type IntimacyEvidenceRole = 'core' | 'related' | 'response' | 'prior'
 
 export interface IntimacyMember {
   memberId: number
@@ -51,7 +56,7 @@ export interface IntimacyPreflight {
   messageCount: number
   textMessageCount: number
   estimatedWindows: number
-  /** = estimatedWindows */
+  /** 每段一次窗口调用，加上 K3 关联的估算（按每段一条追问算），实际次数记在 run 的 modelCalls 上 */
   estimatedCalls: number
   /** null = 未配置 LLM */
   modelId: string | null
@@ -139,13 +144,55 @@ export interface GoodNewsResponseDetails {
   responseObservation: ResponseObservation
 }
 
-export type IntimacyEventDetails = SharingDetails | SupportResponseDetails | GoodNewsResponseDetails
+/** 追问与被问者更早提到那件事之间的关系；先前证据缺失时只有 uncertain */
+export type FollowUpMatchConfidence = 'supported' | 'uncertain'
+
+/**
+ * 主动性：在被问者提到那件事与追问之间，被问者有没有自己又提起过。
+ * 由程序判断（关键词命中或同一 K1 事件的后续证据），无法观察时为 uncertain。
+ */
+export type FollowUpInitiation = 'before_subject_reintroduced' | 'after_subject_reintroduced' | 'uncertain'
+
+export interface FollowUpDetails {
+  kind: 'follow_up'
+  /** 先前消息所属的 K1 事件 id（`sharing:<anchorMessageId>`）；不属于任何分享事件时 null */
+  priorEventId: string | null
+  /** 模型给的事情描述，≤ 60 字，只用于列表标题 */
+  matter: string
+  /** 检索用词（≤ 5 个）：阶段 B 召回候选、程序判断主动性都用它 */
+  matterKeywords: string[]
+  matchConfidence: FollowUpMatchConfidence
+  initiationInObservedRecord: FollowUpInitiation
+  /** 追问锚点 − 先前锚点；没有先前证据时 null */
+  gapSeconds: number | null
+  /** 本次回查范围起点（追问前 30 天，且不早于聊天开始） */
+  lookbackStartTs: number
+  /** 阶段 B 给模型看过的候选消息 id（≤ 12，按时间倒序），供用户手动指定先前事件 */
+  candidateMessageIds: number[]
+}
+
+export type IntimacyEventDetails = SharingDetails | SupportResponseDetails | GoodNewsResponseDetails | FollowUpDetails
+
+/**
+ * K3 修订：用户从候选列表或被问者任意更早的消息里指定先前事件。客户端只传 `priorMessageIds`，
+ * 服务端校验发送者与先后后，把算出来的配对结果一起写进修订。
+ */
+export interface FollowUpReviewDetails {
+  /** 由被问者发送且早于追问锚点 */
+  priorMessageIds: number[]
+  priorEventId?: string | null
+  matchConfidence?: FollowUpMatchConfidence
+  initiationInObservedRecord?: FollowUpInitiation
+  gapSeconds?: number | null
+  matter?: string
+}
 
 /** 用户改写的标签；服务端按事件 kind 校验，只接受该 kind 可改写的字段 */
 export type IntimacyReviewDetails =
   | Partial<Omit<SharingDetails, 'kind'>>
   | Partial<Omit<SupportResponseDetails, 'kind'>>
   | Partial<Omit<GoodNewsResponseDetails, 'kind'>>
+  | FollowUpReviewDetails
 
 export interface IntimacyEvidence {
   messageId: number
@@ -163,15 +210,15 @@ export interface IntimacyEventReview {
 }
 
 export interface IntimacyEvent {
-  /** `${kind}:${anchorMessageId}`，会话内稳定身份，跨重跑关联修订 */
+  /** `${kind}:${anchorMessageId}`，会话内稳定身份，跨重跑关联修订；K3 的锚点是追问消息 */
   id: string
   sessionId: string
   /** 用户确认候选生成的事件为 null */
   runId: string | null
   kind: IntimacyKind
-  /** K1 = 分享者，K2 = 倾诉者，K4 = 好消息的分享者 */
+  /** K1 = 分享者，K2 = 倾诉者，K3 = 被问者，K4 = 好消息的分享者 */
   subjectMemberId: number
-  /** K2 / K4 = 回复方 */
+  /** K2 / K4 = 回复方，K3 = 追问者 */
   otherMemberId: number
   anchorMessageId: number
   anchorTs: number
@@ -234,7 +281,27 @@ export interface ResponseSummary {
   members: IntimacyResponseMemberSummary[]
 }
 
-export type IntimacyKindSummary = SharingSummary | ResponseSummary
+/** 追问者的计数；主动性三项之和 = pairs，因为每个计入的配对恰好有一种主动性 */
+export interface IntimacyFollowUpMemberSummary {
+  /** 追问者 */
+  memberId: number
+  /** 计入的追问事件数（status ∈ auto、confirmed） */
+  pairs: number
+  /** 涉及的事情数：按先前事件去重（先前消息不属于 K1 事件时按该消息去重） */
+  matters: number
+  /** 没找到先前事件、待用户核对的追问数（不计入 pairs） */
+  uncertain: number
+  beforeReintroduced: number
+  afterReintroduced: number
+  initiationUncertain: number
+}
+
+export interface FollowUpSummary {
+  kind: 'follow_up'
+  members: IntimacyFollowUpMemberSummary[]
+}
+
+export type IntimacyKindSummary = SharingSummary | ResponseSummary | FollowUpSummary
 
 export interface IntimacyResults {
   /** 提供事件的那次 run；只有用户确认事件时为 null */
@@ -255,7 +322,7 @@ export interface IntimacyResults {
   } | null
   /** 按 anchorTs 升序；含 excluded（前端默认折叠） */
   events: IntimacyEvent[]
-  /** 事件证据用到的消息，从聊天库现取 */
+  /** 事件证据（以及待核对追问的候选先前消息）用到的消息，从聊天库现取 */
   messages: Record<number, IntimacyMessageSnippet>
   /** 每个已实现 kind 一条，顺序同 IMPLEMENTED_INTIMACY_KINDS */
   summaries: IntimacyKindSummary[]
@@ -280,20 +347,27 @@ export interface IntimacyCandidates {
   semanticAvailable: boolean
 }
 
+/** K3 用户确认只需要事情描述，配对结果（先前事件、间隔、主动性）由服务端按证据算出 */
+export type CreateFollowUpDetails = Pick<FollowUpDetails, 'matter'>
+
 /** 服务端填 K2 的 disclosureEventId，并按有没有勾选回复消息派生 responseObservation */
 export type CreateIntimacyEventDetails =
   | Omit<SharingDetails, 'kind'>
   | Omit<SupportResponseDetails, 'kind' | 'disclosureEventId' | 'responseObservation'>
   | Omit<GoodNewsResponseDetails, 'kind' | 'responseObservation'>
+  | CreateFollowUpDetails
 
 export interface CreateIntimacyEventRequest {
   kind: IntimacyKind
+  /** 核心消息的发送者：K1 / K2 / K4 是事件主体，K3 是追问者（事件主体是被问的另一方） */
   subjectMemberId: number
-  /** 非空，全部由 subjectMemberId 发送 */
+  /** 非空，全部由 subjectMemberId 发送；K3 是追问消息 */
   coreMessageIds: number[]
   relatedMessageIds?: number[]
   /** K2 / K4：另一方的回复消息，必须由 otherMemberId 发送且 id 大于锚点 */
   responseMessageIds?: number[]
+  /** K3：另一方更早提到那件事的消息，必须由 otherMemberId 发送且 id 小于锚点 */
+  priorMessageIds?: number[]
   details: CreateIntimacyEventDetails
 }
 

@@ -1,10 +1,14 @@
 import type {
+  FollowUpDetails,
+  FollowUpInitiation,
+  FollowUpReviewDetails,
   GoodNewsResponseDetails,
   IntimacyEvent,
   IntimacyEventDetails,
   IntimacyEventReview,
   IntimacyEventStatus,
   IntimacyEvidence,
+  IntimacyFollowUpMemberSummary,
   IntimacyMember,
   IntimacyMemberSummary,
   IntimacyModelDecision,
@@ -261,6 +265,19 @@ export function applyReviewDetails(
       responseLabels: reviseResponseLabels(details, revised.responseLabels, SUPPORT_RESPONSE_LABELS),
     }
   }
+  if (details.kind === 'follow_up') {
+    // The user picked the earlier messages; the service resolved the pairing before storing the revision.
+    const revised = revision as FollowUpReviewDetails
+    if (!revised.priorMessageIds || revised.priorMessageIds.length === 0) return details
+    return {
+      ...details,
+      matter: revised.matter ?? details.matter,
+      priorEventId: revised.priorEventId ?? null,
+      matchConfidence: revised.matchConfidence ?? 'supported',
+      initiationInObservedRecord: revised.initiationInObservedRecord ?? 'uncertain',
+      gapSeconds: revised.gapSeconds ?? null,
+    }
+  }
   const revised = revision as Partial<Omit<GoodNewsResponseDetails, 'kind'>>
   return {
     ...details,
@@ -311,12 +328,12 @@ export function summarizeResponses(
     )
     const byLabel = Object.fromEntries(labels.map((label) => [label, 0])) as Record<string, number>
     for (const event of counted) {
-      if (event.details.kind === 'sharing' || event.details.responseObservation !== 'visible_response') continue
-      for (const label of event.details.responseLabels) byLabel[label] += 1
+      const details = responseDetailsOf(event)
+      if (!details || details.responseObservation !== 'visible_response') continue
+      for (const label of details.responseLabels) byLabel[label] += 1
     }
     const countObservation = (observation: ResponseObservation) =>
-      counted.filter((event) => event.details.kind !== 'sharing' && event.details.responseObservation === observation)
-        .length
+      counted.filter((event) => responseDetailsOf(event)?.responseObservation === observation).length
     return {
       memberId: member.memberId,
       anchors: counted.length,
@@ -326,6 +343,48 @@ export function summarizeResponses(
       byLabel,
     }
   })
+}
+
+/**
+ * Count follow-up questions per asker. A question whose earlier matter was never found stays out of the pairs and
+ * is reported on its own, so an unmatched question is never read as "they asked about nothing".
+ */
+export function summarizeFollowUps(
+  events: IntimacyEvent[],
+  members: IntimacyMember[]
+): IntimacyFollowUpMemberSummary[] {
+  return members.map((member) => {
+    const own = events.filter((event) => event.kind === 'follow_up' && event.otherMemberId === member.memberId)
+    const counted = own.filter((event) => event.status === 'auto' || event.status === 'confirmed')
+    const countInitiation = (initiation: FollowUpInitiation) =>
+      counted.filter((event) => followUpDetailsOf(event)?.initiationInObservedRecord === initiation).length
+    return {
+      memberId: member.memberId,
+      pairs: counted.length,
+      matters: new Set(counted.flatMap((event) => matterKeyOf(event) ?? [])).size,
+      uncertain: own.filter((event) => event.status === 'uncertain').length,
+      beforeReintroduced: countInitiation('before_subject_reintroduced'),
+      afterReintroduced: countInitiation('after_subject_reintroduced'),
+      initiationUncertain: countInitiation('uncertain'),
+    }
+  })
+}
+
+/** Two questions about the same earlier matter are one matter, whether or not that matter is a coded K1 event. */
+function matterKeyOf(event: IntimacyEvent): string | null {
+  const details = followUpDetailsOf(event)
+  if (!details) return null
+  if (details.priorEventId) return details.priorEventId
+  const prior = event.evidence.filter((evidence) => evidence.role === 'prior')
+  return prior.length === 0 ? null : `message:${Math.min(...prior.map((evidence) => evidence.messageId))}`
+}
+
+function followUpDetailsOf(event: IntimacyEvent): FollowUpDetails | null {
+  return event.details.kind === 'follow_up' ? event.details : null
+}
+
+function responseDetailsOf(event: IntimacyEvent): SupportResponseDetails | GoodNewsResponseDetails | null {
+  return event.details.kind === 'support_response' || event.details.kind === 'good_news_response' ? event.details : null
 }
 
 /** Labels describe a reply the analysis actually cited, so a revision never labels a reply that was not seen. */

@@ -16,7 +16,6 @@ import {
   type CreateIntimacyEventDetails,
   type GoodNewsResponseDetails,
   type IntimacyEvent,
-  type IntimacyEventDetails,
   type IntimacyEventReview,
   type IntimacyEvidence,
   type IntimacyEvidenceRole,
@@ -45,6 +44,7 @@ import {
   applyReviewDetails,
   buildIntimacyEvents,
   resolveEventStatus,
+  summarizeFollowUps,
   summarizeResponses,
   summarizeSharing,
 } from './events'
@@ -441,30 +441,32 @@ export function createIntimacyService(deps: IntimacyServiceDeps): IntimacyServic
       .sort((left, right) => left.messageId - right.messageId)
 
     if (kind === 'sharing') {
-      const details = requireSharingDetails(request.details)
-      confirmEvent(
-        sessionId,
-        {
-          id: `sharing:${coreEvidence[0]!.messageId}`,
-          kind: 'sharing',
-          subjectMemberId: subject.memberId,
-          otherMemberId: other.memberId,
-          anchorMessageId: coreEvidence[0]!.messageId,
-          anchorTs: coreEvidence[0]!.timestamp,
-          evidence: [
-            ...coreEvidence,
-            ...relatedMessageIds.map((messageId) => toEvidence(found.get(messageId)!, 'related')),
-          ].sort((left, right) => left.messageId - right.messageId),
-          observation: 'sufficient',
-          origin: 'user',
-          modelDecision: null,
-          modelReason: null,
-          details,
-          createdAt: timestamp,
-        },
-        { currentEvents, coreMessageIds, reviewDetails: toReviewDetails(details), timestamp }
-      )
+      const record: IntimacyEventRecord = {
+        id: `sharing:${coreEvidence[0]!.messageId}`,
+        kind: 'sharing',
+        subjectMemberId: subject.memberId,
+        otherMemberId: other.memberId,
+        anchorMessageId: coreEvidence[0]!.messageId,
+        anchorTs: coreEvidence[0]!.timestamp,
+        evidence: [
+          ...coreEvidence,
+          ...relatedMessageIds.map((messageId) => toEvidence(found.get(messageId)!, 'related')),
+        ].sort((left, right) => left.messageId - right.messageId),
+        observation: 'sufficient',
+        origin: 'user',
+        modelDecision: null,
+        modelReason: null,
+        details: requireSharingDetails(request.details),
+        createdAt: timestamp,
+      }
+      confirmEvent(sessionId, record, { currentEvents, coreMessageIds, timestamp })
       return getResults(sessionId)
+    }
+
+    if (kind === 'follow_up') {
+      throw Object.assign(new Error('A confirmed follow-up question needs the earlier message it asks about'), {
+        statusCode: 400,
+      })
     }
 
     // K2 counts a reply to a disclosure, so the disclosure has to exist as a K1 event of its own.
@@ -500,25 +502,22 @@ export function createIntimacyService(deps: IntimacyServiceDeps): IntimacyServic
       ? buildConfirmedSupportDetails(disclosure.id, request.details, responseEvidence.length)
       : buildConfirmedGoodNewsDetails(request.details, responseEvidence.length)
     const anchorEvidence = (disclosure?.evidence ?? coreEvidence).filter((evidence) => evidence.role === 'core')
-    confirmEvent(
-      sessionId,
-      {
-        id: `${kind}:${anchorMessageId}`,
-        kind,
-        subjectMemberId: subject.memberId,
-        otherMemberId: other.memberId,
-        anchorMessageId,
-        anchorTs: disclosure?.anchorTs ?? coreEvidence[0]!.timestamp,
-        evidence: [...anchorEvidence, ...responseEvidence].sort((left, right) => left.messageId - right.messageId),
-        observation: 'sufficient',
-        origin: 'user',
-        modelDecision: null,
-        modelReason: null,
-        details,
-        createdAt: timestamp,
-      },
-      { currentEvents, coreMessageIds, reviewDetails: toReviewDetails(details), timestamp }
-    )
+    const record: IntimacyEventRecord = {
+      id: `${kind}:${anchorMessageId}`,
+      kind,
+      subjectMemberId: subject.memberId,
+      otherMemberId: other.memberId,
+      anchorMessageId,
+      anchorTs: disclosure?.anchorTs ?? coreEvidence[0]!.timestamp,
+      evidence: [...anchorEvidence, ...responseEvidence].sort((left, right) => left.messageId - right.messageId),
+      observation: 'sufficient',
+      origin: 'user',
+      modelDecision: null,
+      modelReason: null,
+      details,
+      createdAt: timestamp,
+    }
+    confirmEvent(sessionId, record, { currentEvents, coreMessageIds, timestamp })
     return getResults(sessionId)
   }
 
@@ -529,7 +528,6 @@ export function createIntimacyService(deps: IntimacyServiceDeps): IntimacyServic
     context: {
       currentEvents: StoredIntimacyEvent[]
       coreMessageIds: number[]
-      reviewDetails: IntimacyReviewDetails
       timestamp: number
     }
   ): void {
@@ -543,7 +541,7 @@ export function createIntimacyService(deps: IntimacyServiceDeps): IntimacyServic
       sessionId,
       overlapping.id,
       'included',
-      JSON.stringify(context.reviewDetails),
+      JSON.stringify(toReviewDetails(record)),
       current?.revision ?? 0,
       context.timestamp
     )
@@ -1051,6 +1049,7 @@ function buildSummaries(events: IntimacyEvent[], members: IntimacyMember[]): Int
   return [
     { kind: 'sharing', members: summarizeSharing(events, members) },
     { kind: 'support_response', members: summarizeResponses(events, members, 'support_response') },
+    { kind: 'follow_up', members: summarizeFollowUps(events, members) },
     { kind: 'good_news_response', members: summarizeResponses(events, members, 'good_news_response') },
   ]
 }
@@ -1141,18 +1140,36 @@ function resolveConfirmedObservation(responseCount: number, labelCount: number):
   })
 }
 
-/** The revisable part of the labels, used when a confirmation lands on an event that already exists. */
-function toReviewDetails(details: IntimacyEventDetails): IntimacyReviewDetails {
+/** The revisable part of an event, used when a confirmation lands on an event that already exists. */
+function toReviewDetails(record: IntimacyEventRecord): IntimacyReviewDetails {
+  const details = record.details
   if (details.kind === 'sharing') {
     return { categories: details.categories, topic: details.topic, isDistressDisclosure: details.isDistressDisclosure }
   }
   if (details.kind === 'support_response') return { responseLabels: details.responseLabels }
-  return { positiveForSharer: details.positiveForSharer, responseLabels: details.responseLabels }
+  if (details.kind === 'good_news_response') {
+    return { positiveForSharer: details.positiveForSharer, responseLabels: details.responseLabels }
+  }
+  return {
+    priorMessageIds: record.evidence
+      .filter((evidence) => evidence.role === 'prior')
+      .map((evidence) => evidence.messageId),
+    priorEventId: details.priorEventId,
+    matchConfidence: details.matchConfidence,
+    initiationInObservedRecord: details.initiationInObservedRecord,
+    gapSeconds: details.gapSeconds,
+    matter: details.matter,
+  }
 }
 
-/** A revision may only touch the labels of the kind it is about, and only label a reply that was seen. */
+/** A revision may only touch the fields of the kind it is about, and only label a reply that was seen. */
 function requireRevisableDetails(event: IntimacyEvent, details: IntimacyReviewDetails): IntimacyReviewDetails {
   if (event.details.kind === 'sharing') return requirePartialSharingDetails(details)
+  if (event.details.kind === 'follow_up') {
+    throw Object.assign(new Error('A follow-up revision needs the earlier messages it asks about'), {
+      statusCode: 400,
+    })
+  }
   const revised =
     event.details.kind === 'support_response'
       ? requirePartialSupportDetails(details)
