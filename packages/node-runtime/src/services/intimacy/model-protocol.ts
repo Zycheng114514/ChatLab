@@ -1,10 +1,14 @@
 import {
   MessageType,
+  type GoodNewsResponseDetails,
+  type GoodNewsResponseLabel,
   type IntimacyMember,
   type IntimacyObservation,
+  type ResponseObservation,
   type SharingCategory,
   type SharingDetails,
   type SharingTopic,
+  type SupportResponseLabel,
 } from '@openchatlab/shared-types'
 import type { DesensitizeRule } from '../../ai/preprocessor'
 import { desensitizeText } from '../../ai/preprocessor'
@@ -24,6 +28,32 @@ export const SHARING_TOPICS: readonly SharingTopic[] = [
 ]
 const DISTRESS_VALUES: readonly SharingDetails['isDistressDisclosure'][] = ['yes', 'no', 'uncertain']
 const OBSERVATIONS: readonly IntimacyObservation[] = ['sufficient', 'boundary_limited', 'media_missing']
+
+/** Display and counting order for the response labels of each coded kind. */
+export const SUPPORT_RESPONSE_LABELS: readonly SupportResponseLabel[] = [
+  'acknowledges_feeling',
+  'addresses_situation',
+  'asks_details',
+  'offers_advice_or_help',
+  'shares_related_experience',
+  'unclear',
+]
+export const GOOD_NEWS_RESPONSE_LABELS: readonly GoodNewsResponseLabel[] = [
+  'congratulates_or_affirms',
+  'asks_or_elaborates',
+  'explicitly_diminishes',
+  'other_visible_response',
+  'unclear',
+]
+export const RESPONSE_OBSERVATIONS: readonly ResponseObservation[] = [
+  'visible_response',
+  'no_visible_response',
+  'insufficient_context',
+]
+export const POSITIVE_FOR_SHARER_VALUES: readonly GoodNewsResponseDetails['positiveForSharer'][] = [
+  'explicit_or_context_supported',
+  'uncertain',
+]
 
 const MAX_EVENTS_PER_WINDOW = 30
 const MAX_REASON_CHARS = 300

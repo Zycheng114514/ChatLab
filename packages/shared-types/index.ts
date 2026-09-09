@@ -300,7 +300,10 @@ export type {
 
 export { IMPLEMENTED_INTIMACY_KINDS } from './intimacy'
 export type {
+  CreateIntimacyEventDetails,
   CreateIntimacyEventRequest,
+  GoodNewsResponseDetails,
+  GoodNewsResponseLabel,
   IntimacyAnalysisRequest,
   IntimacyCandidateRequest,
   IntimacyCandidates,
@@ -312,21 +315,29 @@ export type {
   IntimacyEvidence,
   IntimacyEvidenceRole,
   IntimacyKind,
+  IntimacyKindSummary,
   IntimacyMember,
   IntimacyMemberSummary,
   IntimacyMessageSnippet,
   IntimacyModelDecision,
   IntimacyObservation,
   IntimacyPreflight,
+  IntimacyResponseMemberSummary,
   IntimacyResults,
   IntimacyReviewDecision,
+  IntimacyReviewDetails,
   IntimacyRun,
   IntimacyRunStatus,
+  ResponseObservation,
+  ResponseSummary,
   ReviewIntimacyEventRequest,
   SharingCategory,
   SharingDetails,
+  SharingSummary,
   SharingTopic,
   StartIntimacyRunRequest,
+  SupportResponseDetails,
+  SupportResponseLabel,
 } from './intimacy'
 
 export interface AIGlobalSettings {

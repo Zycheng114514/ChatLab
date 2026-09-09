@@ -5,6 +5,7 @@ import path from 'node:path'
 import test from 'node:test'
 import Database from 'better-sqlite3'
 import { CHAT_DB_SCHEMA, type PathProvider } from '@openchatlab/core'
+import type { IntimacyMemberSummary, IntimacyResults } from '@openchatlab/shared-types'
 import { assertDataDirCompatible, DataDirCompatibilityError, readDataDirCompatibilityMeta } from '../../data-dir-compat'
 import { DatabaseManager } from '../../database-manager'
 import { createDatabaseManagerAdapter } from '../adapters'
@@ -273,6 +274,13 @@ function modelStub(respond: (window: PromptWindow, calls: number) => string | Pr
   }
 }
 
+/** The K1 card of the mixed-kind results. */
+function sharingSummary(results: IntimacyResults): IntimacyMemberSummary[] {
+  const summary = results.summaries.find((item) => item.kind === 'sharing')
+  assert.ok(summary?.kind === 'sharing')
+  return summary.members
+}
+
 async function waitForRun(service: IntimacyService, sessionId: string, runId: string, status: string) {
   await waitUntil(() => service.getRun(sessionId, runId)?.status === status)
   return service.getRun(sessionId, runId)!
@@ -323,9 +331,9 @@ test('a full run codes each matter once and keeps a sharing continued across win
     assert.deepEqual(aliceEvent?.details.categories, ['experience_or_update', 'feeling'])
     assert.equal(bobEvent?.subjectMemberId, 2)
     assert.equal(bobEvent?.details.topic, 'health')
-    assert.equal(results.summary.members[0]?.counted, 1)
-    assert.equal(results.summary.members[1]?.counted, 1)
-    assert.equal(results.summary.orphanReviews, 0)
+    assert.equal(sharingSummary(results)[0]?.counted, 1)
+    assert.equal(sharingSummary(results)[1]?.counted, 1)
+    assert.equal(results.orphanReviews, 0)
     for (const evidence of aliceEvent?.evidence ?? []) {
       assert.ok(results.messages[evidence.messageId], 'every cited message is returned for the evidence view')
     }
@@ -535,7 +543,7 @@ test('a rerun replaces the generated events but keeps the decisions the user mad
 
     const reviewed = await service.reviewEvent('private', excludedId, { decision: 'excluded', expectedRevision: 0 })
     assert.equal(reviewed.events.find((event) => event.id === excludedId)?.status, 'excluded')
-    assert.equal(reviewed.summary.members[0]?.counted, 0)
+    assert.equal(sharingSummary(reviewed)[0]?.counted, 0)
     await assert.rejects(
       () => service.reviewEvent('private', excludedId, { decision: 'included', expectedRevision: 0 }),
       (error: unknown) => (error as { statusCode?: number }).statusCode === 409
@@ -548,7 +556,7 @@ test('a rerun replaces the generated events but keeps the decisions the user mad
     const rerun = await service.getResults('private', 'sharing')
     assert.equal(rerun.run?.id, second.id)
     assert.equal(rerun.events.find((event) => event.id === excludedId)?.status, 'excluded')
-    assert.equal(rerun.summary.orphanReviews, 0)
+    assert.equal(rerun.orphanReviews, 0)
     assert.equal(service.getRun('private', first.id), null, 'the superseded run is pruned')
   } finally {
     service.close()
@@ -572,8 +580,8 @@ test('a confirmed candidate is counted without a run and rejects messages the pa
     assert.equal(results.events[0]?.origin, 'user')
     assert.equal(results.events[0]?.runId, null)
     assert.equal(results.events[0]?.status, 'confirmed')
-    assert.equal(results.summary.members[1]?.counted, 1)
-    assert.equal(results.summary.members[0]?.counted, 0)
+    assert.equal(sharingSummary(results)[1]?.counted, 1)
+    assert.equal(sharingSummary(results)[0]?.counted, 0)
 
     // Confirming the same message again relabels the existing event instead of counting the matter twice.
     const relabelled = await service.createUserEvent('private', {
@@ -585,7 +593,7 @@ test('a confirmed candidate is counted without a run and rejects messages the pa
     assert.equal(relabelled.events.length, 1)
     assert.deepEqual(relabelled.events[0]?.details.categories, ['feeling', 'worry_or_need'])
     assert.equal(relabelled.events[0]?.review?.revision, 2)
-    assert.equal(relabelled.summary.members[1]?.counted, 1)
+    assert.equal(sharingSummary(relabelled)[1]?.counted, 1)
 
     await assert.rejects(
       () =>
@@ -732,10 +740,10 @@ test('clearing results can keep the user decisions and is refused while an analy
     const cleared = await service.getResults('private', 'sharing')
     assert.equal(cleared.events.length, 0)
     assert.equal(cleared.coverage, null)
-    assert.equal(cleared.summary.orphanReviews, 1, 'the kept decision is reported for re-checking')
+    assert.equal(cleared.orphanReviews, 1, 'the kept decision is reported for re-checking')
 
     assert.equal(service.clearResults('private', { includeReviews: true }), true)
-    assert.equal((await service.getResults('private', 'sharing')).summary.orphanReviews, 0)
+    assert.equal((await service.getResults('private', 'sharing')).orphanReviews, 0)
   } finally {
     service.close()
     manager.closeAll()

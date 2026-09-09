@@ -6,8 +6,8 @@ export type IntimacyKind =
   | 'shared_plan'
   | 'repair_attempt'
 
-/** PR-1 只实现 sharing；其余值先占位，服务端对未实现的 kind 返回 400 */
-export const IMPLEMENTED_INTIMACY_KINDS: readonly IntimacyKind[] = ['sharing']
+/** 已实现 K1 个人分享、K2 倾诉后的回应、K4 好消息回应；其余值先占位，服务端对未实现的 kind 返回 400 */
+export const IMPLEMENTED_INTIMACY_KINDS: readonly IntimacyKind[] = ['sharing', 'support_response', 'good_news_response']
 
 export type IntimacyRunStatus = 'pending' | 'running' | 'paused' | 'completed' | 'failed' | 'cancelled'
 export type IntimacyEventOrigin = 'model' | 'user'
@@ -16,7 +16,8 @@ export type IntimacyReviewDecision = 'included' | 'excluded'
 export type IntimacyObservation = 'sufficient' | 'boundary_limited' | 'media_missing'
 /** 展示状态（服务端派生）：auto 自动识别、uncertain 待核对、confirmed 用户确认、excluded 已排除 */
 export type IntimacyEventStatus = 'auto' | 'uncertain' | 'confirmed' | 'excluded'
-export type IntimacyEvidenceRole = 'core' | 'related'
+/** response = 另一方针对锚点消息的回复 */
+export type IntimacyEvidenceRole = 'core' | 'related' | 'response'
 
 export interface IntimacyMember {
   memberId: number
@@ -100,7 +101,51 @@ export interface SharingDetails {
   isDistressDisclosure: 'yes' | 'no' | 'uncertain'
 }
 
-export type IntimacyEventDetails = SharingDetails
+/** K2 回复方式，多标签；「嗯」「抱抱」这类语境不足的回复只给 unclear */
+export type SupportResponseLabel =
+  | 'acknowledges_feeling'
+  | 'addresses_situation'
+  | 'asks_details'
+  | 'offers_advice_or_help'
+  | 'shares_related_experience'
+  | 'unclear'
+
+/** K4 回复方式，多标签；explicitly_diminishes 必须有明确贬低的原话 */
+export type GoodNewsResponseLabel =
+  | 'congratulates_or_affirms'
+  | 'asks_or_elaborates'
+  | 'explicitly_diminishes'
+  | 'other_visible_response'
+  | 'unclear'
+
+/** 回复观察；缺失的回复永远单列，不映射到任何负面标签 */
+export type ResponseObservation = 'visible_response' | 'no_visible_response' | 'insufficient_context'
+
+export interface SupportResponseDetails {
+  kind: 'support_response'
+  /** 对应的 K1 倾诉事件 id（`sharing:<anchorMessageId>`） */
+  disclosureEventId: string
+  /** 恰好在 responseObservation 为 visible_response 时非空 */
+  responseLabels: SupportResponseLabel[]
+  responseObservation: ResponseObservation
+}
+
+export interface GoodNewsResponseDetails {
+  kind: 'good_news_response'
+  /** 对分享者本人是否明确是好事 */
+  positiveForSharer: 'explicit_or_context_supported' | 'uncertain'
+  /** 恰好在 responseObservation 为 visible_response 时非空 */
+  responseLabels: GoodNewsResponseLabel[]
+  responseObservation: ResponseObservation
+}
+
+export type IntimacyEventDetails = SharingDetails | SupportResponseDetails | GoodNewsResponseDetails
+
+/** 用户改写的标签；服务端按事件 kind 校验，只接受该 kind 可改写的字段 */
+export type IntimacyReviewDetails =
+  | Partial<Omit<SharingDetails, 'kind'>>
+  | Partial<Omit<SupportResponseDetails, 'kind'>>
+  | Partial<Omit<GoodNewsResponseDetails, 'kind'>>
 
 export interface IntimacyEvidence {
   messageId: number
@@ -112,7 +157,7 @@ export interface IntimacyEvidence {
 export interface IntimacyEventReview {
   decision: IntimacyReviewDecision
   /** 用户改写的标签（覆盖显示与计数） */
-  details: Partial<Omit<SharingDetails, 'kind'>> | null
+  details: IntimacyReviewDetails | null
   revision: number
   updatedAt: number
 }
@@ -124,8 +169,9 @@ export interface IntimacyEvent {
   /** 用户确认候选生成的事件为 null */
   runId: string | null
   kind: IntimacyKind
-  /** K1 = 分享者 */
+  /** K1 = 分享者，K2 = 倾诉者，K4 = 好消息的分享者 */
   subjectMemberId: number
+  /** K2 / K4 = 回复方 */
   otherMemberId: number
   anchorMessageId: number
   anchorTs: number
@@ -165,6 +211,31 @@ export interface IntimacyMemberSummary {
   byCategory: Record<SharingCategory, number>
 }
 
+export interface SharingSummary {
+  kind: 'sharing'
+  members: IntimacyMemberSummary[]
+}
+
+/** 回复方的计数；每个计入的事件恰好有一种观察，所以三项之和 = anchors */
+export interface IntimacyResponseMemberSummary {
+  /** 回复方 */
+  memberId: number
+  /** 另一方的倾诉 / 好消息事件数（status ∈ auto、confirmed） */
+  anchors: number
+  visibleResponse: number
+  noVisibleResponse: number
+  insufficientContext: number
+  /** 每事件每标签一次，只统计有可见回复的事件 */
+  byLabel: Record<string, number>
+}
+
+export interface ResponseSummary {
+  kind: 'support_response' | 'good_news_response'
+  members: IntimacyResponseMemberSummary[]
+}
+
+export type IntimacyKindSummary = SharingSummary | ResponseSummary
+
 export interface IntimacyResults {
   /** 提供事件的那次 run；只有用户确认事件时为 null */
   run: IntimacyRun | null
@@ -186,12 +257,10 @@ export interface IntimacyResults {
   events: IntimacyEvent[]
   /** 事件证据用到的消息，从聊天库现取 */
   messages: Record<number, IntimacyMessageSnippet>
-  summary: {
-    kind: IntimacyKind
-    members: IntimacyMemberSummary[]
-    /** 有修订但当前结果里没有对应事件（需重核） */
-    orphanReviews: number
-  }
+  /** 每个已实现 kind 一条，顺序同 IMPLEMENTED_INTIMACY_KINDS */
+  summaries: IntimacyKindSummary[]
+  /** 有修订但当前结果里没有对应事件（需重核） */
+  orphanReviews: number
   semanticSearchAvailable: boolean
   modelId: string | null
 }
@@ -211,18 +280,26 @@ export interface IntimacyCandidates {
   semanticAvailable: boolean
 }
 
+/** 服务端填 K2 的 disclosureEventId，并按有没有勾选回复消息派生 responseObservation */
+export type CreateIntimacyEventDetails =
+  | Omit<SharingDetails, 'kind'>
+  | Omit<SupportResponseDetails, 'kind' | 'disclosureEventId' | 'responseObservation'>
+  | Omit<GoodNewsResponseDetails, 'kind' | 'responseObservation'>
+
 export interface CreateIntimacyEventRequest {
-  kind: 'sharing'
+  kind: IntimacyKind
   subjectMemberId: number
   /** 非空，全部由 subjectMemberId 发送 */
   coreMessageIds: number[]
   relatedMessageIds?: number[]
-  details: Omit<SharingDetails, 'kind'>
+  /** K2 / K4：另一方的回复消息，必须由 otherMemberId 发送且 id 大于锚点 */
+  responseMessageIds?: number[]
+  details: CreateIntimacyEventDetails
 }
 
 export interface ReviewIntimacyEventRequest {
   decision: IntimacyReviewDecision
   /** 首次修订传 0 */
   expectedRevision: number
-  details?: Partial<Omit<SharingDetails, 'kind'>>
+  details?: IntimacyReviewDetails
 }

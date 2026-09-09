@@ -1,5 +1,7 @@
 import type {
+  GoodNewsResponseDetails,
   IntimacyEvent,
+  IntimacyEventDetails,
   IntimacyEventReview,
   IntimacyEventStatus,
   IntimacyEvidence,
@@ -7,13 +9,19 @@ import type {
   IntimacyMemberSummary,
   IntimacyModelDecision,
   IntimacyObservation,
+  IntimacyResponseMemberSummary,
+  ResponseObservation,
   SharingCategory,
   SharingDetails,
+  SupportResponseDetails,
 } from '@openchatlab/shared-types'
 import type { ParsedSharingEvent } from './model-protocol'
-import { SHARING_CATEGORIES } from './model-protocol'
+import { GOOD_NEWS_RESPONSE_LABELS, SHARING_CATEGORIES, SUPPORT_RESPONSE_LABELS } from './model-protocol'
 import type { IntimacySourceMessage, IntimacyWindow } from './source'
 import type { IntimacyEventRecord } from './store'
+
+/** A stored K1 event, narrowed so the sharing labels can be read without re-checking the kind. */
+type SharingEventRecord = IntimacyEventRecord & { details: SharingDetails }
 
 /**
  * Turn one validated window response into storable events. Timestamps and senders are read back from the
@@ -92,28 +100,49 @@ export function resolveEventStatus(
 }
 
 /** Apply a user revision on top of the stored labels so display and counts use the same values. */
-export function applyReviewDetails(details: SharingDetails, review: IntimacyEventReview | null): SharingDetails {
-  if (!review?.details) return details
+export function applyReviewDetails(
+  details: IntimacyEventDetails,
+  review: IntimacyEventReview | null
+): IntimacyEventDetails {
+  const revision = review?.details
+  if (!revision) return details
+  if (details.kind === 'sharing') {
+    const revised = revision as Partial<Omit<SharingDetails, 'kind'>>
+    return {
+      kind: 'sharing',
+      categories:
+        revised.categories && revised.categories.length > 0
+          ? normalizeCategories(revised.categories)
+          : details.categories,
+      topic: revised.topic ?? details.topic,
+      isDistressDisclosure: revised.isDistressDisclosure ?? details.isDistressDisclosure,
+    }
+  }
+  if (details.kind === 'support_response') {
+    const revised = revision as Partial<Omit<SupportResponseDetails, 'kind'>>
+    return {
+      ...details,
+      responseLabels: reviseResponseLabels(details, revised.responseLabels, SUPPORT_RESPONSE_LABELS),
+    }
+  }
+  const revised = revision as Partial<Omit<GoodNewsResponseDetails, 'kind'>>
   return {
-    kind: 'sharing',
-    categories:
-      review.details.categories && review.details.categories.length > 0
-        ? normalizeCategories(review.details.categories)
-        : details.categories,
-    topic: review.details.topic ?? details.topic,
-    isDistressDisclosure: review.details.isDistressDisclosure ?? details.isDistressDisclosure,
+    ...details,
+    positiveForSharer: revised.positiveForSharer ?? details.positiveForSharer,
+    responseLabels: reviseResponseLabels(details, revised.responseLabels, GOOD_NEWS_RESPONSE_LABELS),
   }
 }
 
 export function summarizeSharing(events: IntimacyEvent[], members: IntimacyMember[]): IntimacyMemberSummary[] {
   return members.map((member) => {
-    const own = events.filter((event) => event.subjectMemberId === member.memberId)
+    const own = events.filter((event) => event.kind === 'sharing' && event.subjectMemberId === member.memberId)
     const counted = own.filter((event) => event.status === 'auto' || event.status === 'confirmed')
     const byCategory = Object.fromEntries(SHARING_CATEGORIES.map((category) => [category, 0])) as Record<
       SharingCategory,
       number
     >
     for (const event of counted) {
+      if (event.details.kind !== 'sharing') continue
       for (const category of event.details.categories) byCategory[category] += 1
     }
     return {
@@ -127,14 +156,63 @@ export function summarizeSharing(events: IntimacyEvent[], members: IntimacyMembe
   })
 }
 
+/**
+ * Count one kind of response event per responder. Every counted event has exactly one observation, and only an
+ * event with a visible reply contributes labels, so a reply nobody can see is never read as a bad response.
+ */
+export function summarizeResponses(
+  events: IntimacyEvent[],
+  members: IntimacyMember[],
+  kind: 'support_response' | 'good_news_response'
+): IntimacyResponseMemberSummary[] {
+  const labels = kind === 'support_response' ? SUPPORT_RESPONSE_LABELS : GOOD_NEWS_RESPONSE_LABELS
+  return members.map((member) => {
+    const counted = events.filter(
+      (event) =>
+        event.kind === kind &&
+        event.otherMemberId === member.memberId &&
+        (event.status === 'auto' || event.status === 'confirmed')
+    )
+    const byLabel = Object.fromEntries(labels.map((label) => [label, 0])) as Record<string, number>
+    for (const event of counted) {
+      if (event.details.kind === 'sharing' || event.details.responseObservation !== 'visible_response') continue
+      for (const label of event.details.responseLabels) byLabel[label] += 1
+    }
+    const countObservation = (observation: ResponseObservation) =>
+      counted.filter((event) => event.details.kind !== 'sharing' && event.details.responseObservation === observation)
+        .length
+    return {
+      memberId: member.memberId,
+      anchors: counted.length,
+      visibleResponse: countObservation('visible_response'),
+      noVisibleResponse: countObservation('no_visible_response'),
+      insufficientContext: countObservation('insufficient_context'),
+      byLabel,
+    }
+  })
+}
+
+/** Labels describe a reply the analysis actually cited, so a revision never labels a reply that was not seen. */
+function reviseResponseLabels<T extends string>(
+  details: { responseObservation: ResponseObservation; responseLabels: T[] },
+  revised: T[] | undefined,
+  order: readonly T[]
+): T[] {
+  if (!revised || revised.length === 0 || details.responseObservation !== 'visible_response') {
+    return details.responseLabels
+  }
+  const unique = new Set(revised)
+  return order.filter((label) => unique.has(label))
+}
+
 function findContinuedEvent(
   previousWindowEvents: IntimacyEventRecord[],
   subjectMemberId: number,
   contextIds: Set<number>
-): IntimacyEventRecord | null {
+): SharingEventRecord | null {
   const candidates = previousWindowEvents.filter(
-    (event) =>
-      event.kind === 'sharing' &&
+    (event): event is SharingEventRecord =>
+      event.details.kind === 'sharing' &&
       event.subjectMemberId === subjectMemberId &&
       event.evidence.some((evidence) => contextIds.has(evidence.messageId))
   )
@@ -148,14 +226,14 @@ function findContinuedEvent(
 }
 
 function mergeContinuedEvent(
-  previous: IntimacyEventRecord,
+  previous: SharingEventRecord,
   addition: {
     evidence: IntimacyEvidence[]
     details: SharingDetails
     modelDecision: IntimacyModelDecision
     observation: IntimacyObservation
   }
-): IntimacyEventRecord {
+): SharingEventRecord {
   const evidence = [...previous.evidence]
   const seen = new Set(evidence.map((item) => item.messageId))
   for (const item of addition.evidence) {

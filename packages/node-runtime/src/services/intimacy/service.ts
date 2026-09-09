@@ -13,12 +13,16 @@ import {
   type IntimacyAnalysisRequest,
   type IntimacyCandidateRequest,
   type IntimacyCandidates,
+  type CreateIntimacyEventDetails,
   type IntimacyEvent,
   type IntimacyEventReview,
   type IntimacyKind,
+  type IntimacyKindSummary,
+  type IntimacyMember,
   type IntimacyMessageSnippet,
   type IntimacyPreflight,
   type IntimacyResults,
+  type IntimacyReviewDetails,
   type IntimacyRun,
   type ReviewIntimacyEventRequest,
   type SharingDetails,
@@ -31,7 +35,13 @@ import type { SessionRuntimeAdapter } from '../adapters'
 import type { ChatTopicModelClient, ChatTopicModelResult } from '../topics/model-client'
 import { assertValidTimezone } from '../topics/time'
 import { chatTopicWorkCoordinator } from '../topics/work-coordinator'
-import { applyReviewDetails, buildSharingEvents, resolveEventStatus, summarizeSharing } from './events'
+import {
+  applyReviewDetails,
+  buildSharingEvents,
+  resolveEventStatus,
+  summarizeResponses,
+  summarizeSharing,
+} from './events'
 import {
   INTIMACY_ALGORITHM_VERSION,
   INTIMACY_PROMPT_VERSION,
@@ -320,11 +330,8 @@ export function createIntimacyService(deps: IntimacyServiceDeps): IntimacyServic
           })
         )
       ),
-      summary: {
-        kind,
-        members: summarizeSharing(events, members),
-        orphanReviews: [...reviews.keys()].filter((eventId) => !storedIds.has(eventId)).length,
-      },
+      summaries: buildSummaries(events, members),
+      orphanReviews: [...reviews.keys()].filter((eventId) => !storedIds.has(eventId)).length,
       semanticSearchAvailable: await canSearchSemantically(sessionId),
       modelId: deps.getModelClient()?.modelId ?? null,
     }
@@ -919,6 +926,15 @@ export function createIntimacyService(deps: IntimacyServiceDeps): IntimacyServic
   }
 }
 
+/** One summary per implemented kind, so the page can show every card without asking for each kind. */
+function buildSummaries(events: IntimacyEvent[], members: IntimacyMember[]): IntimacyKindSummary[] {
+  return [
+    { kind: 'sharing', members: summarizeSharing(events, members) },
+    { kind: 'support_response', members: summarizeResponses(events, members, 'support_response') },
+    { kind: 'good_news_response', members: summarizeResponses(events, members, 'good_news_response') },
+  ]
+}
+
 function raiseIntimacyCompatibilityGate(pathProvider: PathProvider, runtime: RuntimeIdentity): void {
   // The source branch still reports the last released version until the release workflow bumps package metadata.
   // Do not make local development builds block themselves.
@@ -951,8 +967,8 @@ function requireImplementedKinds(kinds: IntimacyKind[] | undefined): IntimacyKin
   return [...new Set(kinds)]
 }
 
-function requireSharingDetails(details: Omit<SharingDetails, 'kind'>): SharingDetails {
-  const partial = requirePartialSharingDetails(details)
+function requireSharingDetails(details: CreateIntimacyEventDetails): SharingDetails {
+  const partial = requirePartialSharingDetails(details as Partial<Omit<SharingDetails, 'kind'>>)
   if (!partial.categories || partial.categories.length === 0) {
     throw Object.assign(new Error('A confirmed event needs at least one category'), { statusCode: 400 })
   }
@@ -964,27 +980,26 @@ function requireSharingDetails(details: Omit<SharingDetails, 'kind'>): SharingDe
   }
 }
 
-function requirePartialSharingDetails(
-  details: Partial<Omit<SharingDetails, 'kind'>>
-): Partial<Omit<SharingDetails, 'kind'>> {
+function requirePartialSharingDetails(details: IntimacyReviewDetails): Partial<Omit<SharingDetails, 'kind'>> {
   const result: Partial<Omit<SharingDetails, 'kind'>> = {}
-  if (details.categories !== undefined) {
-    if (!Array.isArray(details.categories) || details.categories.some((c) => !SHARING_CATEGORIES.includes(c))) {
+  const revised = details as Partial<Omit<SharingDetails, 'kind'>>
+  if (revised.categories !== undefined) {
+    if (!Array.isArray(revised.categories) || revised.categories.some((c) => !SHARING_CATEGORIES.includes(c))) {
       throw Object.assign(new Error('Invalid sharing categories'), { statusCode: 400 })
     }
-    result.categories = [...new Set(details.categories)]
+    result.categories = [...new Set(revised.categories)]
   }
-  if (details.topic !== undefined) {
-    if (!SHARING_TOPICS.includes(details.topic)) {
-      throw Object.assign(new Error(`Invalid sharing topic: ${String(details.topic)}`), { statusCode: 400 })
+  if (revised.topic !== undefined) {
+    if (!SHARING_TOPICS.includes(revised.topic)) {
+      throw Object.assign(new Error(`Invalid sharing topic: ${String(revised.topic)}`), { statusCode: 400 })
     }
-    result.topic = details.topic
+    result.topic = revised.topic
   }
-  if (details.isDistressDisclosure !== undefined) {
-    if (!['yes', 'no', 'uncertain'].includes(details.isDistressDisclosure)) {
+  if (revised.isDistressDisclosure !== undefined) {
+    if (!['yes', 'no', 'uncertain'].includes(revised.isDistressDisclosure)) {
       throw Object.assign(new Error('Invalid distress disclosure value'), { statusCode: 400 })
     }
-    result.isDistressDisclosure = details.isDistressDisclosure
+    result.isDistressDisclosure = revised.isDistressDisclosure
   }
   return result
 }
