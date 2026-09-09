@@ -6,7 +6,7 @@ export type { MessageAttachment } from './message-attachments'
 export { applyTranscript, formatVoiceTranscription, listPendingAudioAttachments } from './attachment-transcripts'
 export type { ApplyTranscriptInput, ApplyTranscriptResult, PendingAudioAttachment } from './attachment-transcripts'
 
-export { detectSessionLanguage, resolveTranscriptionLanguage } from './session-language'
+export { detectSessionLanguage, resolveTranscriptionLanguage, sampleRecentTextMessages } from './session-language'
 export type { ResolvedTranscriptionLanguage, TranscriptionLanguage } from './session-language'
 
 export {

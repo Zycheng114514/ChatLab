@@ -18,6 +18,7 @@ import { createChatLabTempDir } from '../temp-workspace'
 import { decodeWav } from './wav'
 import { resampleToMono16k } from './resample'
 import { createTranscriber, resolveTranscriptionModelCacheDir } from './service'
+import { normalizeChineseScript } from './chinese-script'
 
 const enabled = process.env.CHATLAB_TRANSCRIPTION_SMOKE === '1'
 /** Fully qualified: a bare "Eddy" resolves to the English voice and renders Chinese as silence. */
@@ -39,35 +40,40 @@ test(
 
     try {
       // Whisper hallucinates on very short clips, so each sample is a full
-      // sentence; Chinese output comes back in traditional characters, hence
-      // the keywords that are identical in both scripts.
+      // sentence. Its Chinese comes back in traditional characters, so the zh
+      // case goes through the same normalisation the service does before storing
+      // and is checked for simplified spellings the model never produces itself.
       const cases = [
         {
           language: 'zh' as const,
           voice: CHINESE_VOICE,
           text: '今天天气不错，我们出去走走吧。',
-          expect: ['今天', '出去'],
+          script: 'simplified' as const,
+          expect: ['天气', '不错'],
         },
         {
           language: 'en' as const,
           voice: null,
           text: 'hello chatlab, this is a transcription test.',
+          script: null,
           expect: ['hello'],
         },
       ]
 
-      for (const { language, voice, text, expect } of cases) {
+      for (const { language, voice, text, script, expect } of cases) {
         const wavPath = path.join(dir, `${language}.wav`)
         execFileSync('say', [...(voice ? ['-v', voice] : []), '-o', wavPath, '--data-format=LEI16@16000', text])
         const decoded = decodeWav(fs.readFileSync(wavPath))
         const result = await transcriber.transcribePcm(resampleToMono16k(decoded.pcm, decoded.sampleRate), {
           language,
         })
+        const stored = script ? normalizeChineseScript(result.text, script) : result.text
 
         console.log(`[smoke] ${language} (${result.durationMs} ms): ${result.text}`)
+        if (script) console.log(`[smoke] ${language} stored as ${script}: ${stored}`)
         assert.ok(
-          expect.some((keyword) => result.text.toLowerCase().includes(keyword.toLowerCase())),
-          `expected one of ${expect.join(' / ')} in ${JSON.stringify(result.text)}`
+          expect.some((keyword) => stored.toLowerCase().includes(keyword.toLowerCase())),
+          `expected one of ${expect.join(' / ')} in ${JSON.stringify(stored)}`
         )
       }
     } finally {

@@ -370,7 +370,8 @@
       "description": "在本機把語音訊息轉成文字，轉寫結果會寫回訊息，搜尋與分析都讀得到。",
       "model": "模型",
       "modelHint": "第一次使用會下載模型：tiny 約 42 MB、base 約 77 MB、small 約 260 MB。中文建議 base 以上。",
-      "language": "預設語言"
+      "language": "預設語言",
+      "chineseScript": "中文字形"
     }
   },
   "aiPrompt": {

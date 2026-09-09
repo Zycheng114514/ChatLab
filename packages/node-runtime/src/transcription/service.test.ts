@@ -202,3 +202,45 @@ test('an explicit attachment list restricts the run', async () => {
   ])
   raw.close()
 })
+
+test('a Chinese queue run stores transcripts in the script the session uses', async () => {
+  const { raw, db } = createSession([
+    { relativePath: 'voice/1.wav', fileName: '1.wav', frames: 100 },
+    { relativePath: 'voice/2.wav', fileName: '2.wav', frames: 200 },
+  ])
+  // Whisper's Chinese output is traditional whatever the chat is written in.
+  const transcriber = { modelId: 'fake/whisper', transcribePcm: async () => ({ text: '謝謝,明天見', durationMs: 1 }) }
+
+  const result = await transcribeSessionAttachments({
+    db,
+    transcriber,
+    sessionId: 'session-1',
+    language: 'zh',
+    chineseScript: 'simplified',
+  })
+
+  assert.equal(result.transcribed, 2)
+  assert.deepEqual(raw.prepare('SELECT id, transcript FROM message_attachment ORDER BY id').all(), [
+    { id: 1, transcript: '谢谢,明天见' },
+    { id: 2, transcript: '谢谢,明天见' },
+  ])
+  raw.close()
+})
+
+test('an English queue run keeps the transcript exactly as the model wrote it', async () => {
+  const { raw, db } = createSession([{ relativePath: 'voice/1.wav', fileName: '1.wav', frames: 100 }])
+  const transcriber = { modelId: 'fake/whisper', transcribePcm: async () => ({ text: '謝謝,明天見', durationMs: 1 }) }
+
+  await transcribeSessionAttachments({
+    db,
+    transcriber,
+    sessionId: 'session-1',
+    language: 'en',
+    chineseScript: 'simplified',
+  })
+
+  assert.deepEqual(raw.prepare('SELECT id, transcript FROM message_attachment ORDER BY id').all(), [
+    { id: 1, transcript: '謝謝,明天見' },
+  ])
+  raw.close()
+})

@@ -36,13 +36,14 @@ const CJK_CHAR_REGEX = /[\p{Script=Han}\p{Script=Hiragana}\p{Script=Katakana}]/g
 const LATIN_LETTER_REGEX = /\p{Script=Latin}/gu
 
 /**
- * Guess the session's spoken language from its text messages.
+ * The recent text messages a session-level guess is made from.
  *
- * Falls back to `en` for a session with no text at all — that is what Whisper
- * would have done anyway, and it keeps an empty session from failing.
+ * Shared with the simplified/traditional detection in node-runtime, which asks a
+ * second question of exactly the same evidence; keeping one query means the two
+ * answers can never be drawn from different message sets.
  */
-export function detectSessionLanguage(db: DatabaseAdapter): ResolvedTranscriptionLanguage {
-  if (!hasTable(db, 'message')) return 'en'
+export function sampleRecentTextMessages(db: DatabaseAdapter, limit = SAMPLE_SIZE): string[] {
+  if (!hasTable(db, 'message')) return []
 
   const rows = db
     .prepare(
@@ -50,15 +51,25 @@ export function detectSessionLanguage(db: DatabaseAdapter): ResolvedTranscriptio
          FROM message
         WHERE type = ${MessageType.TEXT} AND content IS NOT NULL AND TRIM(content) <> ''
         ORDER BY ts DESC
-        LIMIT ${SAMPLE_SIZE}`
+        LIMIT ${limit}`
     )
     .all() as unknown as Array<{ content: string }>
 
+  return rows.map((row) => row.content)
+}
+
+/**
+ * Guess the session's spoken language from its text messages.
+ *
+ * Falls back to `en` for a session with no text at all — that is what Whisper
+ * would have done anyway, and it keeps an empty session from failing.
+ */
+export function detectSessionLanguage(db: DatabaseAdapter): ResolvedTranscriptionLanguage {
   let cjk = 0
   let latin = 0
-  for (const row of rows) {
-    cjk += countMatches(row.content, CJK_CHAR_REGEX)
-    latin += countMatches(row.content, LATIN_LETTER_REGEX)
+  for (const content of sampleRecentTextMessages(db)) {
+    cjk += countMatches(content, CJK_CHAR_REGEX)
+    latin += countMatches(content, LATIN_LETTER_REGEX)
   }
 
   const total = cjk + latin

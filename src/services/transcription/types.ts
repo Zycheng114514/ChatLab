@@ -13,9 +13,13 @@ export type { TranscriptionLanguage }
 /** Whisper 档位；体积与中文质量的取舍见设置区文案。 */
 export type TranscriptionModel = 'tiny' | 'base' | 'small'
 
+/** 中文转写落库时用哪种字形；`auto` 按会话里已有的文字判断。 */
+export type ChineseScriptSetting = 'auto' | 'simplified' | 'traditional'
+
 export interface TranscriptionSettings {
   model: TranscriptionModel
   language: TranscriptionLanguage
+  chineseScript: ChineseScriptSetting
 }
 
 /** 一条还没有转写文本的语音附件；URL 由渲染进程用 getAttachmentUrl 拼。 */

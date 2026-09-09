@@ -25,12 +25,13 @@ interface AttachmentSeed {
   content: string
 }
 
-function createSession(seeds: AttachmentSeed[]) {
+function createSession(seeds: AttachmentSeed[], sessionText = '这是一段中文聊天记录') {
   const raw = openTestSqliteDatabase()
   raw.exec(CHAT_DB_SCHEMA)
   raw.prepare(`INSERT INTO member (platform_id, account_name) VALUES ('u1', 'Alice')`).run()
-  // One Chinese text message so `auto` resolves to zh.
-  raw.prepare(`INSERT INTO message (sender_id, ts, type, content) VALUES (1, 1, 0, '这是一段中文聊天记录')`).run()
+  // One Chinese text message so `auto` resolves to zh; its script is what the
+  // transcript's script is matched against.
+  raw.prepare(`INSERT INTO message (sender_id, ts, type, content) VALUES (1, 1, 0, ?)`).run(sessionText)
   const insertMessage = raw.prepare(`INSERT INTO message (sender_id, ts, type, content) VALUES (1, 2, 2, ?)`)
   const insertAttachment = raw.prepare(
     `INSERT INTO message_attachment (message_id, kind, relative_path, file_name, duration_ms)
@@ -151,5 +152,68 @@ for (const { name, seed, samples, code } of rejections) {
     // Nothing reached the model, so nothing could have reached the database.
     assert.deepEqual(transcriber.languages, [])
     if (seed) assert.equal(readAttachment(db, attachmentId).transcript, null)
+  })
+}
+
+// ---------- Chinese script ----------
+
+/** Whisper writes Chinese in traditional characters whatever the chat uses. */
+const WHISPER_OUTPUT = '今天天氣不錯,我們出去走走吧'
+const SIMPLIFIED = '今天天气不错,我们出去走走吧'
+
+const scriptCases: Array<{
+  name: string
+  sessionText: string
+  language?: 'auto' | 'zh' | 'en'
+  chineseScript?: 'auto' | 'simplified' | 'traditional'
+  expected: string
+}> = [
+  {
+    name: 'auto converts to the simplified script the session is written in',
+    sessionText: '这是一段中文聊天记录',
+    expected: SIMPLIFIED,
+  },
+  {
+    name: 'auto leaves a traditional session traditional',
+    sessionText: '這是一段中文聊天記錄',
+    expected: WHISPER_OUTPUT,
+  },
+  {
+    name: 'traditional keeps traditional output even in a simplified session',
+    sessionText: '这是一段中文聊天记录',
+    chineseScript: 'traditional',
+    expected: WHISPER_OUTPUT,
+  },
+  {
+    name: 'simplified converts even in a traditional session',
+    sessionText: '這是一段中文聊天記錄',
+    chineseScript: 'simplified',
+    expected: SIMPLIFIED,
+  },
+  {
+    name: 'English transcripts are never touched',
+    sessionText: 'this chat is in English',
+    language: 'en',
+    expected: WHISPER_OUTPUT,
+  },
+]
+
+for (const { name, sessionText, language, chineseScript, expected } of scriptCases) {
+  test(`Chinese script: ${name}`, async (t) => {
+    const { raw, db, attachmentIds } = createSession([{ kind: 'audio', content: '[语音 2秒]' }], sessionText)
+    t.after(() => raw.close())
+
+    const result = await transcribeAttachmentPcm({
+      db,
+      transcriber: fakeTranscriber(WHISPER_OUTPUT),
+      attachmentId: attachmentIds[0],
+      pcm16k: new Float32Array(16),
+      language,
+      chineseScript,
+    })
+
+    assert.equal(result.text, expected)
+    assert.equal(readAttachment(db, attachmentIds[0]).transcript, expected)
+    assert.equal(readContent(db, attachmentIds[0]), `[语音 2秒] ${expected}`)
   })
 }

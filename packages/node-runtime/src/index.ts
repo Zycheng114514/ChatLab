@@ -496,7 +496,10 @@ export * as transcription from './transcription'
 export {
   createTranscriber,
   createTranscriptionWorkerClient,
+  detectSessionChineseScript,
   findAudioDecoder,
+  normalizeChineseScript,
+  resolveChineseScript,
   planSessionTranscription,
   registerAudioDecoder,
   resolveTranscriptionModelCacheDir,
@@ -514,6 +517,8 @@ export {
 } from './transcription'
 export type {
   AudioDecoder,
+  ChineseScript,
+  ChineseScriptSetting,
   CreateTranscriberOptions,
   ResolvedTranscriptionLanguage,
   TranscribeAttachmentPcmErrorCode,

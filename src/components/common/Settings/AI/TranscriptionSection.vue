@@ -2,14 +2,15 @@
 /**
  * 语音转文字设置区块（设置 > AI > 语音转文字）
  *
- * 只有两项：Whisper 档位与默认语言。两项都是转写时的默认值，会话页的弹窗里
- * 还能临时换语言。转写只在桌面 / CLI Web 上有后端，Web WASM 不渲染这个区块。
+ * 三项：Whisper 档位、默认语言、中文字形。前两项是转写时的默认值，会话页的
+ * 弹窗里还能临时换语言；字形只在这里设置，Whisper 的中文输出总是繁体，落库前
+ * 按这一项归一。转写只在桌面 / CLI Web 上有后端，Web WASM 不渲染这个区块。
  */
 import { computed, onMounted, ref } from 'vue'
 import { useI18n } from 'vue-i18n'
 import UITabs from '@/components/UI/Tabs.vue'
 import { useTranscriptionService } from '@/services'
-import type { TranscriptionLanguage, TranscriptionModel, TranscriptionSettings } from '@/services'
+import type { ChineseScriptSetting, TranscriptionLanguage, TranscriptionModel, TranscriptionSettings } from '@/services'
 
 const { t } = useI18n()
 const service = useTranscriptionService()
@@ -23,6 +24,12 @@ const error = ref<string | null>(null)
 const modelItems = (['tiny', 'base', 'small'] as const).map((value) => ({ value, label: value }))
 const languageItems = computed(() =>
   (['auto', 'zh', 'en'] as const).map((value) => ({ value, label: t(`common.transcriptionLanguage.${value}`) }))
+)
+const chineseScriptItems = computed(() =>
+  (['auto', 'simplified', 'traditional'] as const).map((value) => ({
+    value,
+    label: t(`common.chineseScript.${value}`),
+  }))
 )
 
 async function save(patch: Partial<TranscriptionSettings>) {
@@ -91,6 +98,24 @@ onMounted(async () => {
         size="xs"
         class="shrink-0"
         @update:model-value="(value) => save({ language: value as TranscriptionLanguage })"
+      />
+    </div>
+
+    <!-- 中文字形 -->
+    <div
+      class="flex items-center justify-between gap-3 rounded-lg border border-gray-200 bg-gray-50 px-4 py-3 dark:border-gray-700 dark:bg-gray-800/50"
+    >
+      <div class="min-w-0">
+        <span class="text-sm text-gray-700 dark:text-gray-300">{{ t(`${k}.chineseScript`) }}</span>
+        <p class="text-xs text-gray-400">{{ t('common.chineseScript.autoHint') }}</p>
+      </div>
+      <UITabs
+        v-if="settings"
+        :model-value="settings.chineseScript"
+        :items="chineseScriptItems"
+        size="xs"
+        class="shrink-0"
+        @update:model-value="(value) => save({ chineseScript: value as ChineseScriptSetting })"
       />
     </div>
 

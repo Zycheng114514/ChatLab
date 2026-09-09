@@ -49,14 +49,17 @@ export function registerTranscriptionRoutes(
 
   server.get('/_web/transcription/config', async () => getTranscriptionSettings())
 
-  server.patch<{ Body: { model?: unknown; language?: unknown } }>('/_web/transcription/config', async (request) => {
-    try {
-      return updateTranscriptionSettings(request.body ?? {})
-    } catch (error) {
-      if (error instanceof InvalidTranscriptionSettingError) throw invalidPayload(error.message)
-      throw error
+  server.patch<{ Body: { model?: unknown; language?: unknown; chineseScript?: unknown } }>(
+    '/_web/transcription/config',
+    async (request) => {
+      try {
+        return updateTranscriptionSettings(request.body ?? {})
+      } catch (error) {
+        if (error instanceof InvalidTranscriptionSettingError) throw invalidPayload(error.message)
+        throw error
+      }
     }
-  })
+  )
 
   server.get<{ Params: { id: string } }>('/_web/sessions/:id/transcription/pending', async (request) => {
     return { items: listSessionTranscriptionQueue(adapter.ensureReadonly(request.params.id)) }

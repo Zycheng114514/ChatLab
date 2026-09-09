@@ -11,12 +11,15 @@
 import { loadConfig, setConfigField, transcriptionConfigSchema } from '@openchatlab/config'
 import { listPendingAudioAttachments, type DatabaseAdapter, type TranscriptionLanguage } from '@openchatlab/core'
 import { transcribeAttachmentPcm, type TranscribeAttachmentPcmResult } from '../transcription/service'
+import type { ChineseScriptSetting } from '../transcription/chinese-script'
 import { TRANSCRIPTION_PROFILES, type TranscriptionProfileId } from '../transcription/profiles'
 import type { TranscriptionWorkerClient } from '../transcription/worker-client'
 
 export interface TranscriptionSettings {
   model: TranscriptionProfileId
   language: TranscriptionLanguage
+  /** Which script Chinese transcripts are stored in; the config key is `chinese_script`. */
+  chineseScript: ChineseScriptSetting
 }
 
 /**
@@ -45,12 +48,16 @@ export interface TranscribeSessionAttachmentPcmOptions {
   pcm16k: Float32Array
   /** Defaults to the configured language; `auto` is resolved against the session. */
   language?: TranscriptionLanguage
+  /** Defaults to the configured script; `auto` is resolved against the session. */
+  chineseScript?: ChineseScriptSetting
   /** Defaults to the configured Whisper size. */
   profile?: TranscriptionProfileId
 }
 
 export function getTranscriptionSettings(): TranscriptionSettings {
-  return loadConfig().transcription
+  // The config file uses snake_case keys; the API both UIs speak is camelCase.
+  const { model, language, chinese_script: chineseScript } = loadConfig().transcription
+  return { model, language, chineseScript }
 }
 
 /**
@@ -59,14 +66,28 @@ export function getTranscriptionSettings(): TranscriptionSettings {
  * Invalid values are rejected before anything is written, so a bad request from
  * either entry layer cannot leave a config file the app refuses to load.
  */
-export function updateTranscriptionSettings(patch: { model?: unknown; language?: unknown }): TranscriptionSettings {
+export function updateTranscriptionSettings(patch: {
+  model?: unknown
+  language?: unknown
+  chineseScript?: unknown
+}): TranscriptionSettings {
   const fields: Array<[keyof TranscriptionSettings, string]> = []
   if (patch.model !== undefined) fields.push(['model', parseSetting('model', patch.model)])
   if (patch.language !== undefined) fields.push(['language', parseSetting('language', patch.language)])
+  if (patch.chineseScript !== undefined) {
+    fields.push(['chineseScript', parseSetting('chineseScript', patch.chineseScript)])
+  }
   for (const [key, value] of fields) {
-    setConfigField(`transcription.${key}`, value)
+    setConfigField(`transcription.${CONFIG_KEYS[key]}`, value)
   }
   return getTranscriptionSettings()
+}
+
+/** Settings key to config file key; only the Chinese script differs. */
+const CONFIG_KEYS: Record<keyof TranscriptionSettings, string> = {
+  model: 'model',
+  language: 'language',
+  chineseScript: 'chinese_script',
 }
 
 /** Thrown when a request carries a value the transcription settings do not accept. */
@@ -81,6 +102,7 @@ export class InvalidTranscriptionSettingError extends Error {
 const SETTING_OPTIONS: Record<keyof TranscriptionSettings, readonly string[]> = {
   model: transcriptionConfigSchema.shape.model.removeDefault().options,
   language: transcriptionConfigSchema.shape.language.removeDefault().options,
+  chineseScript: transcriptionConfigSchema.shape.chinese_script.removeDefault().options,
 }
 
 function parseSetting<K extends keyof TranscriptionSettings>(key: K, value: unknown): TranscriptionSettings[K] {
@@ -121,6 +143,7 @@ export async function transcribeSessionAttachmentPcm(
     attachmentId: options.attachmentId,
     pcm16k: options.pcm16k,
     language: options.language ?? settings.language,
+    chineseScript: options.chineseScript ?? settings.chineseScript,
     transcriber: {
       // The worker reports the model it actually loaded; the profile decides it,
       // so the id is known here without waiting for the thread to start.

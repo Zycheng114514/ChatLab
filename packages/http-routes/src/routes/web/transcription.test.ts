@@ -218,7 +218,7 @@ describe('the settings endpoints', () => {
   test('returns the defaults before anything is written', async () => {
     const response = await app.inject({ method: 'GET', url: '/_web/transcription/config' })
     assert.equal(response.statusCode, 200)
-    assert.deepEqual(response.json(), { model: 'base', language: 'auto' })
+    assert.deepEqual(response.json(), { model: 'base', language: 'auto', chineseScript: 'auto' })
   })
 
   test('stores a partial change and leaves the rest alone', async () => {
@@ -229,23 +229,41 @@ describe('the settings endpoints', () => {
     })
 
     assert.equal(response.statusCode, 200)
-    assert.deepEqual(response.json(), { model: 'small', language: 'auto' })
+    assert.deepEqual(response.json(), { model: 'small', language: 'auto', chineseScript: 'auto' })
     const reread = await app.inject({ method: 'GET', url: '/_web/transcription/config' })
-    assert.deepEqual(reread.json(), { model: 'small', language: 'auto' })
+    assert.deepEqual(reread.json(), { model: 'small', language: 'auto', chineseScript: 'auto' })
   })
 
-  test('rejects a value the config schema does not accept', async () => {
+  test('stores the Chinese script under its snake_case config key', async () => {
     const response = await app.inject({
       method: 'PATCH',
       url: '/_web/transcription/config',
-      payload: { model: 'large' },
+      payload: { chineseScript: 'traditional' },
     })
 
-    assert.equal(response.statusCode, 400)
-    assert.match(response.json().error.message, /tiny, base, small/)
+    assert.equal(response.statusCode, 200)
+    assert.equal(response.json().chineseScript, 'traditional')
     const reread = await app.inject({ method: 'GET', url: '/_web/transcription/config' })
-    assert.equal(reread.json().model, 'small', 'a rejected value must not land in the config file')
+    assert.equal(reread.json().chineseScript, 'traditional')
   })
+
+  const rejected: Array<{ payload: Record<string, string>; pattern: RegExp }> = [
+    { payload: { model: 'large' }, pattern: /tiny, base, small/ },
+    { payload: { chineseScript: 'zh-TW' }, pattern: /auto, simplified, traditional/ },
+  ]
+
+  for (const { payload, pattern } of rejected) {
+    test(`rejects ${JSON.stringify(payload)}, which the config schema does not accept`, async () => {
+      const before = await app.inject({ method: 'GET', url: '/_web/transcription/config' })
+
+      const response = await app.inject({ method: 'PATCH', url: '/_web/transcription/config', payload })
+
+      assert.equal(response.statusCode, 400)
+      assert.match(response.json().error.message, pattern)
+      const reread = await app.inject({ method: 'GET', url: '/_web/transcription/config' })
+      assert.deepEqual(reread.json(), before.json(), 'a rejected value must not land in the config file')
+    })
+  }
 })
 
 describe('the pending queue endpoint', () => {
