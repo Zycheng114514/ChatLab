@@ -1,6 +1,7 @@
 import type {
   FollowUpDetails,
   FollowUpInitiation,
+  FollowUpMatchConfidence,
   FollowUpReviewDetails,
   GoodNewsResponseDetails,
   IntimacyEvent,
@@ -22,6 +23,7 @@ import type {
 } from '@openchatlab/shared-types'
 import type {
   ModelEventKind,
+  ParsedFollowUpEvent,
   ParsedGoodNewsEvent,
   ParsedIntimacyEvent,
   ParsedResponseGroup,
@@ -30,6 +32,11 @@ import type {
 import { GOOD_NEWS_RESPONSE_LABELS, SHARING_CATEGORIES, SUPPORT_RESPONSE_LABELS } from './model-protocol'
 import type { IntimacySourceMessage, IntimacyWindow } from './source'
 import type { IntimacyEventRecord } from './store'
+
+/** How far back a follow-up question may reach for the matter it asks about (30 days, §K3). */
+export const INTIMACY_FOLLOW_UP_LOOKBACK_SECONDS = 30 * 24 * 60 * 60
+/** Questions this close together are the same follow-up conversation. */
+export const INTIMACY_FOLLOW_UP_MERGE_GAP_SECONDS = 30 * 60
 
 /** Stored events narrowed by kind, so the labels of one kind can be read without re-checking it. */
 type SharingEventRecord = IntimacyEventRecord & { details: SharingDetails }
@@ -67,10 +74,32 @@ export function buildIntimacyEvents(
   }
   const events: IntimacyEventRecord[] = []
   // Within one kind a core message supports a single event; a sharing and a piece of good news may share them.
-  const usedCoreIds: Record<ModelEventKind, Set<number>> = { sharing: new Set(), good_news: new Set() }
+  const usedCoreIds: Record<ModelEventKind, Set<number>> = {
+    sharing: new Set(),
+    good_news: new Set(),
+    follow_up: new Set(),
+  }
+  // Questions about the same matter in one conversation are one event; a later conversation is a new one.
+  const followUpConversations = new Map<string, number>()
 
   for (const item of parsed) {
     const coreMessageIds = item.coreMessageIds.filter((messageId) => !usedCoreIds[item.kind].has(messageId))
+    if (item.kind === 'follow_up') {
+      if (coreMessageIds.length === 0) continue
+      const asker = members[item.asker === 'A' ? 0 : 1]
+      const asked = members[item.asker === 'A' ? 1 : 0]
+      const built = codeFollowUp(item, coreMessageIds, asked, asker, context)
+      if (!built) continue
+      const key = `${item.asker}\u0000${item.matter.trim().toLowerCase()}`
+      const merged = mergeFollowUpConversation(events, followUpConversations, key, built)
+      if (!merged) {
+        followUpConversations.set(key, events.length)
+        events.push(built)
+        context.usedAnchors.add(built.id)
+      }
+      for (const messageId of coreMessageIds) usedCoreIds.follow_up.add(messageId)
+      continue
+    }
     if (coreMessageIds.length === 0 && !item.continuesContextEvent) continue
     const subjectMemberId = members[item.discloser === 'A' ? 0 : 1].memberId
     const otherMemberId = members[item.discloser === 'A' ? 1 : 0].memberId
@@ -83,6 +112,83 @@ export function buildIntimacyEvents(
     for (const messageId of coreMessageIds) usedCoreIds[item.kind].add(messageId)
   }
   return events
+}
+
+/**
+ * One follow-up conversation is one event: another question about the same matter, from the same asker and within
+ * half an hour of the last one, joins the question that opened it instead of counting the matter a second time.
+ */
+function mergeFollowUpConversation(
+  events: IntimacyEventRecord[],
+  conversations: Map<string, number>,
+  key: string,
+  built: IntimacyEventRecord
+): boolean {
+  const index = conversations.get(key)
+  const previous = index === undefined ? undefined : events[index]
+  if (index === undefined || !previous) return false
+  const lastQuestionTs = Math.max(...previous.evidence.filter((item) => item.role === 'core').map((i) => i.timestamp))
+  if (built.anchorTs - lastQuestionTs > INTIMACY_FOLLOW_UP_MERGE_GAP_SECONDS) return false
+  events[index] = { ...previous, evidence: mergeEvidence([...previous.evidence, ...built.evidence]) }
+  return true
+}
+
+/**
+ * A follow-up question with the earlier messages it points at, when this window shows them. Everything the pairing
+ * decides — which event the matter belongs to, how long the gap was, who raised it in between — is filled in by
+ * applyFollowUpPairing, because it needs the whole run and the chat, not just this window.
+ */
+function codeFollowUp(
+  item: ParsedFollowUpEvent,
+  coreMessageIds: number[],
+  asked: IntimacyMember,
+  asker: IntimacyMember,
+  context: WindowBuildContext
+): IntimacyEventRecord | null {
+  const anchorMessageId = Math.min(...coreMessageIds)
+  const id = `follow_up:${anchorMessageId}`
+  if (context.usedAnchors.has(id)) return null
+  const anchorTs = context.windowMessages.get(anchorMessageId)!.timestamp
+  const record: IntimacyEventRecord = {
+    id,
+    kind: 'follow_up',
+    subjectMemberId: asked.memberId,
+    otherMemberId: asker.memberId,
+    anchorMessageId,
+    anchorTs,
+    evidence: buildEvidence(coreMessageIds, [], context.windowMessages),
+    observation: item.observation,
+    origin: 'model',
+    modelDecision: item.confidence === 'clear' ? 'included' : 'uncertain',
+    modelReason: item.reason,
+    details: {
+      kind: 'follow_up',
+      priorEventId: null,
+      matter: item.matter,
+      matterKeywords: item.matterKeywords,
+      matchConfidence: 'uncertain',
+      initiationInObservedRecord: 'uncertain',
+      gapSeconds: null,
+      lookbackStartTs: anchorTs - INTIMACY_FOLLOW_UP_LOOKBACK_SECONDS,
+      candidateMessageIds: [],
+    },
+    createdAt: context.createdAt,
+  }
+  const priorEvidence = item.priorMessageIds.flatMap((messageId) => {
+    const message = context.windowMessages.get(messageId)
+    return message
+      ? [{ messageId, timestamp: message.timestamp, senderId: message.senderId, role: 'prior' as const }]
+      : []
+  })
+  if (priorEvidence.length === 0) return record
+  return applyFollowUpPairing(record, {
+    priorEvidence,
+    priorEventId: null,
+    matchConfidence: 'supported',
+    initiation: 'uncertain',
+    candidateMessageIds: [],
+    lookbackStartTs: anchorTs - INTIMACY_FOLLOW_UP_LOOKBACK_SECONDS,
+  })
 }
 
 /** A sharing event, plus the support response event when the sharing states a difficulty, worry or need. */
@@ -230,13 +336,61 @@ function codeGoodNews(
 }
 
 export function resolveEventStatus(
-  event: Pick<IntimacyEvent, 'origin' | 'modelDecision'>,
+  event: Pick<IntimacyEvent, 'origin' | 'modelDecision' | 'details'>,
   review: IntimacyEventReview | null
 ): IntimacyEventStatus {
   if (review?.decision === 'excluded') return 'excluded'
   if (review?.decision === 'included') return 'confirmed'
   if (event.origin === 'user') return 'confirmed'
+  // A follow-up question whose earlier matter was never found is waiting for the user, not a counted pair.
+  if (event.details.kind === 'follow_up' && event.details.matchConfidence !== 'supported') return 'uncertain'
   return event.modelDecision === 'uncertain' ? 'uncertain' : 'auto'
+}
+
+/** What the pairing step found for one follow-up question; empty evidence leaves the question waiting. */
+export interface FollowUpPairing {
+  priorEvidence: IntimacyEvidence[]
+  priorEventId: string | null
+  matchConfidence: FollowUpMatchConfidence
+  initiation: FollowUpInitiation
+  candidateMessageIds: number[]
+  lookbackStartTs: number
+}
+
+/** Write a pairing onto a follow-up event: the cited earlier messages plus everything derived from them. */
+export function applyFollowUpPairing(event: IntimacyEventRecord, pairing: FollowUpPairing): IntimacyEventRecord {
+  if (event.details.kind !== 'follow_up') return event
+  const evidence = mergeEvidence([...event.evidence, ...pairing.priorEvidence])
+  const prior = evidence.filter((item) => item.role === 'prior')
+  const supported = pairing.matchConfidence === 'supported' && prior.length > 0
+  return {
+    ...event,
+    evidence,
+    details: {
+      ...event.details,
+      priorEventId: pairing.priorEventId,
+      matchConfidence: supported ? 'supported' : 'uncertain',
+      initiationInObservedRecord: supported ? pairing.initiation : 'uncertain',
+      gapSeconds: prior.length === 0 ? null : event.anchorTs - Math.min(...prior.map((item) => item.timestamp)),
+      lookbackStartTs: pairing.lookbackStartTs,
+      candidateMessageIds: pairing.candidateMessageIds,
+    },
+  }
+}
+
+/** The sharing event a message belongs to, so two questions about one coded matter count as one matter. */
+export function findSharingEventCovering(
+  events: IntimacyEventRecord[],
+  messageId: number,
+  subjectMemberId: number
+): string | null {
+  const found = events.find(
+    (event) =>
+      event.kind === 'sharing' &&
+      event.subjectMemberId === subjectMemberId &&
+      event.evidence.some((evidence) => evidence.messageId === messageId)
+  )
+  return found?.id ?? null
 }
 
 /** Apply a user revision on top of the stored labels so display and counts use the same values. */

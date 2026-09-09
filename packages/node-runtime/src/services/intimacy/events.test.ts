@@ -365,7 +365,7 @@ test('good news the sharer may not welcome is never coded as a clear case', () =
   const events = buildIntimacyEvents([parsedGoodNews({ positiveForSharer: 'uncertain' })], window, members, [], 123)
 
   assert.equal(events[0]?.modelDecision, 'uncertain')
-  assert.equal(resolveEventStatus({ origin: 'model', modelDecision: 'uncertain' }, null), 'uncertain')
+  assert.equal(resolveEventStatus(storedEvent({ modelDecision: 'uncertain' }), null), 'uncertain')
 })
 
 const statusCases: Array<{
@@ -403,7 +403,10 @@ const statusCases: Array<{
 for (const statusCase of statusCases) {
   test(`display status: ${statusCase.name}`, () => {
     assert.equal(
-      resolveEventStatus({ origin: statusCase.origin, modelDecision: statusCase.modelDecision }, statusCase.review),
+      resolveEventStatus(
+        storedEvent({ origin: statusCase.origin, modelDecision: statusCase.modelDecision }),
+        statusCase.review
+      ),
       statusCase.expected
     )
   })

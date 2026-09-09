@@ -28,17 +28,24 @@ export {
 } from './model-protocol'
 export type {
   IntimacyPreprocessOptions,
+  ParsedFollowUpEvent,
   ParsedGoodNewsEvent,
   ParsedIntimacyEvent,
   ParsedResponseGroup,
   ParsedSharingEvent,
 } from './model-protocol'
 export {
+  INTIMACY_FOLLOW_UP_LOOKBACK_SECONDS,
+  INTIMACY_FOLLOW_UP_MERGE_GAP_SECONDS,
+  applyFollowUpPairing,
   applyReviewDetails,
   buildIntimacyEvents,
+  findSharingEventCovering,
   resolveEventStatus,
+  summarizeFollowUps,
   summarizeResponses,
   summarizeSharing,
 } from './events'
+export type { FollowUpPairing } from './events'
 export { createIntimacyService } from './service'
 export type { IntimacyResultRange, IntimacyService, IntimacyServiceDeps } from './service'
