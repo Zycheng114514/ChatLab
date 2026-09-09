@@ -111,6 +111,7 @@ function requireAnalysisRequest(value: IntimacyAnalysisRequest | undefined): Int
     startTs: optionalTimestamp(value?.startTs, 'startTs'),
     endTs: optionalTimestamp(value?.endTs, 'endTs'),
     locale: typeof value?.locale === 'string' ? value.locale : undefined,
+    timezone: typeof value?.timezone === 'string' ? value.timezone : undefined,
   }
 }
 

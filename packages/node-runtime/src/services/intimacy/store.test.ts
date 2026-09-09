@@ -22,6 +22,7 @@ function createRun(overrides: Partial<IntimacyRun> = {}): IntimacyRun {
     status: 'running',
     kinds: ['sharing'],
     locale: 'zh-CN',
+    timezone: 'Asia/Shanghai',
     targetStartTs: 1_786_200_000,
     targetEndTs: 1_786_300_000,
     sourceSignature: 'signature-v1',
@@ -70,7 +71,7 @@ test('a window commit stores events with their evidence and merges a sharing con
   const store = new IntimacyStore(getIntimacyDbPath(makeTempDir()), { nativeBinding })
 
   try {
-    store.createRun(createRun())
+    store.createRun(createRun(), null)
     store.insertWindowEvents('session-1', 'run-1', [createEvent()])
     store.insertWindowEvents('session-1', 'run-1', [
       createEvent({
@@ -117,7 +118,7 @@ test('a runtime that lost the execution lease cannot append events to the run it
   const now = 1_786_205_000_000
 
   try {
-    store.createRun(createRun())
+    store.createRun(createRun(), null)
     assert.equal(store.tryAcquireExecutionLease('run-1', 'runtime-b', now, now + 30_000), true)
     assert.throws(
       () => store.insertWindowEvents('session-1', 'run-1', [createEvent()], { ownerId: 'runtime-a', now }),
@@ -136,7 +137,7 @@ test('reviews use optimistic revisions so a stale client cannot overwrite a newe
   const store = new IntimacyStore(getIntimacyDbPath(makeTempDir()), { nativeBinding })
 
   try {
-    store.createRun(createRun())
+    store.createRun(createRun(), null)
     store.insertWindowEvents('session-1', 'run-1', [createEvent()])
 
     const first = store.upsertReview('session-1', 'sharing:10', 'excluded', null, 0, 1_786_205_300_000)
@@ -170,7 +171,7 @@ test('a rerun keeps user reviews while superseded runs and their events are prun
   const store = new IntimacyStore(getIntimacyDbPath(makeTempDir()), { nativeBinding })
 
   try {
-    store.createRun(createRun({ status: 'completed', completedWindows: 2 }))
+    store.createRun(createRun({ status: 'completed', completedWindows: 2 }), null)
     store.insertWindowEvents('session-1', 'run-1', [createEvent()])
     store.upsertReview('session-1', 'sharing:10', 'excluded', null, 0, 1_786_205_300_000)
     store.createUserEvent(
@@ -178,7 +179,10 @@ test('a rerun keeps user reviews while superseded runs and their events are prun
       createEvent({ id: 'sharing:80', anchorMessageId: 80, anchorTs: 1_786_206_500, origin: 'user' })
     )
 
-    store.createRun(createRun({ id: 'run-2', status: 'completed', completedWindows: 2, createdAt: 1_786_206_000_000 }))
+    store.createRun(
+      createRun({ id: 'run-2', status: 'completed', completedWindows: 2, createdAt: 1_786_206_000_000 }),
+      null
+    )
     store.insertWindowEvents('session-1', 'run-2', [createEvent()])
     assert.equal(store.pruneRuns('session-1', 'run-2'), 1)
 
@@ -211,10 +215,10 @@ test('clearing results can keep user reviews, and deleting a session removes eve
   const store = new IntimacyStore(dbPath, { nativeBinding })
 
   try {
-    store.createRun(createRun({ status: 'completed', completedWindows: 2 }))
+    store.createRun(createRun({ status: 'completed', completedWindows: 2 }), null)
     store.insertWindowEvents('session-1', 'run-1', [createEvent()])
     store.upsertReview('session-1', 'sharing:10', 'excluded', null, 0, 1_786_205_300_000)
-    store.createRun(createRun({ id: 'run-9', sessionId: 'session-2', status: 'completed', completedWindows: 1 }))
+    store.createRun(createRun({ id: 'run-9', sessionId: 'session-2', status: 'completed', completedWindows: 1 }), null)
     store.insertWindowEvents('session-2', 'run-9', [createEvent()])
 
     assert.equal(store.deleteSessionResults('session-1', { includeReviews: false }), true)
@@ -254,7 +258,7 @@ test('execution leases keep one live run and recover it after the lease expires'
 
   try {
     const run = createRun({ updatedAt: now })
-    store.createRun(run)
+    store.createRun(run, null)
     assert.equal(store.tryAcquireExecutionLease(run.id, 'runtime-a', now, now + 30_000), true)
     assert.equal(store.tryAcquireExecutionLease(run.id, 'runtime-b', now + 1, now + 30_001), false)
     assert.equal(store.hasLiveExecutionForSession('session-1', now + 10_000), true)
@@ -286,7 +290,7 @@ test('execution leases keep one live run and recover it after the lease expires'
 test('a store written by a newer schema is rejected instead of silently reinterpreted', () => {
   const dbPath = getIntimacyDbPath(makeTempDir())
   const initial = new IntimacyStore(dbPath, { nativeBinding })
-  initial.createRun(createRun({ status: 'completed', completedWindows: 1 }))
+  initial.createRun(createRun({ status: 'completed', completedWindows: 1 }), null)
   initial.close()
 
   const raw = new Database(dbPath, { nativeBinding })

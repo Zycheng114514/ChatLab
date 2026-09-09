@@ -30,6 +30,8 @@ export interface IntimacyAnalysisRequest {
   endTs?: number
   kinds: IntimacyKind[]
   locale?: string
+  /** IANA time zone name (e.g. 'Asia/Shanghai') the model reads message times in; defaults to 'UTC' */
+  timezone?: string
 }
 
 export interface StartIntimacyRunRequest extends IntimacyAnalysisRequest {
@@ -63,6 +65,8 @@ export interface IntimacyRun {
   status: IntimacyRunStatus
   kinds: IntimacyKind[]
   locale: string | null
+  /** IANA time zone name the run's prompts render message times in */
+  timezone: string
   targetStartTs: number
   targetEndTs: number
   /** sha256，同话题算法 */

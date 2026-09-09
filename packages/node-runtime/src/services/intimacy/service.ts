@@ -29,6 +29,7 @@ import { appLogger } from '../../logging/app-logger'
 import type { SemanticIndexRuntime } from '../../semantic-index'
 import type { SessionRuntimeAdapter } from '../adapters'
 import type { ChatTopicModelClient, ChatTopicModelResult } from '../topics/model-client'
+import { assertValidTimezone } from '../topics/time'
 import { chatTopicWorkCoordinator } from '../topics/work-coordinator'
 import { applyReviewDetails, buildSharingEvents, resolveEventStatus, summarizeSharing } from './events'
 import {
@@ -39,7 +40,6 @@ import {
   buildSharingWindowPrompt,
   parseSharingResponse,
   resolveIntimacyPreprocess,
-  type IntimacyPreprocessOptions,
 } from './model-protocol'
 import { getIntimacyDbPath } from './paths'
 import {
@@ -128,8 +128,6 @@ export function createIntimacyService(deps: IntimacyServiceDeps): IntimacyServic
   let storeClosed = false
   let preemptedRunId: string | null = null
   let leaseHeartbeat: { runId: string; timer: ReturnType<typeof setInterval> } | null = null
-  // Privacy settings travel with the start request; they are not part of the persisted run.
-  const preprocessByRun = new Map<string, IntimacyPreprocessOptions>()
   const unsubscribeCoordinator = chatTopicWorkCoordinator.subscribe(handleInteractiveStateChange)
   const unsubscribeSessionDelete = chatTopicWorkCoordinator.subscribeSessionDelete(prepareSessionDelete)
   const executionWaiters: Array<{ runId: string; resolve: () => void }> = []
@@ -159,6 +157,7 @@ export function createIntimacyService(deps: IntimacyServiceDeps): IntimacyServic
   function start(sessionId: string, request: StartIntimacyRunRequest): IntimacyRun {
     const modelClient = requireModelClient()
     const kinds = requireImplementedKinds(request.kinds)
+    const timezone = resolveRequestTimezone(request.timezone)
     const source = loadIntimacySource(deps.runtime.ensureReadonly(sessionId), request)
     store.recoverInterruptedRuns(now())
     const active = store.getActiveRun()
@@ -175,6 +174,7 @@ export function createIntimacyService(deps: IntimacyServiceDeps): IntimacyServic
       status: source.windows.length === 0 ? 'completed' : 'pending',
       kinds,
       locale: request.locale ?? null,
+      timezone,
       targetStartTs: source.targetStartTs,
       targetEndTs: source.targetEndTs,
       sourceSignature: source.sourceSignature,
@@ -194,8 +194,7 @@ export function createIntimacyService(deps: IntimacyServiceDeps): IntimacyServic
       createdAt: timestamp,
       updatedAt: timestamp,
     }
-    store.createRun(run)
-    preprocessByRun.set(run.id, resolveIntimacyPreprocess(request.preprocessConfig))
+    store.createRun(run, resolveIntimacyPreprocess(request.preprocessConfig))
     if (run.status === 'pending') {
       if (!acquireExecutionLease(run.id)) {
         store.updateRun({ ...run, status: 'cancelled', lastError: 'Another runtime owns intimacy analysis' })
@@ -563,7 +562,7 @@ export function createIntimacyService(deps: IntimacyServiceDeps): IntimacyServic
       if (source.sourceSignature !== run.sourceSignature) {
         throw new Error('Chat messages changed since the analysis started')
       }
-      const preprocess = preprocessByRun.get(run.id)
+      const preprocess = store.getRunPreprocess(run.id) ?? undefined
       const startWindow = Math.min(run.completedWindows, source.windows.length)
       let previousWindowEvents: IntimacyEventRecord[] =
         startWindow === 0 ? [] : store.listEvents(run.sessionId, 'sharing', run.id)
@@ -577,6 +576,7 @@ export function createIntimacyService(deps: IntimacyServiceDeps): IntimacyServic
           window,
           members: source.members,
           totalWindows: source.windows.length,
+          timezone: run.timezone,
           locale: run.locale ?? undefined,
           preprocess,
         })
@@ -645,7 +645,6 @@ export function createIntimacyService(deps: IntimacyServiceDeps): IntimacyServic
   function finishRun(run: IntimacyRun, updates: Partial<IntimacyRun>): IntimacyRun {
     const updated = updateRun(run, updates)
     if (updated.status === 'pending' || updated.status === 'running') return updated
-    preprocessByRun.delete(updated.id)
     if (updated.completedWindows > 0) store.pruneRuns(updated.sessionId, updated.id)
     return updated
   }
@@ -914,6 +913,13 @@ function raiseIntimacyCompatibilityGate(pathProvider: PathProvider, runtime: Run
     runtime,
     module: 'intimacy',
   })
+}
+
+/** The model reads message times in the caller's zone; an unset zone keeps the stored default. */
+function resolveRequestTimezone(timezone: string | undefined): string {
+  const resolved = timezone ?? 'UTC'
+  assertValidTimezone(resolved)
+  return resolved
 }
 
 function requireImplementedKinds(kinds: IntimacyKind[] | undefined): IntimacyKind[] {

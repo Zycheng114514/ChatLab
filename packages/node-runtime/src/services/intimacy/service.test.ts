@@ -21,6 +21,18 @@ const ALICE_FIRST_SHARING = 5
 const ALICE_CONTINUED_SHARING = 17
 const BOB_RELAYED_THIRD_PARTY = 12
 const BOB_OWN_SHARING = 30
+const BOB_PHONE_NUMBER = '13800001111'
+
+/** UTC-10 all year, so a message sent at 08:30 UTC belongs to the previous local calendar day. */
+const RUN_TIMEZONE = 'Pacific/Honolulu'
+const PHONE_RULE = {
+  id: 'phone',
+  label: 'Phone number',
+  pattern: '\\d{11}',
+  replacement: '[phone]',
+  enabled: true,
+  builtin: false,
+}
 
 function makeTempDir(): string {
   const baseDir = process.env.CHATLAB_TEST_TMPDIR ?? (fs.existsSync('/private/tmp') ? '/private/tmp' : os.tmpdir())
@@ -63,7 +75,10 @@ function createSession(root: string, chatType: 'private' | 'group' = 'private'):
     [BOB_RELAYED_THIRD_PARTY, { type: 0, content: '她说她很难过，我不知道该怎么接这句话' }],
     [ALICE_CONTINUED_SHARING, { type: 0, content: 'The launch is finally out, and I am mostly relieved now.' }],
     [23, { type: 2, content: null }],
-    [BOB_OWN_SHARING, { type: 0, content: '我最近体检结果有点问题，说实话有点担心' }],
+    [
+      BOB_OWN_SHARING,
+      { type: 0, content: `我最近体检结果有点问题，说实话有点担心，医院让我打 ${BOB_PHONE_NUMBER} 约复查` },
+    ],
   ])
   const insert = db.prepare('INSERT INTO message (id, sender_id, ts, type, content) VALUES (?, ?, ?, ?, ?)')
   db.transaction(() => {
@@ -82,21 +97,30 @@ function createSession(root: string, chatType: 'private' | 'group' = 'private'):
   db.close()
 }
 
+interface PromptMessage {
+  id: number
+  t: string
+  from: 'A' | 'B'
+  type: string
+  text: string
+  context: boolean
+}
+
 interface PromptWindow {
   index: number
   total: number
-  messages: Array<{ id: number; from: 'A' | 'B'; type: string; context: boolean }>
+  messages: PromptMessage[]
 }
 
 /** Read a window prompt the way a model would: the participant legend plus one JSON object per message. */
 function readWindow(userPrompt: string): PromptWindow {
   const header = /Window (\d+)\/(\d+)/.exec(userPrompt)
   assert.ok(header)
-  const messages: PromptWindow['messages'] = []
+  const messages: PromptMessage[] = []
   for (const line of userPrompt.split('\n')) {
     if (!line.startsWith('{"id"')) continue
-    const parsed = JSON.parse(line) as { id: number; from: 'A' | 'B'; type: string; context?: boolean }
-    messages.push({ id: parsed.id, from: parsed.from, type: parsed.type, context: parsed.context === true })
+    const parsed = JSON.parse(line) as Omit<PromptMessage, 'context'> & { context?: boolean }
+    messages.push({ ...parsed, context: parsed.context === true })
   }
   return { index: Number(header[1]), total: Number(header[2]), messages }
 }
@@ -158,6 +182,8 @@ interface Harness {
   manager: DatabaseManager
   paths: PathProvider
   advance(ms: number): void
+  /** Close the service and open a new one on the same data directory, the way a restarted application would. */
+  restart(): IntimacyService
 }
 
 function createHarness(
@@ -172,24 +198,31 @@ function createHarness(
   const manager = new DatabaseManager(paths, { nativeBinding, runtime: runtimeIdentity })
   let clock = baseNow
   let nextRunId = 1
-  const service = createIntimacyService({
-    runtime: createDatabaseManagerAdapter(manager),
-    pathProvider: paths,
-    runtimeIdentity,
-    nativeBinding,
-    getModelClient: () => modelClient,
-    now: () => clock,
-    generateId: () => `run-${nextRunId++}`,
-  })
-  return {
+  const build = () =>
+    createIntimacyService({
+      runtime: createDatabaseManagerAdapter(manager),
+      pathProvider: paths,
+      runtimeIdentity,
+      nativeBinding,
+      getModelClient: () => modelClient,
+      now: () => clock,
+      generateId: () => `run-${nextRunId++}`,
+    })
+  const harness: Harness = {
     root,
-    service,
+    service: build(),
     manager,
     paths,
     advance: (ms: number) => {
       clock += ms
     },
+    restart: () => {
+      harness.service.close()
+      harness.service = build()
+      return harness.service
+    },
   }
+  return harness
 }
 
 function modelStub(respond: (window: PromptWindow, calls: number) => string | Promise<string>): {
@@ -352,6 +385,58 @@ test('resuming continues at the window the analysis stopped on instead of paying
   } finally {
     service.close()
     manager.closeAll()
+  }
+})
+
+test('an analysis resumed after a restart keeps hiding redacted text and reading the local calendar', async () => {
+  const prompts: PromptWindow[] = []
+  let blocked = true
+  const stub = modelStub(async (window) => {
+    prompts.push(window)
+    if (window.index >= 2 && blocked) await new Promise(() => {})
+    return defaultWindowResponse(window)
+  })
+  const client: ChatTopicModelClient = {
+    modelId: stub.client.modelId,
+    complete(prompts_, options) {
+      return Promise.race([
+        stub.client.complete(prompts_, options),
+        new Promise<never>((_, reject) => {
+          options.signal.addEventListener('abort', () => reject(new Error('paused')), { once: true })
+        }),
+      ])
+    },
+  }
+  const harness = createHarness(client)
+
+  try {
+    const started = harness.service.start('private', {
+      kinds: ['sharing'],
+      timezone: RUN_TIMEZONE,
+      preprocessConfig: { desensitize: true, desensitizeRules: [PHONE_RULE] },
+    })
+    assert.equal(started.timezone, RUN_TIMEZONE)
+    await waitUntil(() => stub.windows.length === 2)
+    harness.service.pause('private', started.id)
+    await waitForRun(harness.service, 'private', started.id, 'paused')
+    await new Promise<void>((resolve) => setImmediate(resolve))
+
+    // The new instance never saw the start request: the timezone and the privacy settings must come from the run.
+    const service = harness.restart()
+    prompts.length = 0
+    blocked = false
+    service.resume('private', started.id)
+    await waitForRun(service, 'private', started.id, 'completed')
+
+    const line = prompts.flatMap((window) => window.messages).find((message) => message.id === BOB_OWN_SHARING)
+    assert.ok(line, 'the message carrying the phone number is analysed after the restart')
+    assert.ok(!line.text.includes(BOB_PHONE_NUMBER), 'the text the user asked to hide never reaches the model')
+    assert.ok(line.text.includes(PHONE_RULE.replacement))
+    assert.equal(line.t, '2026-04-30 22:30', 'message times stay in the timezone the run was started with')
+    assert.equal(service.getRun('private', started.id)?.timezone, RUN_TIMEZONE)
+  } finally {
+    harness.service.close()
+    harness.manager.closeAll()
   }
 })
 

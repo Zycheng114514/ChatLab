@@ -13,6 +13,7 @@ import type {
   IntimacyRun,
 } from '@openchatlab/shared-types'
 import { openBetterSqliteDatabase } from '../../better-sqlite3-adapter'
+import type { IntimacyPreprocessOptions } from './model-protocol'
 import { getIntimacyDbPath } from './paths'
 
 const INTIMACY_SCHEMA_VERSION = 1
@@ -56,7 +57,7 @@ export interface StoredIntimacyReview extends IntimacyEventReview {
   eventId: string
 }
 
-const RUN_COLUMNS = `id, session_id as sessionId, status, kinds_json as kindsJson, locale,
+const RUN_COLUMNS = `id, session_id as sessionId, status, kinds_json as kindsJson, locale, timezone,
   target_start_ts as targetStartTs, target_end_ts as targetEndTs,
   source_signature as sourceSignature, source_message_count as sourceMessageCount,
   source_max_message_id as sourceMaxMessageId,
@@ -78,6 +79,7 @@ interface IntimacyRunRow {
   status: IntimacyRun['status']
   kindsJson: string
   locale: string | null
+  timezone: string
   targetStartTs: number
   targetEndTs: number
   sourceSignature: string
@@ -145,16 +147,18 @@ export class IntimacyStore {
     this.db.close()
   }
 
-  createRun(run: IntimacyRun): void {
+  /** The privacy settings are stored with the run so a resumed analysis redacts exactly what the first window did. */
+  createRun(run: IntimacyRun, preprocess: IntimacyPreprocessOptions | null): void {
     this.db
       .prepare(
         `INSERT INTO intimacy_run (
-          id, session_id, status, kinds_json, locale, target_start_ts, target_end_ts,
+          id, session_id, status, kinds_json, locale, timezone, preprocess_json,
+          target_start_ts, target_end_ts,
           source_signature, source_message_count, source_max_message_id,
           total_windows, completed_windows, current_window_index, failed_windows_json,
           model_id, prompt_version, algorithm_version,
           input_tokens, output_tokens, model_calls, last_error, created_at, updated_at
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
       )
       .run(
         run.id,
@@ -162,6 +166,8 @@ export class IntimacyStore {
         run.status,
         JSON.stringify(run.kinds),
         run.locale,
+        run.timezone,
+        preprocess === null ? null : JSON.stringify(preprocess),
         run.targetStartTs,
         run.targetEndTs,
         run.sourceSignature,
@@ -310,6 +316,13 @@ export class IntimacyStore {
       | IntimacyRunRow
       | undefined
     return row ? mapRunRow(row) : null
+  }
+
+  getRunPreprocess(runId: string): IntimacyPreprocessOptions | null {
+    const row = this.db
+      .prepare('SELECT preprocess_json as preprocessJson FROM intimacy_run WHERE id = ?')
+      .get(runId) as { preprocessJson: string | null } | undefined
+    return row?.preprocessJson == null ? null : (JSON.parse(row.preprocessJson) as IntimacyPreprocessOptions)
   }
 
   getLatestRun(sessionId: string): IntimacyRun | null {
@@ -618,6 +631,8 @@ export class IntimacyStore {
         status TEXT NOT NULL,
         kinds_json TEXT NOT NULL,
         locale TEXT,
+        timezone TEXT NOT NULL DEFAULT 'UTC',
+        preprocess_json TEXT,
         target_start_ts INTEGER NOT NULL,
         target_end_ts INTEGER NOT NULL,
         source_signature TEXT NOT NULL,
@@ -735,6 +750,7 @@ function mapRunRow(row: IntimacyRunRow): IntimacyRun {
     status: row.status,
     kinds: parseKinds(row.kindsJson),
     locale: row.locale,
+    timezone: row.timezone,
     targetStartTs: row.targetStartTs,
     targetEndTs: row.targetEndTs,
     sourceSignature: row.sourceSignature,

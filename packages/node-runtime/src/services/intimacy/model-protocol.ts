@@ -53,6 +53,8 @@ export interface SharingWindowPromptInput {
   window: IntimacyWindow
   members: [IntimacyMember, IntimacyMember]
   totalWindows: number
+  /** IANA time zone name the message times are rendered in, so the model reads the user's calendar days. */
+  timezone: string
   locale?: string
   preprocess?: IntimacyPreprocessOptions
 }
@@ -90,7 +92,7 @@ ${formatParticipantLegend(input.members, input.preprocess?.anonymizeNames === tr
 Window ${input.window.index + 1}/${input.totalWindows}
 
 Messages:
-${formatWindowMessages(input.window, input.members, input.preprocess)}
+${formatWindowMessages(input.window, input.members, input.timezone, input.preprocess)}
 
 Return: {"events":[{"discloser":"A","coreMessageIds":[1],"relatedMessageIds":[],"categories":["experience_or_update"],"topic":"daily_life","distress":"no","confidence":"clear","continuesContextEvent":false,"observation":"sufficient","reason":"..."}]}. Return {"events":[]} when this window contains no personal sharing.`,
   }
@@ -224,10 +226,11 @@ function formatParticipantLegend(members: [IntimacyMember, IntimacyMember], anon
 function formatWindowMessages(
   window: IntimacyWindow,
   members: [IntimacyMember, IntimacyMember],
+  timezone: string,
   preprocess?: IntimacyPreprocessOptions
 ): string {
   const formatter = new Intl.DateTimeFormat('en-CA', {
-    timeZone: 'UTC',
+    timeZone: timezone,
     year: 'numeric',
     month: '2-digit',
     day: '2-digit',
