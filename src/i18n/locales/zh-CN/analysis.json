@@ -46,7 +46,32 @@
     "semanticIndex": "语义索引",
     "incrementalImport": "增量导入",
     "memberManagement": "成员管理",
-    "more": "更多"
+    "more": "更多",
+    "transcription": "转写语音"
+  },
+  "transcription": {
+    "title": "语音转文字",
+    "description": "把这个对话里还没有文字的语音附件转成文字，结果写回消息，之后可以搜索和分析。",
+    "empty": "这个对话没有需要转写的语音附件。",
+    "pendingLabel": "待转写",
+    "pendingCount": "{count} 条语音",
+    "modelLabel": "模型",
+    "languageLabel": "语言",
+    "downloadHint": "第一次使用会下载模型（tiny 约 42 MB、base 约 77 MB、small 约 260 MB），下载后离线可用。",
+    "start": "开始转写",
+    "startRemaining": "继续转写",
+    "progressLabel": "转写进度",
+    "waiting": "等待中",
+    "loadingModel": "加载模型并转写…",
+    "transcribing": "转写中…",
+    "unnamedAudio": "未命名音频",
+    "summary": "成功 {done} 条，失败 {failed} 条",
+    "status": {
+      "done": "已转写",
+      "unsupported": "格式暂不支持",
+      "tooLong": "超过 30 分钟",
+      "failed": "失败"
+    }
   },
   "incremental": {
     "title": "追加聊天记录",

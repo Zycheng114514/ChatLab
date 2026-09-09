@@ -51,6 +51,12 @@
     "other": "その他",
     "unknown": "不明"
   },
+  "transcriptionLanguage": {
+    "auto": "自動",
+    "zh": "中国語",
+    "en": "英語",
+    "autoHint": "「自動」は会話にすでにあるテキストから中国語か英語かを判定します。"
+  },
   "weekday": {
     "mon": "月曜",
     "tue": "火曜",

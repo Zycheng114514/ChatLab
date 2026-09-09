@@ -12,6 +12,7 @@ import SessionAnalysisHeader from '@/components/layout/session/SessionAnalysisHe
 import SemanticIndexSessionModal from '@/components/analysis/SemanticIndexSessionModal.vue'
 import OwnerPromptModal from '@/components/analysis/member/OwnerPromptModal.vue'
 import IncrementalImportModal from '@/components/analysis/IncrementalImportModal.vue'
+import TranscriptionModal from '@/components/analysis/TranscriptionModal.vue'
 const MessageExportModal = defineAsyncComponent(() => import('@/components/MessageExport/MessageExportModal.vue'))
 import ActionToolsPanel from '@/components/layout/ActionToolsPanel.vue'
 import { LoadingDots, LoadingState } from '@/components/UI'
@@ -37,6 +38,9 @@ const showOwnerPromptModal = ref(false)
 
 // 增量导入弹窗状态
 const showIncrementalImportModal = ref(false)
+
+// 语音转文字弹窗状态
+const showTranscriptionModal = ref(false)
 
 // 导出聊天记录弹窗状态
 const showMessageExportModal = ref(false)
@@ -212,6 +216,7 @@ const otherMemberAvatar = computed(() => {
         @open-member-management="showMemberManagementModal = true"
         @open-chat-record="openChatRecordViewer"
         @open-message-export="showMessageExportModal = true"
+        @open-transcription="showTranscriptionModal = true"
       />
     </template>
 
@@ -244,6 +249,19 @@ const otherMemberAvatar = computed(() => {
       :session-id="currentSessionId"
       :session-name="session.name"
       @imported="
+        () => {
+          invalidateAnalysisData()
+          sessionStore.loadSessions()
+        }
+      "
+    />
+
+    <!-- 语音转文字弹窗 -->
+    <TranscriptionModal
+      v-if="currentSessionId && session"
+      v-model="showTranscriptionModal"
+      :session-id="currentSessionId"
+      @transcribed="
         () => {
           invalidateAnalysisData()
           sessionStore.loadSessions()
