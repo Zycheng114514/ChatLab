@@ -31,9 +31,13 @@ import {
   type IntimacyResults,
   type IntimacyReviewDetails,
   type IntimacyRun,
+  type CreateSharedPlanDetails,
+  type CreateSharedPlanStage,
   type ResponseObservation,
   type ReviewIntimacyEventRequest,
   type SharedPlanDetails,
+  type SharedPlanReviewDetails,
+  type SharedPlanStageRecord,
   type SharingDetails,
   type StartIntimacyRunRequest,
   type SupportResponseDetails,
@@ -51,6 +55,8 @@ import {
   type FollowUpPairing,
   applyReviewDetails,
   buildIntimacyEvents,
+  buildSharedPlanDetails,
+  clampSharedPlanDetails,
   findSharingEventCovering,
   mergeSharedPlanEvents,
   resolveEventStatus,
@@ -71,10 +77,12 @@ import {
   INTIMACY_ALGORITHM_VERSION,
   INTIMACY_PROMPT_VERSION,
   POSITIVE_FOR_SHARER_VALUES,
+  SHARED_PLAN_STAGES,
   SHARING_CATEGORIES,
   SHARING_TOPICS,
   SUPPORT_RESPONSE_LABELS,
   buildIntimacyWindowPrompt,
+  checkSharedPlanStageSenders,
   parseIntimacyResponse,
   resolveIntimacyPreprocess,
   type IntimacyPreprocessOptions,
@@ -141,8 +149,9 @@ const INTIMACY_EXECUTION_HEARTBEAT_MS = 10_000
 const INTIMACY_KEYWORD_CANDIDATE_LIMIT = 30
 const INTIMACY_SEMANTIC_CANDIDATE_LIMIT = 10
 const INTIMACY_SEMANTIC_BLOCK_MESSAGE_LIMIT = 40
-/** The matter of a confirmed follow-up question is a list title, like the one the model writes. */
+/** The matter of a confirmed follow-up question, and the activity of a confirmed plan, are list titles. */
 const INTIMACY_FOLLOW_UP_MATTER_CHARS = 60
+const INTIMACY_ACTIVITY_SUMMARY_CHARS = 40
 /** How many events of one window may be placed across windows by a model call; the rest stay on their own. */
 const INTIMACY_ASSOCIATION_CALLS_PER_WINDOW = 10
 const INTIMACY_WINDOW_INVALID = 'INTIMACY_WINDOW_INVALID'
@@ -339,8 +348,8 @@ export function createIntimacyService(deps: IntimacyServiceDeps): IntimacyServic
     // A decision on an event outside the requested range still has an event behind it, so it is not orphaned.
     const storedIds = new Set(stored.map((event) => event.id))
     const events = stored
-      .map((event) => toIntimacyEvent(event, reviews.get(event.id) ?? null, messages))
-      .filter((event) => withinRange(event.anchorTs, range))
+      .map((event) => toIntimacyEvent(event, reviews.get(event.id) ?? null, messages, range))
+      .filter((event) => withinResultRange(event, range))
       .sort((left, right) => left.anchorTs - right.anchorTs || left.anchorMessageId - right.anchorMessageId)
 
     const coverageRun = resultRun ?? latestRun
@@ -435,10 +444,17 @@ export function createIntimacyService(deps: IntimacyServiceDeps): IntimacyServic
     const responseMessageIds =
       kind === 'support_response' || kind === 'good_news_response' ? [...new Set(request.responseMessageIds ?? [])] : []
     const priorMessageIds = kind === 'follow_up' ? [...new Set(request.priorMessageIds ?? [])] : []
+    // A shared plan states its own stages, so the messages they cite are read from the chat along with the rest.
+    const planStages = kind === 'shared_plan' ? requireSharedPlanStageInput(request.details) : []
+    const stageMessageIds = [...new Set(planStages.flatMap((stage) => stage.messageIds))]
     const found = new Map(
-      getMessagesByIds(db, [...coreMessageIds, ...relatedMessageIds, ...responseMessageIds, ...priorMessageIds]).map(
-        (m) => [m.id, m]
-      )
+      getMessagesByIds(db, [
+        ...coreMessageIds,
+        ...relatedMessageIds,
+        ...responseMessageIds,
+        ...priorMessageIds,
+        ...stageMessageIds,
+      ]).map((m) => [m.id, m])
     )
     for (const messageId of coreMessageIds) {
       const message = found.get(messageId)
@@ -551,9 +567,39 @@ export function createIntimacyService(deps: IntimacyServiceDeps): IntimacyServic
       return getResults(sessionId)
     }
 
-    // Confirming a shared plan lands in the next step; the contract already carries its shape.
+    // A confirmed arrangement is a timeline the user picked out: the proposal anchors it and every stage cites the
+    // messages that show it, checked against the chat the same way the coded ones are.
     if (kind === 'shared_plan') {
-      throw Object.assign(new Error('Confirming a shared plan is not available yet'), { statusCode: 400 })
+      const anchor = coreEvidence[0]!
+      const stages = buildUserSharedPlanStages(planStages, found, members)
+      if (!stages.some((stage) => stage.messageIds.includes(anchor.messageId))) {
+        throw Object.assign(new Error('The proposal of a shared plan has to be one of its stages'), {
+          statusCode: 400,
+        })
+      }
+      const record: IntimacyEventRecord = {
+        id: `shared_plan:${anchor.messageId}`,
+        kind: 'shared_plan',
+        subjectMemberId: subject.memberId,
+        otherMemberId: other.memberId,
+        anchorMessageId: anchor.messageId,
+        anchorTs: anchor.timestamp,
+        evidence: [
+          ...coreEvidence,
+          ...relatedMessageIds.map((messageId) => toEvidence(found.get(messageId)!, 'related')),
+          ...stageMessageIds.map((messageId) => toEvidence(found.get(messageId)!, 'stage')),
+        ]
+          .filter((evidence, index, all) => all.findIndex((item) => item.messageId === evidence.messageId) === index)
+          .sort((left, right) => left.messageId - right.messageId),
+        observation: 'sufficient',
+        origin: 'user',
+        modelDecision: null,
+        modelReason: null,
+        details: buildSharedPlanDetails(subject.memberId, requireActivitySummary(request.details), stages),
+        createdAt: timestamp,
+      }
+      confirmEvent(sessionId, record, { currentEvents, coreMessageIds, timestamp })
+      return getResults(sessionId)
     }
 
     // K2 counts a reply to a disclosure, so the disclosure has to exist as a K1 event of its own.
@@ -1322,7 +1368,8 @@ export function createIntimacyService(deps: IntimacyServiceDeps): IntimacyServic
   function toIntimacyEvent(
     event: StoredIntimacyEvent,
     review: IntimacyEventReview | null,
-    messages: Map<number, IntimacyMessageSnippet>
+    messages: Map<number, IntimacyMessageSnippet>,
+    range?: IntimacyResultRange
   ): IntimacyEvent {
     // A revision may replace the earlier messages a follow-up question is paired with; evidence follows it.
     const reviewPriorIds = followUpReviewPriorIds(event, review)
@@ -1342,7 +1389,11 @@ export function createIntimacyService(deps: IntimacyServiceDeps): IntimacyServic
       origin: event.origin,
       modelDecision: event.modelDecision,
       modelReason: event.modelReason,
-      details: applyReviewDetails(event.details, review),
+      // An arrangement is served as it stood when the range ended; the user's own reading still wins over it.
+      details: applyReviewDetails(
+        event.details.kind === 'shared_plan' ? clampSharedPlanDetails(event.details, range?.endTs) : event.details,
+        review
+      ),
       review,
       status: resolveEventStatus(event, review),
       stale:
@@ -1649,6 +1700,84 @@ function requirePriorMessage(
   return toEvidence(message, 'prior')
 }
 
+/** The stages of a confirmed arrangement as the request states them; the messages they cite are checked next. */
+function requireSharedPlanStageInput(details: CreateIntimacyEventDetails): CreateSharedPlanStage[] {
+  const stages = (details as CreateSharedPlanDetails).stages
+  if (!Array.isArray(stages) || stages.length === 0) {
+    throw Object.assign(new Error('A confirmed shared plan needs the stages it went through'), { statusCode: 400 })
+  }
+  return stages.map((stage) => {
+    if (typeof stage !== 'object' || stage === null || !SHARED_PLAN_STAGES.includes(stage.stage)) {
+      throw Object.assign(new Error(`Invalid shared plan stage: ${String((stage as CreateSharedPlanStage)?.stage)}`), {
+        statusCode: 400,
+      })
+    }
+    if (!Number.isInteger(stage.actorMemberId)) {
+      throw Object.assign(new Error('A shared plan stage needs the participant acting'), { statusCode: 400 })
+    }
+    const messageIds = [...new Set(stage.messageIds)]
+    if (messageIds.length === 0 || messageIds.some((messageId) => !Number.isInteger(messageId))) {
+      throw Object.assign(new Error(`A ${stage.stage} stage needs the messages that show it`), { statusCode: 400 })
+    }
+    return { stage: stage.stage, actorMemberId: stage.actorMemberId, messageIds }
+  })
+}
+
+/**
+ * Read the confirmed stages back from the chat. The senders follow the same rule the coded stages do, so a mutual
+ * confirmation the user marks still needs both participants: one proposing something to act on, the other agreeing.
+ */
+function buildUserSharedPlanStages(
+  stages: CreateSharedPlanStage[],
+  found: Map<number, MappedMessage>,
+  members: IntimacyMember[]
+): SharedPlanStageRecord[] {
+  return stages.map((stage) => {
+    const actor = members.find((member) => member.memberId === stage.actorMemberId)
+    if (!actor) {
+      throw Object.assign(new Error('The selected participant is not part of this chat'), { statusCode: 400 })
+    }
+    const other = members.find((member) => member.memberId !== actor.memberId)!
+    const messages = stage.messageIds.map((messageId) => {
+      const message = found.get(messageId)
+      if (!message) {
+        throw Object.assign(new Error(`Message ${messageId} is not part of this chat`), { statusCode: 400 })
+      }
+      if (message.type !== 0 || message.content === '') {
+        throw Object.assign(new Error(`Message ${messageId} has no readable text`), { statusCode: 400 })
+      }
+      return message
+    })
+    const problem = checkSharedPlanStageSenders(stage.stage, messages, actor.memberId, other.memberId)
+    if (problem) throw Object.assign(new Error(problem), { statusCode: 400 })
+    return {
+      stage: stage.stage,
+      actorMemberId: actor.memberId,
+      messageIds: [...stage.messageIds].sort((left, right) => left - right),
+      at: Math.min(...messages.map((message) => message.timestamp)),
+    }
+  })
+}
+
+function requireActivitySummary(details: CreateIntimacyEventDetails): string {
+  const activitySummary = (details as CreateSharedPlanDetails).activitySummary
+  if (typeof activitySummary !== 'string' || activitySummary.trim() === '') {
+    throw Object.assign(new Error('A confirmed shared plan needs the activity it is about'), { statusCode: 400 })
+  }
+  return activitySummary.trim().slice(0, INTIMACY_ACTIVITY_SUMMARY_CHARS)
+}
+
+/** Where the arrangement stands is the one thing a revision may say; the stages themselves are evidence. */
+function requireSharedPlanReviewDetails(details: IntimacyReviewDetails): SharedPlanReviewDetails {
+  const revised = details as SharedPlanReviewDetails
+  if (!SHARED_PLAN_STAGES.includes(revised.lastObservedStage)) {
+    throw Object.assign(new Error(`Invalid shared plan stage: ${String(revised.lastObservedStage)}`), {
+      statusCode: 400,
+    })
+  }
+  return { lastObservedStage: revised.lastObservedStage }
+}
+
 function requireFollowUpMatter(details: CreateIntimacyEventDetails): string {
   const matter = (details as CreateFollowUpDetails).matter
   if (typeof matter !== 'string' || matter.trim() === '') {
@@ -1710,9 +1839,7 @@ function toReviewDetails(record: IntimacyEventRecord): IntimacyReviewDetails {
 /** A revision may only touch the fields of the kind it is about, and only label a reply that was seen. */
 function requireRevisableDetails(event: IntimacyEvent, details: IntimacyReviewDetails): IntimacyReviewDetails {
   if (event.details.kind === 'sharing') return requirePartialSharingDetails(details)
-  if (event.details.kind === 'shared_plan') {
-    throw Object.assign(new Error('Revising a shared plan is not available yet'), { statusCode: 400 })
-  }
+  if (event.details.kind === 'shared_plan') return requireSharedPlanReviewDetails(details)
   if (event.details.kind === 'follow_up') {
     throw Object.assign(new Error('A follow-up revision needs the earlier messages it asks about'), {
       statusCode: 400,
@@ -1807,6 +1934,18 @@ function requirePartialSharingDetails(details: IntimacyReviewDetails): Partial<O
 function withinRange(anchorTs: number, range?: IntimacyResultRange): boolean {
   if (range?.startTs !== undefined && anchorTs < range.startTs) return false
   return !(range?.endTs !== undefined && anchorTs > range.endTs)
+}
+
+/**
+ * What the range shows of an event. An arrangement is listed whenever the range shows something of it — the
+ * proposal, or any stage it reached since — because a plan proposed last month and called off this week is part of
+ * this week's picture; everything else is placed by its own anchor.
+ */
+function withinResultRange(event: IntimacyEvent, range?: IntimacyResultRange): boolean {
+  if (event.details.kind === 'shared_plan') {
+    return event.details.stages.some((stage) => withinRange(stage.at, range))
+  }
+  return withinRange(event.anchorTs, range)
 }
 
 function toSnippet(message: MappedMessage): IntimacyMessageSnippet {

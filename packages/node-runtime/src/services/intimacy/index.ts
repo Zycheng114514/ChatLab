@@ -44,6 +44,8 @@ export {
   applyFollowUpPairing,
   applyReviewDetails,
   buildIntimacyEvents,
+  buildSharedPlanDetails,
+  clampSharedPlanDetails,
   findSharingEventCovering,
   mergeSharedPlanEvents,
   resolveEventStatus,

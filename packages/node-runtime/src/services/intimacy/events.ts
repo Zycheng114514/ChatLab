@@ -284,7 +284,7 @@ export function mergeSharedPlanEvents(target: IntimacyEventRecord, addition: Int
 }
 
 /** The plan as the stages describe it: one ordered timeline, where it stands now, and whether its start is here. */
-function buildSharedPlanDetails(
+export function buildSharedPlanDetails(
   proposerMemberId: number | null,
   activitySummary: string,
   stages: SharedPlanStageRecord[]
@@ -714,6 +714,18 @@ export function summarizeFollowUps(
       initiationUncertain: countInitiation('uncertain'),
     }
   })
+}
+
+/**
+ * The plan as it stood at the end of the target range. An arrangement keeps moving after a range ends, and a view
+ * of last month should not show this month's cancellation, so the stages the range does not reach are left out and
+ * where the plan stood is read from what remains.
+ */
+export function clampSharedPlanDetails(details: SharedPlanDetails, endTs?: number): SharedPlanDetails {
+  if (endTs === undefined) return details
+  const stages = details.stages.filter((stage) => stage.at <= endTs)
+  if (stages.length === 0 || stages.length === details.stages.length) return details
+  return { ...details, stages, lastObservedStage: stages[stages.length - 1]!.stage }
 }
 
 /** The target range a summary describes; an open end counts everything that is there. */
