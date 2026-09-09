@@ -1,13 +1,27 @@
 import assert from 'node:assert/strict'
 import test from 'node:test'
-import type { IntimacyEventStatus, SharingCategory, SharingTopic } from '@openchatlab/shared-types'
+import type {
+  GoodNewsResponseLabel,
+  IntimacyEventStatus,
+  IntimacyKindSummary,
+  ResponseObservation,
+  SharingCategory,
+  SharingTopic,
+  SupportResponseLabel,
+} from '@openchatlab/shared-types'
 import {
   buildIntimacyTopicFilterOptions,
   filterIntimacyEventsByTopic,
   partitionIntimacyEvents,
   resolveIntimacyStatusBadge,
+  selectGoodNewsEvents,
+  selectResponseSummary,
+  selectSharingEvents,
+  selectSupportEvents,
   summarizeIntimacyEvents,
+  type IntimacyGoodNewsEvent,
   type IntimacySharingEvent,
+  type IntimacySupportEvent,
 } from './intimacy-summary'
 
 const members = [
@@ -126,4 +140,146 @@ test('every display status has its own badge label', () => {
     'views.intimacy.status.excluded',
   ])
   assert.equal(new Set(labels).size, statuses.length)
+})
+
+function responseEvent(
+  kind: 'support_response' | 'good_news_response',
+  id: number,
+  subjectMemberId: number,
+  status: IntimacyEventStatus,
+  observation: ResponseObservation
+) {
+  return {
+    ...event(id, subjectMemberId, status, 'other', ['worry_or_need']),
+    id: `${kind}:${id}`,
+    kind,
+    evidence: [
+      { messageId: id, timestamp: 1_700_000_000 + id, senderId: subjectMemberId, role: 'core' as const },
+      ...(observation === 'visible_response'
+        ? [
+            {
+              messageId: id + 1,
+              timestamp: 1_700_000_001 + id,
+              senderId: subjectMemberId === 1 ? 2 : 1,
+              role: 'response' as const,
+            },
+          ]
+        : []),
+    ],
+  }
+}
+
+function supportEvent(
+  id: number,
+  subjectMemberId: number,
+  status: IntimacyEventStatus,
+  observation: ResponseObservation,
+  responseLabels: SupportResponseLabel[]
+): IntimacySupportEvent {
+  return {
+    ...responseEvent('support_response', id, subjectMemberId, status, observation),
+    kind: 'support_response',
+    details: {
+      kind: 'support_response',
+      disclosureEventId: `sharing:${id}`,
+      responseLabels,
+      responseObservation: observation,
+    },
+  }
+}
+
+function goodNewsEvent(
+  id: number,
+  subjectMemberId: number,
+  status: IntimacyEventStatus,
+  observation: ResponseObservation,
+  responseLabels: GoodNewsResponseLabel[]
+): IntimacyGoodNewsEvent {
+  return {
+    ...responseEvent('good_news_response', id, subjectMemberId, status, observation),
+    kind: 'good_news_response',
+    details: {
+      kind: 'good_news_response',
+      positiveForSharer: 'explicit_or_context_supported',
+      responseLabels,
+      responseObservation: observation,
+    },
+  }
+}
+
+// 一次结果里混着三种 kind，K1 的分享事件与 K4 的好消息事件可以共用同一条核心消息。
+const mixedEvents = [
+  ...events,
+  supportEvent(2, 1, 'auto', 'visible_response', ['acknowledges_feeling']),
+  supportEvent(3, 1, 'uncertain', 'no_visible_response', []),
+  goodNewsEvent(5, 2, 'auto', 'visible_response', ['congratulates_or_affirms']),
+]
+
+test('each card only sees its own kind, so a response event is never counted as personal sharing', () => {
+  assert.deepEqual(
+    selectSharingEvents(mixedEvents).map((item) => item.id),
+    events.map((item) => item.id)
+  )
+  assert.deepEqual(
+    selectSupportEvents(mixedEvents).map((item) => item.id),
+    ['support_response:2', 'support_response:3']
+  )
+  assert.deepEqual(
+    selectGoodNewsEvents(mixedEvents).map((item) => item.id),
+    ['good_news_response:5']
+  )
+
+  const [a, b] = summarizeIntimacyEvents(selectSharingEvents(mixedEvents), members)
+  assert.equal(a.counted, 2)
+  assert.equal(b.counted, 1)
+})
+
+test('the topic filter only ever works on sharing events', () => {
+  const sharing = selectSharingEvents(mixedEvents)
+
+  assert.deepEqual(buildIntimacyTopicFilterOptions(sharing), buildIntimacyTopicFilterOptions(events))
+  assert.deepEqual(
+    filterIntimacyEventsByTopic(sharing, 'other').map((item) => item.id),
+    []
+  )
+})
+
+test('a response card reads the summary of its own kind, and shows nothing when that kind is missing', () => {
+  const support = { memberId: 2, anchors: 2, visibleResponse: 1, noVisibleResponse: 1, insufficientContext: 0 }
+  const goodNews = { memberId: 1, anchors: 1, visibleResponse: 1, noVisibleResponse: 0, insufficientContext: 0 }
+  const summaries: IntimacyKindSummary[] = [
+    { kind: 'sharing', members: summarizeIntimacyEvents(events, members) },
+    {
+      kind: 'support_response',
+      members: [{ ...support, byLabel: { acknowledges_feeling: 1 } }],
+    },
+    {
+      kind: 'good_news_response',
+      members: [{ ...goodNews, byLabel: { congratulates_or_affirms: 1 } }],
+    },
+  ]
+
+  assert.deepEqual(selectResponseSummary(summaries, 'support_response'), [
+    { ...support, byLabel: { acknowledges_feeling: 1 } },
+  ])
+  assert.deepEqual(selectResponseSummary(summaries, 'good_news_response'), [
+    { ...goodNews, byLabel: { congratulates_or_affirms: 1 } },
+  ])
+  assert.deepEqual(selectResponseSummary([summaries[0]!], 'support_response'), [])
+})
+
+test('excluded response events are split out the same way as sharing events', () => {
+  const { listed, excluded } = partitionIntimacyEvents([
+    supportEvent(7, 1, 'auto', 'visible_response', ['asks_details']),
+    supportEvent(8, 1, 'excluded', 'no_visible_response', []),
+  ])
+
+  assert.deepEqual(
+    listed.map((item) => item.id),
+    ['support_response:7']
+  )
+  assert.deepEqual(
+    excluded.map((item) => item.id),
+    ['support_response:8']
+  )
 })
