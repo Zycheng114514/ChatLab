@@ -46,6 +46,11 @@ function createSessions(root: string): void {
     const insert = db.prepare('INSERT INTO message (id, sender_id, ts, type, content) VALUES (?, ?, ?, 0, ?)')
     insert.run(1, 1, baseTs + 60, `${sessionId} 今天面试结束了，我有点紧张`)
     insert.run(2, 2, baseTs + 120, `${sessionId} that sounds hard`)
+    // A repair attempt needs a disagreement from both of them before it, so one session carries four turns.
+    if (sessionId === 'other') {
+      insert.run(3, 1, baseTs + 180, `${sessionId} 我不该那样说你`)
+      insert.run(4, 2, baseTs + 240, `${sessionId} 我明白你的意思了`)
+    }
     db.close()
   }
 }
@@ -283,6 +288,45 @@ test('confirmed events and reviews stay inside one session and refuse a stale re
     payload: { decision: 'included', expectedRevision: 2, details: { lastObservedStage: 'agreed' } },
   })
   assert.equal(unknownStage.statusCode, 400, 'where an arrangement stands is one of the six stages')
+
+  // A confirmed repair attempt cites the disagreement it answers, so the route has to pass those ids on.
+  const repairAttempt = await app.inject({
+    method: 'POST',
+    url: '/_web/sessions/other/intimacy/events',
+    payload: {
+      kind: 'repair_attempt',
+      subjectMemberId: 1,
+      coreMessageIds: [3],
+      disagreementMessageIds: [1, 2],
+      responseMessageIds: [4],
+      details: { repairLabels: ['apology'], subsequentObservation: 'explicit_acceptance_expression' },
+    },
+  })
+  assert.equal(repairAttempt.statusCode, 200)
+  const repair = repairAttempt.json().events.find((item: { id: string }) => item.id === 'repair_attempt:3')
+  assert.deepEqual(
+    repair.evidence.map((item: { messageId: number; role: string }) => [item.messageId, item.role]),
+    [
+      [1, 'disagreement'],
+      [2, 'disagreement'],
+      [3, 'core'],
+      [4, 'subsequent'],
+    ],
+    'the argument, the repair and what followed it are all served'
+  )
+  assert.equal(repair.details.disagreementGroupId, 'disagreement:1')
+
+  const missingDisagreement = await app.inject({
+    method: 'POST',
+    url: '/_web/sessions/other/intimacy/events',
+    payload: {
+      kind: 'repair_attempt',
+      subjectMemberId: 1,
+      coreMessageIds: [3],
+      details: { repairLabels: ['apology'] },
+    },
+  })
+  assert.equal(missingDisagreement.statusCode, 400, 'a repair with no argument behind it is refused')
 
   const ownEarlierMessage = await app.inject({
     method: 'POST',

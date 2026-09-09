@@ -6,6 +6,7 @@ import {
   parseIntimacyResponse,
   type ParsedFollowUpEvent,
   type ParsedIntimacyEvent,
+  type ParsedRepairAttemptEvent,
   type ParsedSharedPlanEvent,
   type ParsedSharingEvent,
 } from './model-protocol'
@@ -50,6 +51,12 @@ function firstFollowUp(parsed: ParsedIntimacyEvent[]): ParsedFollowUpEvent {
 function firstSharedPlan(parsed: ParsedIntimacyEvent[]): ParsedSharedPlanEvent {
   const event = parsed[0]
   assert.ok(event?.kind === 'shared_plan')
+  return event
+}
+
+function firstRepairAttempt(parsed: ParsedIntimacyEvent[]): ParsedRepairAttemptEvent {
+  const event = parsed[0]
+  assert.ok(event?.kind === 'repair_attempt')
   return event
 }
 
@@ -261,6 +268,57 @@ test('the activity an arrangement is named by is trimmed and bounded', () => {
   )
 
   assert.equal(firstSharedPlan(parsed).activitySummary.length, 40)
+})
+
+/** The two of them argue in the tail of the previous window, Alice repairs it here and Bob answers her. */
+const repairAttempt = {
+  kind: 'repair_attempt',
+  disagreementMessageIds: [1, 2],
+  disagreementConfidence: 'clear',
+  repairer: 'A',
+  coreMessageIds: [3],
+  repairLabels: ['acknowledges_part', 'apology'],
+  repairConfidence: 'clear',
+  subsequentMessageIds: [4],
+  subsequentObservation: 'explicit_acceptance_expression',
+  disagreementGroupKey: '  d1  ',
+  observation: 'sufficient',
+  reason: 'Alice says she was wrong to snap and Bob says he understands.',
+}
+
+test('a repair attempt keeps the disagreement it answers, even when it started in the previous window', () => {
+  const parsed = parseIntimacyResponse(
+    response({ ...repairAttempt, disagreementMessageIds: [1, 2, 1] }),
+    window,
+    members
+  )
+
+  const event = firstRepairAttempt(parsed)
+  assert.deepEqual(event.disagreementMessageIds, [1, 2], 'a disagreement may be cited from the context tail')
+  assert.equal(event.repairer, 'A')
+  assert.deepEqual(event.coreMessageIds, [3])
+  assert.deepEqual(event.repairLabels, ['apology', 'acknowledges_part'], 'the labels come back in a stable order')
+  assert.deepEqual(event.subsequentMessageIds, [4])
+  assert.equal(event.subsequentObservation, 'explicit_acceptance_expression')
+  assert.equal(event.disagreementGroupKey, 'd1')
+  assert.equal(event.disagreementConfidence, 'clear')
+  assert.equal(event.repairConfidence, 'clear')
+})
+
+test('a repair nobody answered yet is read as one, with no follow-up cited at all', () => {
+  const parsed = parseIntimacyResponse(
+    response({
+      ...repairAttempt,
+      subsequentMessageIds: undefined,
+      subsequentObservation: 'no_visible_follow_up',
+      repairConfidence: 'uncertain',
+    }),
+    window,
+    members
+  )
+
+  assert.deepEqual(firstRepairAttempt(parsed).subsequentMessageIds, [])
+  assert.equal(firstRepairAttempt(parsed).repairConfidence, 'uncertain')
 })
 
 const rejections: Array<{ name: string; payload: string }> = [
@@ -500,6 +558,70 @@ const rejections: Array<{ name: string; payload: string }> = [
   {
     name: 'an arrangement with no activity to name it by',
     payload: response({ ...sharedPlan, activitySummary: '  ' }),
+  },
+  {
+    name: 'a disagreement only one of them took part in',
+    payload: response({ ...repairAttempt, disagreementMessageIds: [1] }),
+  },
+  {
+    name: 'a repair that comes before the disagreement it answers',
+    payload: response({ ...repairAttempt, disagreementMessageIds: [1, 4] }),
+  },
+  {
+    name: 'a repair that only appears as context of this window',
+    payload: response({ ...repairAttempt, coreMessageIds: [1] }),
+  },
+  {
+    name: 'a repair the other participant sent',
+    payload: response({ ...repairAttempt, coreMessageIds: [4] }),
+  },
+  {
+    name: 'a repair with no readable text',
+    payload: response({ ...repairAttempt, coreMessageIds: [5] }),
+  },
+  {
+    name: 'a disagreement message from outside this window',
+    payload: response({ ...repairAttempt, disagreementMessageIds: [99, 2] }),
+  },
+  {
+    name: 'an acceptance expression nobody cited a message for',
+    payload: response({ ...repairAttempt, subsequentMessageIds: [] }),
+  },
+  {
+    name: 'a repair reported as unanswered that still cites a follow-up',
+    payload: response({ ...repairAttempt, subsequentObservation: 'no_visible_follow_up' }),
+  },
+  {
+    name: 'a follow-up the participant repairing sent themselves',
+    payload: response({ ...repairAttempt, subsequentMessageIds: [6] }),
+  },
+  {
+    name: 'a follow-up that came before the repair',
+    payload: response({ ...repairAttempt, coreMessageIds: [6], subsequentMessageIds: [4] }),
+  },
+  {
+    name: 'a repair with no label at all',
+    payload: response({ ...repairAttempt, repairLabels: [] }),
+  },
+  {
+    name: 'an unknown repair label',
+    payload: response({ ...repairAttempt, repairLabels: ['forgives'] }),
+  },
+  {
+    name: 'an unknown follow-up observation',
+    payload: response({ ...repairAttempt, subsequentObservation: 'reconciled' }),
+  },
+  {
+    name: 'a repair with nothing to tie it to the disagreement it answers',
+    payload: response({ ...repairAttempt, disagreementGroupKey: '  ' }),
+  },
+  {
+    name: 'a disagreement whose reading was never rated',
+    payload: response({ ...repairAttempt, disagreementConfidence: undefined }),
+  },
+  {
+    name: 'a repair whose reading was never rated',
+    payload: response({ ...repairAttempt, repairConfidence: undefined }),
   },
 ]
 

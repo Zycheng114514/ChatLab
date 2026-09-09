@@ -5,6 +5,7 @@ import type {
   IntimacyEventDetails,
   IntimacyEventReview,
   IntimacyMember,
+  RepairAttemptDetails,
   SharedPlanDetails,
   SharingDetails,
 } from '@openchatlab/shared-types'
@@ -15,11 +16,17 @@ import {
   mergeSharedPlanEvents,
   resolveEventStatus,
   summarizeFollowUps,
+  summarizeRepairAttempts,
   summarizeResponses,
   summarizeSharedPlans,
   summarizeSharing,
 } from './events'
-import type { ParsedFollowUpEvent, ParsedGoodNewsEvent, ParsedSharingEvent } from './model-protocol'
+import type {
+  ParsedFollowUpEvent,
+  ParsedGoodNewsEvent,
+  ParsedRepairAttemptEvent,
+  ParsedSharingEvent,
+} from './model-protocol'
 import type { IntimacySourceMessage, IntimacyWindow } from './source'
 import type { IntimacyEventRecord } from './store'
 
@@ -90,6 +97,24 @@ function parsedFollowUp(overrides: Partial<ParsedFollowUpEvent> = {}): ParsedFol
     confidence: 'clear',
     observation: 'sufficient',
     reason: 'Bob asks how it went.',
+    ...overrides,
+  }
+}
+
+function parsedRepair(overrides: Partial<ParsedRepairAttemptEvent> = {}): ParsedRepairAttemptEvent {
+  return {
+    kind: 'repair_attempt',
+    disagreementMessageIds: [1, 2],
+    disagreementConfidence: 'clear',
+    repairer: 'A',
+    coreMessageIds: [3],
+    repairLabels: ['apology'],
+    repairConfidence: 'clear',
+    subsequentMessageIds: [4],
+    subsequentObservation: 'continued_discussion',
+    disagreementGroupKey: 'd1',
+    observation: 'sufficient',
+    reason: 'Alice says she was wrong to snap.',
     ...overrides,
   }
 }
@@ -970,4 +995,177 @@ test('shared plan summaries count an arrangement once, by where it stood and who
     summary.updatedInRange,
     'every arrangement the range shows stands somewhere, and stands there once'
   )
+})
+
+function repairDetails(event: IntimacyEventRecord | IntimacyEvent): RepairAttemptDetails {
+  assert.ok(event.details.kind === 'repair_attempt')
+  return event.details
+}
+
+test('two repairs after one argument are two attempts of one disagreement', () => {
+  const events = buildIntimacyEvents(
+    [
+      parsedRepair(),
+      // The second repair cites the argument from where it could see it; both answer the same disagreement.
+      parsedRepair({
+        disagreementMessageIds: [2, 3],
+        repairer: 'B',
+        coreMessageIds: [4],
+        repairLabels: ['acknowledges_part', 'deescalation_or_reconnect'],
+        subsequentMessageIds: [5],
+        subsequentObservation: 'explicit_acceptance_expression',
+      }),
+    ],
+    window,
+    members,
+    [],
+    baseTs * 1000
+  )
+
+  assert.deepEqual(
+    events.map((event) => [event.id, event.subjectMemberId, event.otherMemberId]),
+    [
+      ['repair_attempt:3', 1, 2],
+      ['repair_attempt:4', 2, 1],
+    ]
+  )
+  assert.equal(
+    repairDetails(events[0]!).disagreementGroupId,
+    'disagreement:1',
+    'the disagreement is named after the earliest message any of its repairs cites'
+  )
+  assert.equal(repairDetails(events[1]!).disagreementGroupId, 'disagreement:1')
+  assert.deepEqual(
+    events[0]!.evidence.map((evidence) => [evidence.messageId, evidence.role]),
+    [
+      [1, 'disagreement'],
+      [2, 'disagreement'],
+      [3, 'core'],
+      [4, 'subsequent'],
+    ]
+  )
+  assert.deepEqual(repairDetails(events[1]!).repairLabels, ['acknowledges_part', 'deescalation_or_reconnect'])
+  assert.equal(repairDetails(events[1]!).subsequentObservation, 'explicit_acceptance_expression')
+})
+
+test('a repair is only a clear case when the disagreement behind it was clear too', () => {
+  const [clear] = buildIntimacyEvents([parsedRepair()], window, members, [], baseTs * 1000)
+  const [unsureDisagreement] = buildIntimacyEvents(
+    [parsedRepair({ disagreementConfidence: 'uncertain' })],
+    window,
+    members,
+    [],
+    baseTs * 1000
+  )
+  const [unsureRepair] = buildIntimacyEvents(
+    [parsedRepair({ repairConfidence: 'uncertain' })],
+    window,
+    members,
+    [],
+    baseTs * 1000
+  )
+
+  assert.equal(clear?.modelDecision, 'included')
+  assert.equal(resolveEventStatus(clear!, null), 'auto')
+  assert.equal(unsureDisagreement?.modelDecision, 'uncertain')
+  assert.equal(
+    resolveEventStatus(unsureDisagreement!, null),
+    'uncertain',
+    'a repair after an argument the model was unsure of waits to be checked'
+  )
+  assert.equal(unsureRepair?.modelDecision, 'uncertain')
+})
+
+function repairEvent(overrides: Partial<IntimacyEvent> = {}): IntimacyEvent {
+  return {
+    ...storedEvent(),
+    id: 'repair_attempt:3',
+    kind: 'repair_attempt',
+    details: {
+      kind: 'repair_attempt',
+      disagreementGroupId: 'disagreement:1',
+      repairLabels: ['apology'],
+      subsequentObservation: 'continued_discussion',
+    },
+    ...overrides,
+  }
+}
+
+test('repair summaries count the attempts per participant and the disagreements behind them separately', () => {
+  const summary = summarizeRepairAttempts(
+    [
+      repairEvent(),
+      // The other participant repairs the same argument: one more attempt, still one disagreement.
+      repairEvent({
+        id: 'repair_attempt:4',
+        subjectMemberId: 2,
+        otherMemberId: 1,
+        status: 'confirmed',
+        details: {
+          kind: 'repair_attempt',
+          disagreementGroupId: 'disagreement:1',
+          repairLabels: ['apology', 'acknowledges_part'],
+          subsequentObservation: 'explicit_acceptance_expression',
+        },
+      }),
+      repairEvent({
+        id: 'repair_attempt:9',
+        subjectMemberId: 2,
+        otherMemberId: 1,
+        details: {
+          kind: 'repair_attempt',
+          disagreementGroupId: 'disagreement:7',
+          repairLabels: ['deescalation_or_reconnect'],
+          subsequentObservation: 'no_visible_follow_up',
+        },
+      }),
+      // Neither of these is part of the picture: one is still waiting, one the user threw out.
+      repairEvent({ id: 'repair_attempt:11', status: 'uncertain' }),
+      repairEvent({
+        id: 'repair_attempt:13',
+        status: 'excluded',
+        details: {
+          kind: 'repair_attempt',
+          disagreementGroupId: 'disagreement:12',
+          repairLabels: ['clarification'],
+          subsequentObservation: 'explicit_rejection_expression',
+        },
+      }),
+    ],
+    members
+  )
+
+  assert.equal(summary.disagreements, 2, 'two repairs of one argument are one disagreement')
+  const [alice, bob] = summary.members
+  assert.equal(alice?.attempts, 1)
+  assert.deepEqual(alice?.byLabel, { apology: 1, clarification: 0, acknowledges_part: 0, deescalation_or_reconnect: 0 })
+  assert.equal(alice?.bySubsequent.continued_discussion, 1)
+  assert.equal(bob?.attempts, 2)
+  assert.deepEqual(bob?.byLabel, { apology: 1, clarification: 0, acknowledges_part: 1, deescalation_or_reconnect: 1 })
+  assert.deepEqual(bob?.bySubsequent, {
+    explicit_acceptance_expression: 1,
+    continued_discussion: 0,
+    explicit_rejection_expression: 0,
+    no_visible_follow_up: 1,
+    uncertain: 0,
+  })
+  assert.equal(
+    Object.values(bob?.bySubsequent ?? {}).reduce((sum, count) => sum + count, 0),
+    bob?.attempts,
+    'every counted attempt is followed by exactly one of the five observations'
+  )
+})
+
+test('a revision may relabel a repair and say what followed it', () => {
+  const revised = applyReviewDetails(repairDetails(repairEvent()), {
+    decision: 'included',
+    details: { repairLabels: ['deescalation_or_reconnect', 'apology'], subsequentObservation: 'uncertain' },
+    revision: 1,
+    updatedAt: baseTs,
+  })
+
+  assert.ok(revised.kind === 'repair_attempt')
+  assert.deepEqual(revised.repairLabels, ['apology', 'deescalation_or_reconnect'])
+  assert.equal(revised.subsequentObservation, 'uncertain')
+  assert.equal(revised.disagreementGroupId, 'disagreement:1', 'the disagreement it answers is evidence, not a label')
 })

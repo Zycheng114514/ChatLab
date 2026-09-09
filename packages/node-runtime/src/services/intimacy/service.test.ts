@@ -16,10 +16,13 @@ import type {
   IntimacyMemberSummary,
   IntimacyResponseMemberSummary,
   IntimacyResults,
+  RepairAttemptDetails,
+  RepairSummary,
   SharedPlanDetails,
   SharedPlanStage,
   SharedPlanSummary,
   SharingDetails,
+  SubsequentObservation,
   SupportResponseDetails,
 } from '@openchatlab/shared-types'
 import { assertDataDirCompatible, DataDirCompatibilityError, readDataDirCompatibilityMeta } from '../../data-dir-compat'
@@ -32,7 +35,7 @@ import { createIntimacyService, type IntimacyService } from './service'
 const nativeBinding = path.resolve('apps/cli/native/better_sqlite3.node')
 const baseTs = Date.parse('2026-05-01T08:00:00.000Z') / 1000
 const baseNow = Date.parse('2026-05-02T08:00:00.000Z')
-const MESSAGE_COUNT = 81
+const MESSAGE_COUNT = 93
 
 /** Ids of the hand-written messages inside the generated filler; senders alternate by parity. */
 const ALICE_FIRST_SHARING = 5
@@ -91,6 +94,25 @@ const BOB_SECOND_HOTPOT_PROPOSAL = 80
 const ALICE_SECOND_HOTPOT_AGREES = 81
 const SECOND_HOTPOT_TS = baseTs + 45 * 24 * 60 * 60
 
+/** Long enough to end the window it lands in, so the argument after it starts a window of its own. */
+const WINDOW_BREAK_BEFORE_REPAIRS = 82
+/** One argument both of them take part in, repaired by each of them in turn. */
+const ALICE_BLAMES_BOB = 83
+const BOB_BLAMES_BACK = 84
+const ALICE_APOLOGISES = 85
+const BOB_ADMITS_HIS_PART = 86
+const ALICE_ACCEPTS = 87
+/** An apology with no disagreement behind it, and an everyday one for being late: neither is a repair. */
+const BOB_JOKING_APOLOGY = 88
+const ALICE_APOLOGISES_FOR_BEING_LATE = 89
+/** A second argument whose repair is answered with two words nobody can read either way. */
+const BOB_COMPLAINS_ABOUT_DISHES = 90
+const ALICE_PUSHES_BACK = 91
+const BOB_REPAIRS_THE_DISHES = 92
+const ALICE_SAYS_FINE = 93
+/** A day after the second hotpot, so the ids keep following the clock. */
+const REPAIR_TS = baseTs + 46 * 24 * 60 * 60
+
 const PLAN_EXHIBITION = '周六下午看摄影展'
 const PLAN_HOTPOT = '一起吃火锅'
 const PLAN_PARENTS = '周末回家看爸妈'
@@ -113,6 +135,10 @@ const PHONE_RULE = {
   replacement: '[phone]',
   enabled: true,
   builtin: false,
+}
+
+function repairTs(messageId: number): number {
+  return REPAIR_TS + (messageId - WINDOW_BREAK_BEFORE_REPAIRS) * 60
 }
 
 function makeTempDir(): string {
@@ -201,6 +227,36 @@ function createSession(root: string, chatType: 'private' | 'group' = 'private'):
     [ALICE_BADMINTON_LOOKBACK, { type: 0, content: '羽毛球那次真的太累了' }],
     [BOB_SECOND_HOTPOT_PROPOSAL, { type: 0, content: '下个月再去那家火锅店吧', ts: SECOND_HOTPOT_TS }],
     [ALICE_SECOND_HOTPOT_AGREES, { type: 0, content: '好啊，那就下个月', ts: SECOND_HOTPOT_TS + 60 }],
+    [WINDOW_BREAK_BEFORE_REPAIRS, { type: 0, content: filler.repeat(13), ts: repairTs(WINDOW_BREAK_BEFORE_REPAIRS) }],
+    [
+      ALICE_BLAMES_BOB,
+      { type: 0, content: '你昨天答应了又没来，我在门口等了一个小时', ts: repairTs(ALICE_BLAMES_BOB) },
+    ],
+    [BOB_BLAMES_BACK, { type: 0, content: '我加班到十点，你也没问一句就直接说我', ts: repairTs(BOB_BLAMES_BACK) }],
+    [
+      ALICE_APOLOGISES,
+      { type: 0, content: '对不起，我不该那样说你，是我没先问你在忙什么', ts: repairTs(ALICE_APOLOGISES) },
+    ],
+    [BOB_ADMITS_HIS_PART, { type: 0, content: '我也有不对，我该早点跟你说一声的', ts: repairTs(BOB_ADMITS_HIS_PART) }],
+    [ALICE_ACCEPTS, { type: 0, content: '我明白你的意思了，下次我们都提前说', ts: repairTs(ALICE_ACCEPTS) }],
+    [BOB_JOKING_APOLOGY, { type: 0, content: '哈哈对不起我太菜了，这把又送了', ts: repairTs(BOB_JOKING_APOLOGY) }],
+    [
+      ALICE_APOLOGISES_FOR_BEING_LATE,
+      { type: 0, content: '对不起迟到了，路上堵得厉害', ts: repairTs(ALICE_APOLOGISES_FOR_BEING_LATE) },
+    ],
+    [
+      BOB_COMPLAINS_ABOUT_DISHES,
+      { type: 0, content: '碗又堆在水池里了，说过多少次了', ts: repairTs(BOB_COMPLAINS_ABOUT_DISHES) },
+    ],
+    [
+      ALICE_PUSHES_BACK,
+      { type: 0, content: '我今天真的很累，你能不能别一进门就说这个', ts: repairTs(ALICE_PUSHES_BACK) },
+    ],
+    [
+      BOB_REPAIRS_THE_DISHES,
+      { type: 0, content: '抱歉，我不该一开口就说这个，我知道你今天累', ts: repairTs(BOB_REPAIRS_THE_DISHES) },
+    ],
+    [ALICE_SAYS_FINE, { type: 0, content: '好吧', ts: repairTs(ALICE_SAYS_FINE) }],
   ])
   const insert = db.prepare('INSERT INTO message (id, sender_id, ts, type, content) VALUES (?, ?, ?, ?, ?)')
   db.transaction(() => {
@@ -344,6 +400,17 @@ function sharedPlanEvent(event: Record<string, unknown>): Record<string, unknown
     kind: 'shared_plan',
     continuesContextEvent: false,
     confidence: 'clear',
+    observation: 'sufficient',
+    reason: 'synthetic coding decision',
+    ...event,
+  }
+}
+
+function repairAttemptEvent(event: Record<string, unknown>): Record<string, unknown> {
+  return {
+    kind: 'repair_attempt',
+    disagreementConfidence: 'clear',
+    repairConfidence: 'clear',
     observation: 'sufficient',
     reason: 'synthetic coding decision',
     ...event,
@@ -529,7 +596,53 @@ function defaultWindowResponse(window: PromptWindow): string {
     )
   }
   events.push(...sharedPlanEvents(own, asContext))
+  events.push(...repairAttemptEvents(own))
   return JSON.stringify({ events })
+}
+
+/**
+ * The repairs the windows show: one argument both of them take part in and then each of them repairs, and a second
+ * one answered with two words nobody can read either way. The joking apology and the one for being late have no
+ * disagreement behind them, so they are coded as nothing at all.
+ */
+function repairAttemptEvents(own: (id: number) => boolean): Record<string, unknown>[] {
+  const events: Record<string, unknown>[] = []
+  if (own(ALICE_APOLOGISES)) {
+    events.push(
+      repairAttemptEvent({
+        disagreementMessageIds: [ALICE_BLAMES_BOB, BOB_BLAMES_BACK],
+        repairer: 'A',
+        coreMessageIds: [ALICE_APOLOGISES],
+        repairLabels: ['apology', 'acknowledges_part'],
+        subsequentMessageIds: [BOB_ADMITS_HIS_PART],
+        subsequentObservation: 'continued_discussion',
+        disagreementGroupKey: 'the missed evening',
+      }),
+      repairAttemptEvent({
+        disagreementMessageIds: [ALICE_BLAMES_BOB, BOB_BLAMES_BACK],
+        repairer: 'B',
+        coreMessageIds: [BOB_ADMITS_HIS_PART],
+        repairLabels: ['acknowledges_part'],
+        subsequentMessageIds: [ALICE_ACCEPTS],
+        subsequentObservation: 'explicit_acceptance_expression',
+        disagreementGroupKey: 'the missed evening',
+      })
+    )
+  }
+  if (own(BOB_REPAIRS_THE_DISHES)) {
+    events.push(
+      repairAttemptEvent({
+        disagreementMessageIds: [BOB_COMPLAINS_ABOUT_DISHES, ALICE_PUSHES_BACK],
+        repairer: 'B',
+        coreMessageIds: [BOB_REPAIRS_THE_DISHES],
+        repairLabels: ['apology', 'deescalation_or_reconnect'],
+        subsequentMessageIds: [ALICE_SAYS_FINE],
+        subsequentObservation: 'uncertain',
+        disagreementGroupKey: 'the dishes',
+      })
+    )
+  }
+  return events
 }
 
 /**
@@ -823,6 +936,17 @@ function sharedPlanDetails(event: IntimacyEvent): SharedPlanDetails {
 /** The timeline of an arrangement as the card would read it: what happened, who did it, and where it is said. */
 function planStages(event: IntimacyEvent): Array<[SharedPlanStage, number, number[]]> {
   return sharedPlanDetails(event).stages.map((stage) => [stage.stage, stage.actorMemberId, stage.messageIds])
+}
+
+function repairDetails(event: IntimacyEvent): RepairAttemptDetails {
+  assert.ok(event.details.kind === 'repair_attempt')
+  return event.details
+}
+
+function repairSummary(results: IntimacyResults): RepairSummary {
+  const summary = results.summaries.find((item) => item.kind === 'repair_attempt')
+  assert.ok(summary?.kind === 'repair_attempt')
+  return summary
 }
 
 function sharedPlanSummary(results: IntimacyResults): SharedPlanSummary {
@@ -2230,6 +2354,246 @@ test('a revision says where an arrangement stands and survives the next analysis
       sharedPlanDetails(event(rerun, `shared_plan:${ALICE_EXHIBITION_PROPOSAL}`)).lastObservedStage,
       'cancelled'
     )
+    assert.equal(rerun.orphanReviews, 0)
+  } finally {
+    service.close()
+    manager.closeAll()
+  }
+})
+
+test('a run codes each repair after an argument and leaves an apology with no argument behind it alone', async () => {
+  const stub = modelStub((window) => defaultWindowResponse(window))
+  const { service, manager } = createHarness(stub.client)
+
+  try {
+    const started = service.start('private', { kinds: ['repair_attempt'] })
+    await waitForRun(service, 'private', started.id, 'completed')
+    const results = await service.getResults('private')
+
+    assert.deepEqual(
+      results.events.filter((item) => item.kind === 'repair_attempt').map((item) => item.id),
+      [
+        `repair_attempt:${ALICE_APOLOGISES}`,
+        `repair_attempt:${BOB_ADMITS_HIS_PART}`,
+        `repair_attempt:${BOB_REPAIRS_THE_DISHES}`,
+      ],
+      'a joking apology and one for being late have no disagreement behind them, so neither is a repair'
+    )
+
+    const alicesRepair = event(results, `repair_attempt:${ALICE_APOLOGISES}`)
+    assert.equal(alicesRepair.subjectMemberId, 1, 'the participant repairing is the subject')
+    assert.equal(alicesRepair.otherMemberId, 2)
+    assert.equal(alicesRepair.status, 'auto')
+    assert.deepEqual(evidenceRoles(alicesRepair), [
+      [ALICE_BLAMES_BOB, 'disagreement'],
+      [BOB_BLAMES_BACK, 'disagreement'],
+      [ALICE_APOLOGISES, 'core'],
+      [BOB_ADMITS_HIS_PART, 'subsequent'],
+    ])
+    assert.deepEqual(repairDetails(alicesRepair), {
+      kind: 'repair_attempt',
+      disagreementGroupId: `disagreement:${ALICE_BLAMES_BOB}`,
+      repairLabels: ['apology', 'acknowledges_part'],
+      subsequentObservation: 'continued_discussion',
+    })
+    // The two of them repaired the same argument: two attempts, one disagreement.
+    const bobsRepair = event(results, `repair_attempt:${BOB_ADMITS_HIS_PART}`)
+    assert.equal(bobsRepair.subjectMemberId, 2)
+    assert.equal(repairDetails(bobsRepair).disagreementGroupId, `disagreement:${ALICE_BLAMES_BOB}`)
+    assert.equal(repairDetails(bobsRepair).subsequentObservation, 'explicit_acceptance_expression')
+    assert.equal(
+      repairDetails(event(results, `repair_attempt:${BOB_REPAIRS_THE_DISHES}`)).subsequentObservation,
+      'uncertain',
+      'two words nobody can read either way are reported as unclear, not as acceptance'
+    )
+
+    const summary = repairSummary(results)
+    assert.equal(summary.disagreements, 2)
+    const [alice, bob] = summary.members
+    assert.equal(alice?.attempts, 1)
+    assert.deepEqual(alice?.byLabel, {
+      apology: 1,
+      clarification: 0,
+      acknowledges_part: 1,
+      deescalation_or_reconnect: 0,
+    })
+    assert.equal(alice?.bySubsequent.continued_discussion, 1)
+    assert.equal(bob?.attempts, 2)
+    assert.deepEqual(bob?.byLabel, {
+      apology: 1,
+      clarification: 0,
+      acknowledges_part: 1,
+      deescalation_or_reconnect: 1,
+    })
+    assert.equal(bob?.bySubsequent.explicit_acceptance_expression, 1)
+    assert.equal(bob?.bySubsequent.uncertain, 1)
+  } finally {
+    service.close()
+    manager.closeAll()
+  }
+})
+
+test('a user can confirm a repair by hand and is refused one the chat does not show', async () => {
+  const { service, manager } = createHarness(null)
+
+  try {
+    const created = await service.createUserEvent('private', {
+      kind: 'repair_attempt',
+      subjectMemberId: 1,
+      coreMessageIds: [ALICE_APOLOGISES],
+      disagreementMessageIds: [ALICE_BLAMES_BOB, BOB_BLAMES_BACK],
+      responseMessageIds: [BOB_ADMITS_HIS_PART],
+      details: { repairLabels: ['apology'], subsequentObservation: 'continued_discussion' },
+    })
+
+    const repair = event(created, `repair_attempt:${ALICE_APOLOGISES}`)
+    assert.equal(repair.origin, 'user')
+    assert.equal(repair.status, 'confirmed')
+    assert.equal(repair.runId, null)
+    assert.deepEqual(evidenceRoles(repair), [
+      [ALICE_BLAMES_BOB, 'disagreement'],
+      [BOB_BLAMES_BACK, 'disagreement'],
+      [ALICE_APOLOGISES, 'core'],
+      [BOB_ADMITS_HIS_PART, 'subsequent'],
+    ])
+    assert.equal(repairDetails(repair).disagreementGroupId, `disagreement:${ALICE_BLAMES_BOB}`)
+    assert.equal(repairSummary(created).disagreements, 1)
+    assert.equal(repairSummary(created).members[0]?.attempts, 1)
+
+    // Nothing was picked as a follow-up, so nothing was seen — whatever the request claims about it.
+    const unanswered = await service.createUserEvent('private', {
+      kind: 'repair_attempt',
+      subjectMemberId: 2,
+      coreMessageIds: [BOB_REPAIRS_THE_DISHES],
+      disagreementMessageIds: [BOB_COMPLAINS_ABOUT_DISHES, ALICE_PUSHES_BACK],
+      details: { repairLabels: ['apology'], subsequentObservation: 'explicit_acceptance_expression' },
+    })
+    const openRepair = event(unanswered, `repair_attempt:${BOB_REPAIRS_THE_DISHES}`)
+    assert.equal(repairDetails(openRepair).subsequentObservation, 'no_visible_follow_up')
+    assert.deepEqual(
+      evidenceRoles(openRepair).filter(([, role]) => role === 'subsequent'),
+      []
+    )
+
+    // The same event cannot be told afterwards that the other participant accepted it either.
+    await assert.rejects(
+      () =>
+        service.reviewEvent('private', `repair_attempt:${BOB_REPAIRS_THE_DISHES}`, {
+          decision: 'included',
+          expectedRevision: 1,
+          details: { subsequentObservation: 'explicit_acceptance_expression' },
+        }),
+      (error: unknown) => (error as { statusCode?: number }).statusCode === 400,
+      'a follow-up nobody cited cannot be read as acceptance'
+    )
+    const unread = await service.reviewEvent('private', `repair_attempt:${BOB_REPAIRS_THE_DISHES}`, {
+      decision: 'included',
+      expectedRevision: 1,
+      details: { repairLabels: ['clarification'], subsequentObservation: 'uncertain' },
+    })
+    assert.deepEqual(repairDetails(event(unread, `repair_attempt:${BOB_REPAIRS_THE_DISHES}`)).repairLabels, [
+      'clarification',
+    ])
+    assert.equal(
+      repairDetails(event(unread, `repair_attempt:${BOB_REPAIRS_THE_DISHES}`)).subsequentObservation,
+      'uncertain'
+    )
+
+    const rejected: Array<[string, Partial<CreateIntimacyEventRequest>]> = [
+      [
+        'an argument only one of them took part in',
+        { disagreementMessageIds: [ALICE_BLAMES_BOB], details: { repairLabels: ['apology'] } },
+      ],
+      [
+        'a repair with no argument cited at all',
+        { disagreementMessageIds: [], details: { repairLabels: ['apology'] } },
+      ],
+      [
+        'an argument that comes after the repair',
+        {
+          disagreementMessageIds: [ALICE_BLAMES_BOB, BOB_COMPLAINS_ABOUT_DISHES],
+          details: { repairLabels: ['apology'] },
+        },
+      ],
+      [
+        'a follow-up the participant repairing sent themselves',
+        { responseMessageIds: [ALICE_ACCEPTS], details: { repairLabels: ['apology'] } },
+      ],
+      [
+        'a follow-up that came before the repair',
+        { responseMessageIds: [BOB_BLAMES_BACK], details: { repairLabels: ['apology'] } },
+      ],
+      ['a repair with no label at all', { details: { repairLabels: [] } }],
+      [
+        'a follow-up the user picked without saying what it showed',
+        { responseMessageIds: [BOB_ADMITS_HIS_PART], details: { repairLabels: ['apology'] } },
+      ],
+    ]
+    for (const [name, request] of rejected) {
+      await assert.rejects(
+        () =>
+          service.createUserEvent('private', {
+            kind: 'repair_attempt',
+            subjectMemberId: 1,
+            coreMessageIds: [ALICE_APOLOGISES],
+            disagreementMessageIds: [ALICE_BLAMES_BOB, BOB_BLAMES_BACK],
+            ...request,
+            details: request.details ?? { repairLabels: ['apology'] },
+          }),
+        (error: unknown) => (error as { statusCode?: number }).statusCode === 400,
+        name
+      )
+    }
+  } finally {
+    service.close()
+    manager.closeAll()
+  }
+})
+
+test('a revision corrects how a repair was made and survives the next analysis', async () => {
+  const stub = modelStub((window) => defaultWindowResponse(window))
+  const { service, manager, advance } = createHarness(stub.client)
+
+  try {
+    const started = service.start('private', { kinds: ['repair_attempt'] })
+    await waitForRun(service, 'private', started.id, 'completed')
+
+    const reviewed = await service.reviewEvent('private', `repair_attempt:${ALICE_APOLOGISES}`, {
+      decision: 'included',
+      expectedRevision: 0,
+      details: { repairLabels: ['clarification'], subsequentObservation: 'uncertain' },
+    })
+    const repair = event(reviewed, `repair_attempt:${ALICE_APOLOGISES}`)
+    assert.equal(repair.status, 'confirmed')
+    assert.deepEqual(repairDetails(repair).repairLabels, ['clarification'])
+    assert.equal(repairDetails(repair).subsequentObservation, 'uncertain')
+    assert.equal(
+      repairDetails(repair).disagreementGroupId,
+      `disagreement:${ALICE_BLAMES_BOB}`,
+      'the argument it answers is evidence: relabelling the repair does not move it'
+    )
+    const [alice] = repairSummary(reviewed).members
+    assert.equal(alice?.byLabel.clarification, 1)
+    assert.equal(alice?.byLabel.apology, 0)
+    assert.equal(alice?.bySubsequent.uncertain, 1)
+    assert.equal(repairSummary(reviewed).disagreements, 2, 'a revision does not add or remove a disagreement')
+
+    await assert.rejects(
+      () =>
+        service.reviewEvent('private', `repair_attempt:${BOB_ADMITS_HIS_PART}`, {
+          decision: 'included',
+          expectedRevision: 0,
+          details: { subsequentObservation: 'reconciled' as SubsequentObservation },
+        }),
+      (error: unknown) => (error as { statusCode?: number }).statusCode === 400,
+      'what followed a repair is one of the five observations, not free text'
+    )
+
+    advance(60_000)
+    const second = service.start('private', { kinds: ['repair_attempt'] })
+    await waitForRun(service, 'private', second.id, 'completed')
+    const rerun = await service.getResults('private')
+    assert.deepEqual(repairDetails(event(rerun, `repair_attempt:${ALICE_APOLOGISES}`)).repairLabels, ['clarification'])
     assert.equal(rerun.orphanReviews, 0)
   } finally {
     service.close()
