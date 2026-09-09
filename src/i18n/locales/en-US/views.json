@@ -232,7 +232,7 @@
     },
     "preflight": {
       "title": "Analyse this range",
-      "description": "Messages in the range are sent to the configured model segment by segment, in time order, and each segment is read for personal sharing events. You can pause, resume or cancel once it starts.",
+      "description": "Messages in the range are sent to the configured model segment by segment, in time order, and each segment is read for personal sharing, responses after a disclosure and responses to good news. You can pause, resume or cancel once it starts.",
       "range": "{start} to {end}",
       "messages": "Messages",
       "windows": "Segments",
@@ -266,6 +266,21 @@
       "topicAll": "All",
       "empty": "No personal sharing events identified in this range yet."
     },
+    "k2": {
+      "title": "Responses after a disclosure",
+      "definition": "One person says something is clearly worrying or troubling them, or names a need, and the other person replies in the same stretch of the chat. Only a reply that can be read is recorded.",
+      "anchorsLabel": "Disclosures by the other person",
+      "coreColumn": "Disclosure",
+      "empty": "No responses after a disclosure identified in this range yet."
+    },
+    "k4": {
+      "title": "Responses to good news",
+      "definition": "One person shares personal news that is clearly good for them, and the other person replies. Only a reply that can be read is recorded.",
+      "anchorsLabel": "Good news from the other person",
+      "coreColumn": "Good news",
+      "positiveToggle": "Clearly good news for this person",
+      "empty": "No responses to good news identified in this range yet."
+    },
     "category": {
       "experienceOrUpdate": "Experience or update",
       "feeling": "Feeling",
@@ -278,6 +293,34 @@
       "relationships": "Relationships",
       "dailyLife": "Daily life",
       "other": "Other"
+    },
+    "responseLabel": {
+      "acknowledgesFeeling": "Acknowledges the feeling",
+      "addressesSituation": "Addresses the situation",
+      "asksDetails": "Asks for details",
+      "offersAdviceOrHelp": "Offers advice or help",
+      "sharesRelatedExperience": "Shares a related experience",
+      "unclear": "Cannot tell",
+      "congratulatesOrAffirms": "Congratulates or affirms",
+      "asksOrElaborates": "Asks more or elaborates",
+      "explicitlyDiminishes": "Explicitly plays it down",
+      "otherVisibleResponse": "Other visible reply"
+    },
+    "responseObservation": {
+      "visibleResponse": "Reply seen",
+      "noVisibleResponse": "No reply seen",
+      "insufficientContext": "Not enough context"
+    },
+    "positiveForSharer": {
+      "supported": "Good news for this person",
+      "uncertain": "Not clear it is good news"
+    },
+    "response": {
+      "responder": "Replies by {name}",
+      "observationBreakdown": "Reply seen {visible} · No reply seen {none} · Not enough context {insufficient}",
+      "labelTitle": "How the reply answered",
+      "labelNote": "One event can carry several of these, and only events with a reply that can be read are counted here.",
+      "replyColumn": "Reply"
     },
     "status": {
       "auto": "Auto-detected",
@@ -298,7 +341,9 @@
       "categoriesRequired": "Pick at least one category",
       "saveFailed": "Could not save your decision",
       "conflict": "The results changed, please reload",
-      "excludedGroup": "Excluded ({count})"
+      "excludedGroup": "Excluded ({count})",
+      "labelsRequired": "Pick at least one way the reply answered",
+      "editResponse": "Change reply labels"
     },
     "candidates": {
       "title": "Candidate search",
@@ -318,7 +363,14 @@
       "topic": "Topic",
       "submit": "Confirm as personal sharing",
       "submitFailed": "Could not confirm this event",
-      "submitted": "Added to the events you confirmed"
+      "submitted": "Added to the events you confirmed",
+      "kind": "Event type",
+      "responseSelectHint": "Pick the disclosure or the good news first, then pick the other person’s later reply from the same result.",
+      "responseNoneHint": "If you pick a reply, choose how it answered; leaving both empty records the event as no reply seen.",
+      "selectedResponses": "{count} replies selected",
+      "responseLabels": "How the reply answered (pick one or more)",
+      "submitSupport": "Confirm as a response after a disclosure",
+      "submitGoodNews": "Confirm as a response to good news"
     },
     "methods": {
       "title": "Method and sources",
@@ -331,6 +383,13 @@
       "sourceTitle": "Source",
       "sourceCitation": "Laurenceau, J.-P., Barrett, L. F., & Pietromonaco, P. R. (1998). Intimacy as an interpersonal process: The importance of self-disclosure, partner disclosure, and perceived partner responsiveness in interpersonal exchanges. Journal of Personality and Social Psychology, 74(5), 1238–1251.",
       "sourceLink": "Open the paper",
+      "k2Title": "Responses after a disclosure (K2)",
+      "k2Body": "The unit counted is one disclosure of a personal worry, concern or need together with the other person’s reply to it. The reply labels are multi-label and are only applied to a reply that can be read; when no reply is visible the event is recorded as no reply seen or not enough context, and nothing is concluded from that about how the reply went. These labels are an adaptation for this product; no PPRS score is produced. These definitions have not been validated for automatic detection on real chats either.",
+      "k2CitationEpitome": "Sharma, A., Miner, A. S., Atkins, D. C., & Althoff, T. (2020). A computational approach to understanding empathy expressed in text-based mental health support. Proceedings of EMNLP 2020, 5263–5276.",
+      "k2CitationEsconv": "Liu, S., Zheng, C., Demasi, O., Sabour, S., Li, Y., Yu, Z., Jiang, Y., & Huang, M. (2021). Towards emotional support dialog systems. Proceedings of ACL-IJCNLP 2021, 3469–3483.",
+      "k4Title": "Responses to good news (K4)",
+      "k4Body": "The unit counted is one personal event that is clearly good for the person sharing it, together with the other person’s reply. When no reply is visible the event is recorded as no reply seen and is never grouped with a negative response. The original research sorts replies into four quadrants; that is mentioned here only, and the page does not assign quadrants. These definitions have not been validated for automatic detection on real chats either.",
+      "k4Citation": "Gable, S. L., Reis, H. T., Impett, E. A., & Asher, E. R. (2004). What do you do when things go right? The intrapersonal and interpersonal benefits of sharing positive events. Journal of Personality and Social Psychology, 87(2), 228–245.",
       "limitationTitle": "Limitations",
       "limitationBody": "These event definitions have not yet been validated for automatic detection on real chats, and the model can miss events or mistake them. A count only says how many such events were identified in the selected range. It is not a measure of intimacy and cannot be used to compare two people or two relationships."
     }

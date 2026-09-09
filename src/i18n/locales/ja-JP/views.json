@@ -232,7 +232,7 @@
     },
     "preflight": {
       "title": "この範囲を分析",
-      "description": "範囲内のメッセージを時系列で区間に分け、設定済みのモデルに順番に渡して自己開示の出来事を読み取ります。開始後は一時停止・再開・キャンセルができます。",
+      "description": "範囲内のメッセージを時系列で区間に分け、設定済みのモデルに順番に渡して、自己開示・打ち明けた後の返し・よい知らせへの返しを読み取ります。開始後は一時停止・再開・キャンセルができます。",
       "range": "{start} 〜 {end}",
       "messages": "メッセージ",
       "windows": "区間",
@@ -266,6 +266,21 @@
       "topicAll": "すべて",
       "empty": "この範囲ではまだ自己開示の出来事が見つかっていません。"
     },
+    "k2": {
+      "title": "打ち明けた後の返し",
+      "definition": "片方が自分の困りごと・心配・要望をはっきり打ち明けたあと、同じやり取りの中で相手が返した内容。読み取れる返信だけを記録します。",
+      "anchorsLabel": "相手の打ち明け",
+      "coreColumn": "打ち明け",
+      "empty": "この範囲では打ち明けた後の返しはまだ見つかっていません。"
+    },
+    "k4": {
+      "title": "よい知らせへの返し",
+      "definition": "片方が自分にとってはっきりよい出来事を伝えたあと、相手が返した内容。読み取れる返信だけを記録します。",
+      "anchorsLabel": "相手のよい知らせ",
+      "coreColumn": "よい知らせ",
+      "positiveToggle": "本人にとってはっきりよい出来事",
+      "empty": "この範囲ではよい知らせへの返しはまだ見つかっていません。"
+    },
     "category": {
       "experienceOrUpdate": "出来事・近況",
       "feeling": "気持ち",
@@ -278,6 +293,34 @@
       "relationships": "人間関係",
       "dailyLife": "日常生活",
       "other": "その他"
+    },
+    "responseLabel": {
+      "acknowledgesFeeling": "気持ちを受け止める",
+      "addressesSituation": "状況そのものに応じる",
+      "asksDetails": "詳しく尋ねる",
+      "offersAdviceOrHelp": "助言や手助けを申し出る",
+      "sharesRelatedExperience": "自分の似た経験を話す",
+      "unclear": "判断できない",
+      "congratulatesOrAffirms": "祝う・認める",
+      "asksOrElaborates": "さらに尋ねる・広げる",
+      "explicitlyDiminishes": "はっきり水を差す",
+      "otherVisibleResponse": "その他の読み取れる返信"
+    },
+    "responseObservation": {
+      "visibleResponse": "判断できる返信",
+      "noVisibleResponse": "返信は見当たらない",
+      "insufficientContext": "文脈が足りない"
+    },
+    "positiveForSharer": {
+      "supported": "本人にとってよい出来事",
+      "uncertain": "よい出来事かは判断できない"
+    },
+    "response": {
+      "responder": "返した人：{name}",
+      "observationBreakdown": "判断できる返信 {visible} · 返信は見当たらない {none} · 文脈が足りない {insufficient}",
+      "labelTitle": "返し方",
+      "labelNote": "1 つの出来事に複数の返し方が付くことがあり、ここでは読み取れる返信がある出来事だけを数えます。",
+      "replyColumn": "返信"
     },
     "status": {
       "auto": "自動検出",
@@ -298,7 +341,9 @@
       "categoriesRequired": "カテゴリを 1 つ以上選んでください",
       "saveFailed": "修正を保存できませんでした",
       "conflict": "結果が更新されました。読み込み直してください",
-      "excludedGroup": "除外済み（{count}）"
+      "excludedGroup": "除外済み（{count}）",
+      "labelsRequired": "返し方を 1 つ以上選んでください",
+      "editResponse": "返しのラベルを直す"
     },
     "candidates": {
       "title": "候補検索",
@@ -318,7 +363,14 @@
       "topic": "トピック",
       "submit": "自己開示として確認",
       "submitFailed": "この出来事を確認できませんでした",
-      "submitted": "自分で確認した出来事に追加しました"
+      "submitted": "自分で確認した出来事に追加しました",
+      "kind": "出来事の種類",
+      "responseSelectHint": "まず本人の打ち明けかよい知らせを選び、次に同じ検索結果の中でそれより後の相手の返信を選んでください。",
+      "responseNoneHint": "返信を選んだ場合は返し方も選んでください。どちらも選ばなければ「返信は見当たらない」として記録します。",
+      "selectedResponses": "返信 {count} 件選択中",
+      "responseLabels": "返し方（複数可）",
+      "submitSupport": "打ち明けた後の返しとして確認",
+      "submitGoodNews": "よい知らせへの返しとして確認"
     },
     "methods": {
       "title": "方法と出典",
@@ -331,6 +383,13 @@
       "sourceTitle": "出典",
       "sourceCitation": "Laurenceau, J.-P., Barrett, L. F., & Pietromonaco, P. R. (1998). Intimacy as an interpersonal process: The importance of self-disclosure, partner disclosure, and perceived partner responsiveness in interpersonal exchanges. Journal of Personality and Social Psychology, 74(5), 1238–1251.",
       "sourceLink": "原論文を開く",
+      "k2Title": "打ち明けた後の返し（K2）",
+      "k2Body": "数える単位は、はっきりした困りごと・心配・要望の打ち明け 1 件と、それに対する相手の返信です。返し方のラベルは複数付き、読み取れる返信がある場合にだけ付けます。返信が見当たらない場合は「返信は見当たらない」または「文脈が足りない」とだけ記録し、そこから返し方の良し悪しは判断しません。ここでのラベルはこの製品向けの改変で、PPRS のスコアは出しません。これらの定義も実際のチャットでの自動検出の精度は検証されていません。",
+      "k2CitationEpitome": "Sharma, A., Miner, A. S., Atkins, D. C., & Althoff, T. (2020). A computational approach to understanding empathy expressed in text-based mental health support. Proceedings of EMNLP 2020, 5263–5276.",
+      "k2CitationEsconv": "Liu, S., Zheng, C., Demasi, O., Sabour, S., Li, Y., Yu, Z., Jiang, Y., & Huang, M. (2021). Towards emotional support dialog systems. Proceedings of ACL-IJCNLP 2021, 3469–3483.",
+      "k4Title": "よい知らせへの返し（K4）",
+      "k4Body": "数える単位は、本人にとってはっきりよい出来事 1 件と、それに対する相手の返信です。返信が見当たらない場合は「返信は見当たらない」とだけ記録し、否定的な反応には入れません。元の研究は返し方を 4 象限に分けますが、ここでは方法の説明として触れるだけで、ページでは象限に割り当てません。これらの定義も実際のチャットでの自動検出の精度は検証されていません。",
+      "k4Citation": "Gable, S. L., Reis, H. T., Impett, E. A., & Asher, E. R. (2004). What do you do when things go right? The intrapersonal and interpersonal benefits of sharing positive events. Journal of Personality and Social Psychology, 87(2), 228–245.",
       "limitationTitle": "限界",
       "limitationBody": "ここでの出来事の定義は、実際のチャットでの自動検出の精度がまだ検証されていません。モデルは見落としたり取り違えたりします。件数は選んだ範囲でそのような出来事がいくつ見つかったかを示すだけで、親密さの度合いではなく、二人や二つの関係を比べるためにも使えません。"
     }

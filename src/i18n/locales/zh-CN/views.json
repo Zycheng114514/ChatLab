@@ -232,7 +232,7 @@
     },
     "preflight": {
       "title": "分析本范围",
-      "description": "按时间顺序把范围内的消息分段送给已配置的模型，逐段识别个人分享事件。开始后可以暂停、继续或取消。",
+      "description": "按时间顺序把范围内的消息分段送给已配置的模型，逐段识别个人分享、倾诉后的回应和好消息回应。开始后可以暂停、继续或取消。",
       "range": "{start} 至 {end}",
       "messages": "消息",
       "windows": "分段",
@@ -266,6 +266,21 @@
       "topicAll": "全部",
       "empty": "本范围内还没有识别到个人分享事件。"
     },
+    "k2": {
+      "title": "倾诉后的回应",
+      "definition": "一方说出明确的个人困扰、担心或需要之后，另一方在同一段记录里的回复。只记录看得到的回复内容和方式。",
+      "anchorsLabel": "对方的倾诉",
+      "coreColumn": "倾诉",
+      "empty": "本范围内还没有识别到倾诉后的回应事件。"
+    },
+    "k4": {
+      "title": "好消息回应",
+      "definition": "一方说出对自己明确是好事的个人消息之后，另一方的回复。只记录看得到的回复内容和方式。",
+      "anchorsLabel": "对方的好消息",
+      "coreColumn": "好消息",
+      "positiveToggle": "对本人是明确的好事",
+      "empty": "本范围内还没有识别到好消息回应事件。"
+    },
     "category": {
       "experienceOrUpdate": "经历与近况",
       "feeling": "感受",
@@ -278,6 +293,34 @@
       "relationships": "人际关系",
       "dailyLife": "日常生活",
       "other": "其他"
+    },
+    "responseLabel": {
+      "acknowledgesFeeling": "认可感受",
+      "addressesSituation": "回应具体处境",
+      "asksDetails": "询问细节",
+      "offersAdviceOrHelp": "提供建议或帮助",
+      "sharesRelatedExperience": "分享自身相关经历",
+      "unclear": "无法判断",
+      "congratulatesOrAffirms": "道贺或肯定",
+      "asksOrElaborates": "追问或展开",
+      "explicitlyDiminishes": "明确贬低",
+      "otherVisibleResponse": "其他可见回复"
+    },
+    "responseObservation": {
+      "visibleResponse": "可判断回复",
+      "noVisibleResponse": "未见回复",
+      "insufficientContext": "上下文不足"
+    },
+    "positiveForSharer": {
+      "supported": "对本人是好事",
+      "uncertain": "是否好事无法判断"
+    },
+    "response": {
+      "responder": "回应方：{name}",
+      "observationBreakdown": "可判断回复 {visible} · 未见回复 {none} · 上下文不足 {insufficient}",
+      "labelTitle": "回复方式",
+      "labelNote": "一个事件可以同时属于多种回复方式，这里只统计有可见回复的事件。",
+      "replyColumn": "回复"
     },
     "status": {
       "auto": "自动识别",
@@ -298,7 +341,9 @@
       "categoriesRequired": "至少选择一个类别",
       "saveFailed": "修订没能保存",
       "conflict": "结果已更新，请重新加载",
-      "excludedGroup": "已排除（{count}）"
+      "excludedGroup": "已排除（{count}）",
+      "labelsRequired": "至少选择一种回复方式",
+      "editResponse": "改回复标签"
     },
     "candidates": {
       "title": "候选检索",
@@ -318,7 +363,14 @@
       "topic": "话题",
       "submit": "确认为个人分享",
       "submitFailed": "无法确认这个事件",
-      "submitted": "已计入你确认的事件"
+      "submitted": "已计入你确认的事件",
+      "kind": "事件类型",
+      "responseSelectHint": "先点本人的倾诉或好消息，再点另一方在同一条检索结果里、时间更晚的回复。",
+      "responseNoneHint": "勾了回复就要选回复方式；两者都不选则记为「未见回复」。",
+      "selectedResponses": "已选回复 {count} 条",
+      "responseLabels": "回复方式（可多选）",
+      "submitSupport": "确认为倾诉后的回应",
+      "submitGoodNews": "确认为好消息回应"
     },
     "methods": {
       "title": "方法与来源",
@@ -331,6 +383,13 @@
       "sourceTitle": "来源",
       "sourceCitation": "Laurenceau, J.-P., Barrett, L. F., & Pietromonaco, P. R. (1998). Intimacy as an interpersonal process: The importance of self-disclosure, partner disclosure, and perceived partner responsiveness in interpersonal exchanges. Journal of Personality and Social Psychology, 74(5), 1238–1251.",
       "sourceLink": "查看原文",
+      "k2Title": "倾诉后的回应（K2）",
+      "k2Body": "统计单位是一段明确的个人困扰、担心或需要，加上另一方针对它的回复。回复方式是多标签，只在看得到回复时才标注；看不到回复时只记「未见回复」或「上下文不足」，不由此推断回应好坏。这里的标签是按本产品需要改编的，不输出 PPRS 分数。这些定义同样没有在真实聊天上验证过自动识别的准确度。",
+      "k2CitationEpitome": "Sharma, A., Miner, A. S., Atkins, D. C., & Althoff, T. (2020). A computational approach to understanding empathy expressed in text-based mental health support. Proceedings of EMNLP 2020, 5263–5276.",
+      "k2CitationEsconv": "Liu, S., Zheng, C., Demasi, O., Sabour, S., Li, Y., Yu, Z., Jiang, Y., & Huang, M. (2021). Towards emotional support dialog systems. Proceedings of ACL-IJCNLP 2021, 3469–3483.",
+      "k4Title": "好消息回应（K4）",
+      "k4Body": "统计单位是一件对分享者本人明确是好事的个人事件，加上另一方的回复。看不到回复时只记「未见回复」，不归入消极回应。原研究把回应分成四个象限，这里只在方法说明里提到，页面不做象限归类。这些定义同样没有在真实聊天上验证过自动识别的准确度。",
+      "k4Citation": "Gable, S. L., Reis, H. T., Impett, E. A., & Asher, E. R. (2004). What do you do when things go right? The intrapersonal and interpersonal benefits of sharing positive events. Journal of Personality and Social Psychology, 87(2), 228–245.",
       "limitationTitle": "局限",
       "limitationBody": "这里的事件定义还没有在真实聊天上验证过自动识别的准确度，模型可能漏掉或认错。计数只表示在所选范围内识别到多少个这样的事件，不表示亲密程度，也不能用来比较两个人或两段关系。"
     }

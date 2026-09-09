@@ -1,5 +1,5 @@
 <script setup lang="ts">
-// 私聊洞察「亲密关系」子标签：K1 个人分享。
+// 私聊洞察「亲密关系」子标签：K1 个人分享、K2 倾诉后的回应、K4 好消息回应。
 // 页面只报告「在所选范围内识别到多少个这样的事件」，不给分数、比例或好坏判断。
 import { computed, onUnmounted, ref, watch } from 'vue'
 import dayjs from 'dayjs'
@@ -17,20 +17,26 @@ import {
   type IntimacyEvent,
   type IntimacyPreflight,
   type IntimacyResults,
+  type IntimacyReviewDetails,
   type IntimacyRun,
-  type SharingCategory,
-  type SharingTopic,
 } from '@/services'
 import IntimacyCandidatePanel from './IntimacyCandidatePanel.vue'
 import IntimacyEventList from './IntimacyEventList.vue'
 import {
+  GOOD_NEWS_RESPONSE_LABELS,
+  GOOD_NEWS_RESPONSE_LABEL_KEYS,
   SHARING_CATEGORIES,
   SHARING_CATEGORY_LABEL_KEYS,
   SHARING_TOPIC_LABEL_KEYS,
+  SUPPORT_RESPONSE_LABELS,
+  SUPPORT_RESPONSE_LABEL_KEYS,
   buildIntimacyTopicFilterOptions,
   filterIntimacyEventsByTopic,
   partitionIntimacyEvents,
+  selectGoodNewsEvents,
+  selectResponseSummary,
   selectSharingEvents,
+  selectSupportEvents,
   summarizeIntimacyEvents,
   type IntimacyTopicFilter,
 } from './intimacy-summary'
@@ -52,6 +58,7 @@ const loading = ref(false)
 const actionLoading = ref(false)
 const topicFilter = ref<IntimacyTopicFilter>('all')
 const showExcluded = ref(false)
+const showExcludedResponses = ref<Record<string, boolean>>({})
 const showMethods = ref(false)
 const showPreflightModal = ref(false)
 const showClearModal = ref(false)
@@ -70,6 +77,46 @@ const excludedEvents = computed(() => partitionIntimacyEvents(filteredEvents.val
 const topicOptions = computed(() => buildIntimacyTopicFilterOptions(sharingEvents.value))
 const summaries = computed(() => summarizeIntimacyEvents(filteredEvents.value, members.value))
 const hasModel = computed(() => Boolean(results.value?.modelId))
+
+/**
+ * K2 与 K4 的卡片结构相同，只差事件、标签和文案，所以用一份描述渲染两张卡，
+ * 事件行仍然是 K1 那个组件。回应计数直接用后端汇总：这两张卡没有前端筛选。
+ */
+const responseCards = computed(() => [
+  buildResponseCard(
+    'support_response',
+    selectSupportEvents(events.value),
+    SUPPORT_RESPONSE_LABELS,
+    SUPPORT_RESPONSE_LABEL_KEYS
+  ),
+  buildResponseCard(
+    'good_news_response',
+    selectGoodNewsEvents(events.value),
+    GOOD_NEWS_RESPONSE_LABELS,
+    GOOD_NEWS_RESPONSE_LABEL_KEYS
+  ),
+])
+
+function buildResponseCard<T extends string>(
+  kind: 'support_response' | 'good_news_response',
+  kindEvents: IntimacyEvent[],
+  labels: T[],
+  labelKeys: Record<T, string>
+) {
+  const prefix = kind === 'support_response' ? 'views.intimacy.k2' : 'views.intimacy.k4'
+  const { listed, excluded } = partitionIntimacyEvents(kindEvents)
+  return {
+    kind,
+    titleKey: `${prefix}.title`,
+    definitionKey: `${prefix}.definition`,
+    anchorsKey: `${prefix}.anchorsLabel`,
+    emptyKey: `${prefix}.empty`,
+    labels: labels.map((label) => ({ value: label as string, labelKey: labelKeys[label] })),
+    members: selectResponseSummary(results.value?.summaries ?? [], kind),
+    listed,
+    excluded,
+  }
+}
 
 const activeRun = computed(() => run.value && ['pending', 'running'].includes(run.value.status))
 const resumableRun = computed(() => run.value && ['paused', 'failed'].includes(run.value.status))
@@ -160,7 +207,7 @@ async function openPreflight() {
 
 function analysisRequest() {
   return {
-    kinds: ['sharing' as const],
+    kinds: ['sharing' as const, 'support_response' as const, 'good_news_response' as const],
     startTs: props.timeFilter?.startTs,
     endTs: props.timeFilter?.endTs,
     locale: locale.value,
@@ -216,7 +263,7 @@ async function clearAllResults() {
 async function handleReview(payload: {
   event: IntimacyEvent
   decision: 'included' | 'excluded'
-  details?: { categories: SharingCategory[]; topic: SharingTopic }
+  details?: IntimacyReviewDetails
 }) {
   actionLoading.value = true
   try {
@@ -487,6 +534,96 @@ onUnmounted(clearPollTimer)
         </template>
       </SectionCard>
 
+      <!-- K2 倾诉后的回应 / K4 好消息回应 -->
+      <SectionCard
+        v-for="card in responseCards"
+        :key="card.kind"
+        :title="t(card.titleKey)"
+        :description="t(card.definitionKey)"
+      >
+        <div class="px-5 py-4">
+          <div class="grid gap-3 sm:grid-cols-2">
+            <div
+              v-for="summary in card.members"
+              :key="summary.memberId"
+              class="rounded-xl border border-gray-200 px-4 py-3 dark:border-gray-700"
+            >
+              <p class="truncate text-xs text-gray-500 dark:text-gray-400">
+                {{ t('views.intimacy.response.responder', { name: memberName(summary.memberId) }) }}
+              </p>
+              <p class="mt-1 font-mono text-2xl font-black tabular-nums text-gray-900 dark:text-white">
+                {{ summary.anchors }}
+              </p>
+              <p class="text-[11px] text-gray-400">{{ t(card.anchorsKey) }}</p>
+              <p class="mt-1.5 text-[11px] text-gray-500 dark:text-gray-400">
+                {{
+                  t('views.intimacy.response.observationBreakdown', {
+                    visible: summary.visibleResponse,
+                    none: summary.noVisibleResponse,
+                    insufficient: summary.insufficientContext,
+                  })
+                }}
+              </p>
+            </div>
+          </div>
+
+          <p class="mt-3 text-[11px] text-gray-400">{{ t('views.intimacy.k1.uncertainNote') }}</p>
+
+          <div class="mt-4">
+            <p class="text-xs font-medium text-gray-600 dark:text-gray-300">
+              {{ t('views.intimacy.response.labelTitle') }}
+            </p>
+            <div class="mt-2 grid grid-cols-2 gap-3 sm:grid-cols-3">
+              <div
+                v-for="label in card.labels"
+                :key="label.value"
+                class="rounded-lg bg-gray-50 px-3 py-2 dark:bg-gray-800/50"
+              >
+                <p class="truncate text-[11px] text-gray-400">{{ t(label.labelKey) }}</p>
+                <p class="mt-0.5 font-mono text-sm font-bold tabular-nums text-gray-700 dark:text-gray-200">
+                  {{ card.members.reduce((total, summary) => total + (summary.byLabel[label.value] ?? 0), 0) }}
+                </p>
+              </div>
+            </div>
+            <p class="mt-1.5 text-[11px] text-gray-400">{{ t('views.intimacy.response.labelNote') }}</p>
+          </div>
+        </div>
+
+        <EmptyState v-if="card.listed.length === 0" :text="t(card.emptyKey)" />
+        <IntimacyEventList
+          v-else
+          :events="card.listed"
+          :messages="results?.messages ?? {}"
+          :members="members"
+          :busy="actionLoading"
+          @view="viewMessage"
+          @review="handleReview"
+        />
+
+        <template v-if="card.excluded.length > 0">
+          <button
+            type="button"
+            class="flex w-full items-center gap-1 border-t border-gray-100 px-5 py-2 text-left text-[11px] text-gray-400 hover:text-gray-600 dark:border-gray-800 dark:hover:text-gray-300"
+            @click="showExcludedResponses[card.kind] = !showExcludedResponses[card.kind]"
+          >
+            <UIcon
+              :name="showExcludedResponses[card.kind] ? 'i-heroicons-chevron-down' : 'i-heroicons-chevron-right'"
+              class="h-3 w-3"
+            />
+            {{ t('views.intimacy.event.excludedGroup', { count: card.excluded.length }) }}
+          </button>
+          <IntimacyEventList
+            v-if="showExcludedResponses[card.kind]"
+            :events="card.excluded"
+            :messages="results?.messages ?? {}"
+            :members="members"
+            :busy="actionLoading"
+            @view="viewMessage"
+            @review="handleReview"
+          />
+        </template>
+      </SectionCard>
+
       <!-- 候选检索 -->
       <SectionCard :title="t('views.intimacy.candidates.title')" :capturable="false">
         <IntimacyCandidatePanel
@@ -527,6 +664,44 @@ onUnmounted(clearPollTimer)
             <p class="mt-0.5">{{ t('views.intimacy.methods.sourceCitation') }}</p>
             <a
               href="https://doi.org/10.1037/0022-3514.74.5.1238"
+              target="_blank"
+              rel="noreferrer"
+              class="mt-1 inline-flex items-center gap-1 text-blue-500 hover:text-blue-600 dark:text-blue-400"
+            >
+              <UIcon name="i-heroicons-arrow-top-right-on-square" class="h-3 w-3" />
+              {{ t('views.intimacy.methods.sourceLink') }}
+            </a>
+          </div>
+          <div>
+            <p class="font-medium text-gray-600 dark:text-gray-300">{{ t('views.intimacy.methods.k2Title') }}</p>
+            <p class="mt-0.5">{{ t('views.intimacy.methods.k2Body') }}</p>
+            <p class="mt-1">{{ t('views.intimacy.methods.k2CitationEpitome') }}</p>
+            <a
+              href="https://aclanthology.org/2020.emnlp-main.425/"
+              target="_blank"
+              rel="noreferrer"
+              class="mt-1 inline-flex items-center gap-1 text-blue-500 hover:text-blue-600 dark:text-blue-400"
+            >
+              <UIcon name="i-heroicons-arrow-top-right-on-square" class="h-3 w-3" />
+              {{ t('views.intimacy.methods.sourceLink') }}
+            </a>
+            <p class="mt-1">{{ t('views.intimacy.methods.k2CitationEsconv') }}</p>
+            <a
+              href="https://aclanthology.org/2021.acl-long.269/"
+              target="_blank"
+              rel="noreferrer"
+              class="mt-1 inline-flex items-center gap-1 text-blue-500 hover:text-blue-600 dark:text-blue-400"
+            >
+              <UIcon name="i-heroicons-arrow-top-right-on-square" class="h-3 w-3" />
+              {{ t('views.intimacy.methods.sourceLink') }}
+            </a>
+          </div>
+          <div>
+            <p class="font-medium text-gray-600 dark:text-gray-300">{{ t('views.intimacy.methods.k4Title') }}</p>
+            <p class="mt-0.5">{{ t('views.intimacy.methods.k4Body') }}</p>
+            <p class="mt-1">{{ t('views.intimacy.methods.k4Citation') }}</p>
+            <a
+              href="https://doi.org/10.1037/0022-3514.87.2.228"
               target="_blank"
               rel="noreferrer"
               class="mt-1 inline-flex items-center gap-1 text-blue-500 hover:text-blue-600 dark:text-blue-400"

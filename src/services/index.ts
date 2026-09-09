@@ -70,6 +70,7 @@ export type {
 export { useIntimacyService } from './intimacy/service'
 export { IntimacyRequestError } from './intimacy/types'
 export type {
+  CreateIntimacyEventRequest,
   GoodNewsResponseDetails,
   GoodNewsResponseLabel,
   IntimacyAdapter,

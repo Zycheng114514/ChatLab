@@ -8,17 +8,25 @@ import { useToast } from '@/composables/useToast'
 import { getMessageTypeName } from '@/types/base'
 import {
   useIntimacyService,
+  type CreateIntimacyEventRequest,
+  type GoodNewsResponseLabel,
   type IntimacyCandidates,
+  type IntimacyKind,
   type IntimacyMessageSnippet,
   type SharingCategory,
   type SharingTopic,
+  type SupportResponseLabel,
 } from '@/services'
 import type { TimeFilter } from '@openchatlab/shared-types'
 import {
+  GOOD_NEWS_RESPONSE_LABELS,
+  GOOD_NEWS_RESPONSE_LABEL_KEYS,
   SHARING_CATEGORIES,
   SHARING_CATEGORY_LABEL_KEYS,
   SHARING_TOPICS,
   SHARING_TOPIC_LABEL_KEYS,
+  SUPPORT_RESPONSE_LABELS,
+  SUPPORT_RESPONSE_LABEL_KEYS,
 } from './intimacy-summary'
 
 const props = defineProps<{
@@ -32,22 +40,65 @@ const emit = defineEmits<{ (event: 'created'): void }>()
 const { t } = useI18n()
 const toast = useToast()
 
+const KIND_OPTIONS: Array<{ kind: IntimacyKind; labelKey: string; submitKey: string }> = [
+  { kind: 'sharing', labelKey: 'views.intimacy.k1.title', submitKey: 'views.intimacy.candidates.submit' },
+  {
+    kind: 'support_response',
+    labelKey: 'views.intimacy.k2.title',
+    submitKey: 'views.intimacy.candidates.submitSupport',
+  },
+  {
+    kind: 'good_news_response',
+    labelKey: 'views.intimacy.k4.title',
+    submitKey: 'views.intimacy.candidates.submitGoodNews',
+  },
+]
+
+const kind = ref<IntimacyKind>('sharing')
 const query = ref('')
 const candidates = ref<IntimacyCandidates | null>(null)
 const searching = ref(false)
 const submitting = ref(false)
 
-/** 选中的消息必须来自同一个人、同一条检索结果，换人或换结果就重新开始选。 */
-const selection = ref<{ group: string; senderId: number; messageIds: number[] } | null>(null)
+/** 选中的核心消息必须来自同一个人、同一条检索结果；回复是另一方在同一条结果里、锚点之后的消息。 */
+const selection = ref<{ group: string; senderId: number; messageIds: number[]; responseMessageIds: number[] } | null>(
+  null
+)
 const categories = ref<SharingCategory[]>([])
 const topic = ref<SharingTopic>('daily_life')
+const supportLabels = ref<SupportResponseLabel[]>([])
+const goodNewsLabels = ref<GoodNewsResponseLabel[]>([])
+const positiveForSharer = ref(false)
 
+const isSharing = computed(() => kind.value === 'sharing')
+const submitKey = computed(() => KIND_OPTIONS.find((option) => option.kind === kind.value)!.submitKey)
+const responseLabelCount = computed(() =>
+  kind.value === 'support_response' ? supportLabels.value.length : goodNewsLabels.value.length
+)
 const topicOptions = computed(() =>
   SHARING_TOPICS.map((value) => ({ value, label: t(SHARING_TOPIC_LABEL_KEYS[value]) }))
 )
-const canSubmit = computed(
-  () => selection.value !== null && selection.value.messageIds.length > 0 && categories.value.length > 0
-)
+const canSubmit = computed(() => {
+  const current = selection.value
+  if (!current || current.messageIds.length === 0) return false
+  if (isSharing.value) return categories.value.length > 0
+  // 后端只接受「有回复且有标签」或「两者都没有」，后者记为未见回复。
+  return current.responseMessageIds.length > 0 === responseLabelCount.value > 0
+})
+
+function selectKind(next: IntimacyKind) {
+  if (kind.value === next) return
+  kind.value = next
+  resetSelection()
+}
+
+function resetSelection() {
+  selection.value = null
+  categories.value = []
+  supportLabels.value = []
+  goodNewsLabels.value = []
+  positiveForSharer.value = false
+}
 
 async function search() {
   const text = query.value.trim()
@@ -55,12 +106,12 @@ async function search() {
   searching.value = true
   try {
     candidates.value = await useIntimacyService().searchCandidates(props.sessionId, {
-      kind: 'sharing',
+      kind: kind.value,
       query: text,
       startTs: props.timeFilter?.startTs,
       endTs: props.timeFilter?.endTs,
     })
-    selection.value = null
+    resetSelection()
   } catch (error) {
     toast.fail(t('views.intimacy.candidates.searchFailed'), { description: errorMessage(error) })
   } finally {
@@ -68,20 +119,44 @@ async function search() {
   }
 }
 
-function isSelected(group: string, messageId: number): boolean {
+function isCoreSelected(group: string, messageId: number): boolean {
   return selection.value?.group === group && selection.value.messageIds.includes(messageId)
+}
+
+function isResponseSelected(group: string, messageId: number): boolean {
+  return selection.value?.group === group && selection.value.responseMessageIds.includes(messageId)
+}
+
+/** 回复必须在倾诉 / 好消息之后，早于锚点的消息不能勾成回复。 */
+function canPick(group: string, message: IntimacyMessageSnippet): boolean {
+  const current = selection.value
+  if (isSharing.value || !current || current.group !== group || current.senderId === message.senderId) return true
+  return message.messageId > Math.min(...current.messageIds)
 }
 
 function toggleMessage(group: string, message: IntimacyMessageSnippet) {
   const current = selection.value
-  if (!current || current.group !== group || current.senderId !== message.senderId) {
-    selection.value = { group, senderId: message.senderId, messageIds: [message.messageId] }
+  if (!current || current.group !== group) {
+    selection.value = { group, senderId: message.senderId, messageIds: [message.messageId], responseMessageIds: [] }
     return
   }
-  const messageIds = current.messageIds.includes(message.messageId)
-    ? current.messageIds.filter((id) => id !== message.messageId)
-    : [...current.messageIds, message.messageId].sort((left, right) => left - right)
-  selection.value = messageIds.length === 0 ? null : { ...current, messageIds }
+  if (current.senderId === message.senderId) {
+    const messageIds = toggleId(current.messageIds, message.messageId)
+    selection.value = messageIds.length === 0 ? null : { ...current, messageIds }
+    return
+  }
+  if (isSharing.value) {
+    selection.value = { group, senderId: message.senderId, messageIds: [message.messageId], responseMessageIds: [] }
+    return
+  }
+  if (!canPick(group, message)) return
+  selection.value = { ...current, responseMessageIds: toggleId(current.responseMessageIds, message.messageId) }
+}
+
+function toggleId(ids: number[], messageId: number): number[] {
+  return ids.includes(messageId)
+    ? ids.filter((id) => id !== messageId)
+    : [...ids, messageId].sort((left, right) => left - right)
 }
 
 function toggleCategory(category: SharingCategory, checked: boolean) {
@@ -91,20 +166,56 @@ function toggleCategory(category: SharingCategory, checked: boolean) {
   categories.value = SHARING_CATEGORIES.filter((item) => next.has(item))
 }
 
+function toggleSupportLabel(label: SupportResponseLabel, checked: boolean) {
+  const next = new Set(supportLabels.value)
+  if (checked) next.add(label)
+  else next.delete(label)
+  supportLabels.value = SUPPORT_RESPONSE_LABELS.filter((item) => next.has(item))
+}
+
+function toggleGoodNewsLabel(label: GoodNewsResponseLabel, checked: boolean) {
+  const next = new Set(goodNewsLabels.value)
+  if (checked) next.add(label)
+  else next.delete(label)
+  goodNewsLabels.value = GOOD_NEWS_RESPONSE_LABELS.filter((item) => next.has(item))
+}
+
+function buildRequest(current: NonNullable<typeof selection.value>): CreateIntimacyEventRequest {
+  const core = { subjectMemberId: current.senderId, coreMessageIds: [...current.messageIds] }
+  if (kind.value === 'support_response') {
+    return {
+      kind: 'support_response',
+      ...core,
+      responseMessageIds: [...current.responseMessageIds],
+      details: { responseLabels: [...supportLabels.value] },
+    }
+  }
+  if (kind.value === 'good_news_response') {
+    return {
+      kind: 'good_news_response',
+      ...core,
+      responseMessageIds: [...current.responseMessageIds],
+      details: {
+        positiveForSharer: positiveForSharer.value ? 'explicit_or_context_supported' : 'uncertain',
+        responseLabels: [...goodNewsLabels.value],
+      },
+    }
+  }
+  return {
+    kind: 'sharing',
+    ...core,
+    // 用户没有被问「这是不是倾诉」，所以如实记为未定，不替他做判断。
+    details: { categories: [...categories.value], topic: topic.value, isDistressDisclosure: 'uncertain' },
+  }
+}
+
 async function submit() {
   const current = selection.value
   if (!current || !canSubmit.value) return
   submitting.value = true
   try {
-    await useIntimacyService().createUserEvent(props.sessionId, {
-      kind: 'sharing',
-      subjectMemberId: current.senderId,
-      coreMessageIds: [...current.messageIds],
-      // 用户没有被问「这是不是倾诉」，所以如实记为未定，不替他做判断。
-      details: { categories: [...categories.value], topic: topic.value, isDistressDisclosure: 'uncertain' },
-    })
-    selection.value = null
-    categories.value = []
+    await useIntimacyService().createUserEvent(props.sessionId, buildRequest(current))
+    resetSelection()
     toast.success(t('views.intimacy.candidates.submitted'))
     emit('created')
   } catch (error) {
@@ -133,6 +244,24 @@ function errorMessage(error: unknown): string {
       {{ t('views.intimacy.candidates.notice') }}
     </p>
 
+    <div class="mt-3 flex flex-wrap items-center gap-1.5">
+      <span class="mr-1 text-[11px] text-gray-400">{{ t('views.intimacy.candidates.kind') }}</span>
+      <button
+        v-for="option in KIND_OPTIONS"
+        :key="option.kind"
+        type="button"
+        class="rounded-full px-2 py-0.5 text-[11px] transition-colors"
+        :class="
+          kind === option.kind
+            ? 'bg-pink-100 text-pink-700 dark:bg-pink-950/40 dark:text-pink-300'
+            : 'bg-gray-100 text-gray-500 hover:bg-gray-200 dark:bg-gray-800 dark:text-gray-400'
+        "
+        @click="selectKind(option.kind)"
+      >
+        {{ t(option.labelKey) }}
+      </button>
+    </div>
+
     <div class="mt-3 flex gap-2">
       <UInput
         v-model="query"
@@ -151,8 +280,12 @@ function errorMessage(error: unknown): string {
     </p>
 
     <template v-if="candidates">
-      <p class="mt-3 text-[11px] text-gray-400">{{ t('views.intimacy.candidates.selectHint') }}</p>
-      <p class="text-[11px] text-gray-400">{{ t('views.intimacy.candidates.sameGroupOnly') }}</p>
+      <p class="mt-3 text-[11px] text-gray-400">
+        {{ isSharing ? t('views.intimacy.candidates.selectHint') : t('views.intimacy.candidates.responseSelectHint') }}
+      </p>
+      <p v-if="isSharing" class="text-[11px] text-gray-400">
+        {{ t('views.intimacy.candidates.sameGroupOnly') }}
+      </p>
 
       <div class="mt-3 grid gap-4 md:grid-cols-2">
         <section>
@@ -167,16 +300,23 @@ function errorMessage(error: unknown): string {
               <button
                 type="button"
                 class="w-full rounded-lg border px-2.5 py-1.5 text-left transition-colors"
-                :class="
-                  isSelected('keyword', message.messageId)
+                :disabled="!canPick('keyword', message)"
+                :class="[
+                  isCoreSelected('keyword', message.messageId)
                     ? 'border-pink-400 bg-pink-50/60 dark:border-pink-700 dark:bg-pink-950/20'
-                    : 'border-gray-200 hover:bg-gray-50 dark:border-gray-700 dark:hover:bg-gray-800/50'
-                "
+                    : isResponseSelected('keyword', message.messageId)
+                      ? 'border-blue-400 bg-blue-50/60 dark:border-blue-700 dark:bg-blue-950/20'
+                      : 'border-gray-200 hover:bg-gray-50 dark:border-gray-700 dark:hover:bg-gray-800/50',
+                  canPick('keyword', message) ? '' : 'cursor-not-allowed opacity-50',
+                ]"
                 @click="toggleMessage('keyword', message)"
               >
                 <span class="flex items-center gap-1.5 text-[10px] text-gray-400">
                   <span class="truncate">{{ message.senderName }}</span>
                   <span class="tabular-nums">{{ formatTime(message.timestamp) }}</span>
+                  <span v-if="isResponseSelected('keyword', message.messageId)" class="text-blue-500">
+                    {{ t('views.intimacy.response.replyColumn') }}
+                  </span>
                 </span>
                 <span class="mt-0.5 block text-xs leading-relaxed text-gray-700 dark:text-gray-200">
                   {{ messageText(message) }}
@@ -204,16 +344,23 @@ function errorMessage(error: unknown): string {
                   <button
                     type="button"
                     class="w-full rounded px-2 py-1 text-left transition-colors"
-                    :class="
-                      isSelected(`semantic:${index}`, message.messageId)
+                    :disabled="!canPick(`semantic:${index}`, message)"
+                    :class="[
+                      isCoreSelected(`semantic:${index}`, message.messageId)
                         ? 'bg-pink-50 dark:bg-pink-950/20'
-                        : 'hover:bg-gray-50 dark:hover:bg-gray-800/50'
-                    "
+                        : isResponseSelected(`semantic:${index}`, message.messageId)
+                          ? 'bg-blue-50 dark:bg-blue-950/20'
+                          : 'hover:bg-gray-50 dark:hover:bg-gray-800/50',
+                      canPick(`semantic:${index}`, message) ? '' : 'cursor-not-allowed opacity-50',
+                    ]"
                     @click="toggleMessage(`semantic:${index}`, message)"
                   >
                     <span class="flex items-center gap-1.5 text-[10px] text-gray-400">
                       <span class="truncate">{{ message.senderName }}</span>
                       <span class="tabular-nums">{{ formatTime(message.timestamp) }}</span>
+                      <span v-if="isResponseSelected(`semantic:${index}`, message.messageId)" class="text-blue-500">
+                        {{ t('views.intimacy.response.replyColumn') }}
+                      </span>
                     </span>
                     <span class="mt-0.5 block text-xs leading-relaxed text-gray-700 dark:text-gray-200">
                       {{ messageText(message) }}
@@ -230,29 +377,67 @@ function errorMessage(error: unknown): string {
         <div class="flex flex-wrap items-center justify-between gap-2">
           <span class="text-xs text-gray-500 dark:text-gray-400">
             {{ t('views.intimacy.candidates.selected', { count: selection.messageIds.length }) }}
+            <template v-if="!isSharing">
+              ·
+              {{ t('views.intimacy.candidates.selectedResponses', { count: selection.responseMessageIds.length }) }}
+            </template>
           </span>
-          <UButton size="xs" color="neutral" variant="ghost" @click="selection = null">
+          <UButton size="xs" color="neutral" variant="ghost" @click="resetSelection">
             {{ t('views.intimacy.candidates.clearSelection') }}
           </UButton>
         </div>
 
-        <p class="mt-2 text-[11px] text-gray-400">{{ t('views.intimacy.candidates.categories') }}</p>
-        <div class="mt-1 flex flex-wrap items-center gap-3">
-          <UCheckbox
-            v-for="category in SHARING_CATEGORIES"
-            :key="category"
-            :model-value="categories.includes(category)"
-            :label="t(SHARING_CATEGORY_LABEL_KEYS[category])"
-            size="xs"
-            @update:model-value="toggleCategory(category, $event === true)"
-          />
-        </div>
+        <template v-if="isSharing">
+          <p class="mt-2 text-[11px] text-gray-400">{{ t('views.intimacy.candidates.categories') }}</p>
+          <div class="mt-1 flex flex-wrap items-center gap-3">
+            <UCheckbox
+              v-for="category in SHARING_CATEGORIES"
+              :key="category"
+              :model-value="categories.includes(category)"
+              :label="t(SHARING_CATEGORY_LABEL_KEYS[category])"
+              size="xs"
+              @update:model-value="toggleCategory(category, $event === true)"
+            />
+          </div>
 
-        <p class="mt-2 text-[11px] text-gray-400">{{ t('views.intimacy.candidates.topic') }}</p>
-        <USelect v-model="topic" :items="topicOptions" value-key="value" size="xs" class="mt-1 w-36" />
+          <p class="mt-2 text-[11px] text-gray-400">{{ t('views.intimacy.candidates.topic') }}</p>
+          <USelect v-model="topic" :items="topicOptions" value-key="value" size="xs" class="mt-1 w-36" />
+        </template>
+
+        <template v-else>
+          <UCheckbox
+            v-if="kind === 'good_news_response'"
+            :model-value="positiveForSharer"
+            class="mt-2"
+            :label="t('views.intimacy.k4.positiveToggle')"
+            size="xs"
+            @update:model-value="positiveForSharer = $event === true"
+          />
+
+          <p class="mt-2 text-[11px] text-gray-400">{{ t('views.intimacy.candidates.responseLabels') }}</p>
+          <div class="mt-1 flex flex-wrap items-center gap-3">
+            <UCheckbox
+              v-for="label in kind === 'support_response' ? SUPPORT_RESPONSE_LABELS : []"
+              :key="label"
+              :model-value="supportLabels.includes(label)"
+              :label="t(SUPPORT_RESPONSE_LABEL_KEYS[label])"
+              size="xs"
+              @update:model-value="toggleSupportLabel(label, $event === true)"
+            />
+            <UCheckbox
+              v-for="label in kind === 'good_news_response' ? GOOD_NEWS_RESPONSE_LABELS : []"
+              :key="label"
+              :model-value="goodNewsLabels.includes(label)"
+              :label="t(GOOD_NEWS_RESPONSE_LABEL_KEYS[label])"
+              size="xs"
+              @update:model-value="toggleGoodNewsLabel(label, $event === true)"
+            />
+          </div>
+          <p class="mt-2 text-[11px] text-gray-400">{{ t('views.intimacy.candidates.responseNoneHint') }}</p>
+        </template>
 
         <UButton class="mt-3" size="xs" color="primary" :loading="submitting" :disabled="!canSubmit" @click="submit">
-          {{ t('views.intimacy.candidates.submit') }}
+          {{ t(submitKey) }}
         </UButton>
       </div>
     </template>
