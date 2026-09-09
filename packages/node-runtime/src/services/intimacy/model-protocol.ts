@@ -157,13 +157,14 @@ export function buildIntimacyWindowPrompt(input: IntimacyWindowPromptInput): {
   userPrompt: string
 } {
   const language = resolveOutputLanguage(input.locale)
+  const lineOptions = { members: input.members, timezone: input.timezone, preprocess: input.preprocess }
   const context = input.window.messages.slice(0, input.window.contextCount)
   const own = input.window.messages.slice(input.window.contextCount)
   const contextSection =
     context.length === 0
       ? ''
       : `Context (already coded in the previous window, never cite as coreMessageIds):
-${formatMessageLines(context, input.members, input.timezone, input.preprocess)}
+${formatIntimacyMessageLines(context, lineOptions)}
 
 `
   return {
@@ -187,11 +188,11 @@ Use "confidence": "uncertain" when the text supports the reading but not clearly
 Do not judge intimacy, personality, relationship quality, or intent. Write "reason" in ${language}, at most ${MAX_REASON_CHARS} characters.
 Return: {"events":[{"kind":"sharing","discloser":"A","coreMessageIds":[1],"relatedMessageIds":[],"categories":["experience_or_update"],"topic":"daily_life","distress":"no","confidence":"clear","continuesContextEvent":false,"observation":"sufficient","reason":"..."}]}. A "good_news" event uses "positiveForSharer":"explicit_or_context_supported" instead of categories, topic and distress. Add "responses":{"observation":"visible_response","messageIds":[2],"labels":["acknowledges_feeling"]} where it is required. A follow-up question looks like {"kind":"follow_up","asker":"B","coreMessageIds":[3],"matter":"...","matterKeywords":["..."],"priorMessageIds":[1],"confidence":"clear","observation":"sufficient","reason":"..."}. Return {"events":[]} when this window contains none of these events.`,
     userPrompt: `Participants:
-${formatParticipantLegend(input.members, input.preprocess?.anonymizeNames === true)}
+${formatIntimacyParticipantLegend(input.members, input.preprocess?.anonymizeNames === true)}
 Window ${input.window.index + 1}/${input.totalWindows}
 
 ${contextSection}Messages:
-${formatMessageLines(own, input.members, input.timezone, input.preprocess)}
+${formatIntimacyMessageLines(own, lineOptions)}
 
 Return the JSON object described in the instructions.`,
   }
@@ -207,7 +208,7 @@ export function parseIntimacyResponse(
   window: IntimacyWindow,
   members: [IntimacyMember, IntimacyMember]
 ): ParsedIntimacyEvent[] {
-  const payload = parseJsonObject(text)
+  const payload = parseIntimacyJsonObject(text)
   if (!Array.isArray(payload.events) || payload.events.length > MAX_EVENTS_PER_WINDOW) {
     throw new Error('Invalid intimacy events payload')
   }
@@ -466,7 +467,7 @@ function parseReason(value: unknown): string {
   return value.slice(0, MAX_REASON_CHARS)
 }
 
-function parseJsonObject(text: string): Record<string, unknown> {
+export function parseIntimacyJsonObject(text: string): Record<string, unknown> {
   const trimmed = text.trim()
   const unfenced = trimmed
     .replace(/^```(?:json)?\s*/i, '')
@@ -480,7 +481,7 @@ function parseJsonObject(text: string): Record<string, unknown> {
   return parsed
 }
 
-function formatParticipantLegend(members: [IntimacyMember, IntimacyMember], anonymize: boolean): string {
+export function formatIntimacyParticipantLegend(members: [IntimacyMember, IntimacyMember], anonymize: boolean): string {
   return members
     .map((member, index) => {
       const label = index === 0 ? 'A' : 'B'
@@ -491,25 +492,27 @@ function formatParticipantLegend(members: [IntimacyMember, IntimacyMember], anon
 
 /**
  * One line per message — id, participant, time, text — with the date written once wherever it changes, so the model
- * reads ids, senders and times the same way in every window while the scaffolding around the chat text stays small:
- * a JSON object per message would spend more tokens on keys and timestamps than on the chat itself. A non-text
- * message is shown as a bracketed placeholder, and a line break inside a text is escaped so no message ever spans
- * two lines.
+ * reads ids, senders and times the same way in a window and in a candidate list while the scaffolding around the
+ * chat text stays small: the JSON object per message this replaces spent more tokens on keys and timestamps than on
+ * the chat itself. A non-text message is shown as a bracketed placeholder, and a line break inside a text is
+ * escaped so no message ever spans two lines.
  */
-function formatMessageLines(
+export function formatIntimacyMessageLines(
   messages: IntimacySourceMessage[],
-  members: [IntimacyMember, IntimacyMember],
-  timezone: string,
-  preprocess?: IntimacyPreprocessOptions
+  options: {
+    members: [IntimacyMember, IntimacyMember]
+    timezone: string
+    preprocess?: IntimacyPreprocessOptions
+  }
 ): string {
   const dateFormatter = new Intl.DateTimeFormat('en-CA', {
-    timeZone: timezone,
+    timeZone: options.timezone,
     year: 'numeric',
     month: '2-digit',
     day: '2-digit',
   })
   const timeFormatter = new Intl.DateTimeFormat('en-CA', {
-    timeZone: timezone,
+    timeZone: options.timezone,
     hour: '2-digit',
     minute: '2-digit',
     hourCycle: 'h23',
@@ -523,8 +526,8 @@ function formatMessageLines(
       lines.push(`[${date}]`)
       currentDate = date
     }
-    const from = message.senderId === members[0].memberId ? 'A' : 'B'
-    lines.push(`${message.id} ${from} ${timeFormatter.format(at)} ${formatMessageText(message, preprocess)}`)
+    const from = message.senderId === options.members[0].memberId ? 'A' : 'B'
+    lines.push(`${message.id} ${from} ${timeFormatter.format(at)} ${formatMessageText(message, options.preprocess)}`)
   }
   return lines.join('\n')
 }

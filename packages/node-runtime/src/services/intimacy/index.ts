@@ -47,5 +47,20 @@ export {
   summarizeSharing,
 } from './events'
 export type { FollowUpPairing } from './events'
+export {
+  INTIMACY_FOLLOW_UP_MAX_CANDIDATES,
+  buildFollowUpMatchPrompt,
+  collectFollowUpCandidates,
+  parseFollowUpMatch,
+  resolveFollowUpInitiation,
+} from './follow-up-matcher'
+export type {
+  FollowUpAnchor,
+  FollowUpCandidate,
+  FollowUpCandidateInput,
+  FollowUpMatch,
+  FollowUpMatchPromptInput,
+  FollowUpMatchScope,
+} from './follow-up-matcher'
 export { createIntimacyService } from './service'
 export type { IntimacyResultRange, IntimacyService, IntimacyServiceDeps } from './service'

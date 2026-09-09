@@ -2,6 +2,7 @@ import { randomUUID } from 'node:crypto'
 import {
   getMessagesByIds,
   getMessagesInIdRange,
+  getSessionOverview,
   searchMessagesByKeywords,
   type DatabaseAdapter,
   type MappedMessage,
@@ -14,6 +15,7 @@ import {
   type IntimacyCandidateRequest,
   type IntimacyCandidates,
   type CreateIntimacyEventDetails,
+  type FollowUpMatchConfidence,
   type GoodNewsResponseDetails,
   type IntimacyEvent,
   type IntimacyEventReview,
@@ -41,13 +43,24 @@ import type { ChatTopicModelClient, ChatTopicModelResult } from '../topics/model
 import { assertValidTimezone } from '../topics/time'
 import { chatTopicWorkCoordinator } from '../topics/work-coordinator'
 import {
+  INTIMACY_FOLLOW_UP_LOOKBACK_SECONDS,
+  applyFollowUpPairing,
   applyReviewDetails,
   buildIntimacyEvents,
+  findSharingEventCovering,
   resolveEventStatus,
   summarizeFollowUps,
   summarizeResponses,
   summarizeSharing,
 } from './events'
+import {
+  buildFollowUpMatchPrompt,
+  collectFollowUpCandidates,
+  parseFollowUpMatch,
+  resolveFollowUpInitiation,
+  type FollowUpMatch,
+  type FollowUpMatchPromptInput,
+} from './follow-up-matcher'
 import {
   GOOD_NEWS_RESPONSE_LABELS,
   INTIMACY_ALGORITHM_VERSION,
@@ -59,6 +72,7 @@ import {
   buildIntimacyWindowPrompt,
   parseIntimacyResponse,
   resolveIntimacyPreprocess,
+  type IntimacyPreprocessOptions,
 } from './model-protocol'
 import { getIntimacyDbPath } from './paths'
 import {
@@ -67,6 +81,7 @@ import {
   readIntimacySourceFingerprint,
   resolveIntimacyMembers,
   resolveIntimacyRange,
+  type IntimacyWindow,
 } from './source'
 import {
   INTIMACY_USER_RUN_ID,
@@ -121,6 +136,8 @@ const INTIMACY_EXECUTION_HEARTBEAT_MS = 10_000
 const INTIMACY_KEYWORD_CANDIDATE_LIMIT = 30
 const INTIMACY_SEMANTIC_CANDIDATE_LIMIT = 10
 const INTIMACY_SEMANTIC_BLOCK_MESSAGE_LIMIT = 40
+/** How many follow-up questions of one window may be paired by a model call; the rest wait for the user. */
+const INTIMACY_FOLLOW_UP_MATCH_CALLS_PER_WINDOW = 10
 const INTIMACY_WINDOW_INVALID = 'INTIMACY_WINDOW_INVALID'
 const INTIMACY_EXECUTION_LEASE_LOST = 'INTIMACY_EXECUTION_LEASE_LOST'
 // Version to publish this store with. The release workflow bumps package metadata later, so the guard below keeps
@@ -166,7 +183,8 @@ export function createIntimacyService(deps: IntimacyServiceDeps): IntimacyServic
       messageCount: estimate.messageCount,
       textMessageCount: estimate.textMessageCount,
       estimatedWindows: estimate.estimatedWindows,
-      estimatedCalls: estimate.estimatedWindows,
+      // One call per window, plus the follow-up pairing calls the window may need (about one per window).
+      estimatedCalls: estimate.estimatedWindows * 2,
       modelId: deps.getModelClient()?.modelId ?? null,
       semanticSearchAvailable: await canSearchSemantically(sessionId),
       kinds,
@@ -707,7 +725,14 @@ export function createIntimacyService(deps: IntimacyServiceDeps): IntimacyServic
       }
       const preprocess = store.getRunPreprocess(run.id) ?? undefined
       const startWindow = Math.min(run.completedWindows, source.windows.length)
-      let previousWindowEvents: IntimacyEventRecord[] = startWindow === 0 ? [] : store.listEvents(run.sessionId, run.id)
+      const committedEvents: IntimacyEventRecord[] = startWindow === 0 ? [] : store.listEvents(run.sessionId, run.id)
+      let previousWindowEvents: IntimacyEventRecord[] = committedEvents
+      // The matter a follow-up asks about is looked for among the sharings this run has already coded.
+      const codedSharings = new Map<string, IntimacyEventRecord>(
+        committedEvents.filter((event) => event.kind === 'sharing').map((event) => [event.id, event])
+      )
+      const chatStartTs = getSessionOverview(deps.runtime.ensureReadonly(run.sessionId)).firstMessageTs ?? 0
+      const semanticAvailable = await canSearchSemantically(run.sessionId)
       const failedWindowIndexes = [...run.failedWindowIndexes]
 
       for (let index = startWindow; index < source.windows.length; index += 1) {
@@ -755,8 +780,22 @@ export function createIntimacyService(deps: IntimacyServiceDeps): IntimacyServic
           previousWindowEvents = []
           continue
         }
-        store.insertWindowEvents(run.sessionId, run.id, events, executionLeaseGuard())
-        previousWindowEvents = events
+        // Stage B runs before the window is committed, so a question and the pairing it got are stored together.
+        const paired = await resolveFollowUpPairings(execution, modelClient, run, events, {
+          window,
+          members: source.members,
+          codedSharings: [...codedSharings.values()],
+          chatStartTs,
+          semanticAvailable,
+          timezone: run.timezone,
+          preprocess,
+        })
+        run = paired.run
+        store.insertWindowEvents(run.sessionId, run.id, paired.events, executionLeaseGuard())
+        previousWindowEvents = paired.events
+        for (const event of paired.events) {
+          if (event.kind === 'sharing') codedSharings.set(event.id, event)
+        }
         run = updateRun(run, { completedWindows: index + 1, currentWindowIndex: null })
       }
 
@@ -780,6 +819,165 @@ export function createIntimacyService(deps: IntimacyServiceDeps): IntimacyServic
       const message = requestedStatus ? null : error instanceof Error ? error.message : String(error)
       finishRun(latest, { status, lastError: message, currentWindowIndex: null })
       if (!requestedStatus) appLogger.error('intimacy', 'intimacy analysis failed', error)
+    }
+  }
+
+  /**
+   * Stage B of the follow-up coding. A question whose earlier matter was not visible in its own window gets a
+   * server-built candidate list — the sharings coded so far, a keyword search and the semantic index — and one
+   * model call that may only choose from it. A match that cannot be read stays unmatched instead of failing the
+   * window: the question is kept for the user to pair by hand. The initiation is decided here from the record.
+   */
+  async function resolveFollowUpPairings(
+    execution: ActiveExecution,
+    modelClient: ChatTopicModelClient,
+    initialRun: IntimacyRun,
+    events: IntimacyEventRecord[],
+    context: {
+      window: IntimacyWindow
+      members: [IntimacyMember, IntimacyMember]
+      codedSharings: IntimacyEventRecord[]
+      chatStartTs: number
+      semanticAvailable: boolean
+      timezone: string
+      preprocess?: IntimacyPreprocessOptions
+    }
+  ): Promise<{ run: IntimacyRun; events: IntimacyEventRecord[] }> {
+    let run = initialRun
+    if (!events.some((event) => event.kind === 'follow_up')) return { run, events }
+    const db = deps.runtime.ensureReadonly(run.sessionId)
+    const knownEvents = [...context.codedSharings, ...events]
+    const windowMessages = new Map(context.window.messages.map((message) => [message.id, message]))
+    const resolved: IntimacyEventRecord[] = []
+    let matchCalls = 0
+
+    for (const event of events) {
+      if (event.kind !== 'follow_up' || event.details.kind !== 'follow_up') {
+        resolved.push(event)
+        continue
+      }
+      execution.controller.signal.throwIfAborted()
+      const askedMemberId = event.subjectMemberId
+      const details = event.details
+      let prior = event.evidence.filter((evidence) => evidence.role === 'prior')
+      let matchConfidence: FollowUpMatchConfidence = prior.length > 0 ? 'supported' : 'uncertain'
+      let candidateMessageIds: number[] = []
+      let lookbackStartTs = Math.max(event.anchorTs - INTIMACY_FOLLOW_UP_LOOKBACK_SECONDS, context.chatStartTs)
+
+      if (prior.length === 0 && matchCalls < INTIMACY_FOLLOW_UP_MATCH_CALLS_PER_WINDOW) {
+        const collected = await collectFollowUpCandidates({
+          db,
+          sessionId: run.sessionId,
+          askedMemberId,
+          followUp: {
+            messageId: event.anchorMessageId,
+            timestamp: event.anchorTs,
+            matter: details.matter,
+            matterKeywords: details.matterKeywords,
+          },
+          codedEvents: knownEvents,
+          chatStartTs: context.chatStartTs,
+          semanticIndex: deps.semanticIndex,
+          semanticAvailable: context.semanticAvailable,
+        })
+        lookbackStartTs = collected.lookbackStartTs
+        candidateMessageIds = collected.candidates.map((candidate) => candidate.id)
+        if (collected.candidates.length > 0) {
+          matchCalls += 1
+          const question = event.evidence
+            .filter((evidence) => evidence.role === 'core')
+            .flatMap((evidence) => {
+              const message = windowMessages.get(evidence.messageId)
+              return message ? [message] : []
+            })
+          const matched = await matchFollowUp(run, modelClient, execution, {
+            prompt: {
+              members: context.members,
+              question,
+              matter: details.matter,
+              candidates: collected.candidates,
+              askedMemberId,
+              timezone: context.timezone,
+              preprocess: context.preprocess,
+            },
+            anchorMessageId: event.anchorMessageId,
+          })
+          run = matched.run
+          if (matched.value && matched.value.priorMessageIds.length > 0) {
+            prior = matched.value.priorMessageIds.flatMap((messageId) => {
+              const candidate = collected.candidates.find((item) => item.id === messageId)
+              return candidate
+                ? [
+                    {
+                      messageId,
+                      timestamp: candidate.timestamp,
+                      senderId: candidate.senderId,
+                      role: 'prior' as const,
+                    },
+                  ]
+                : []
+            })
+            matchConfidence = matched.value.match
+          }
+        }
+      }
+
+      const priorAnchor = prior.length === 0 ? null : prior.reduce((a, b) => (a.messageId <= b.messageId ? a : b))
+      const priorEventId = priorAnchor
+        ? findSharingEventCovering(knownEvents, priorAnchor.messageId, askedMemberId)
+        : null
+      const priorEvent = priorEventId ? knownEvents.find((item) => item.id === priorEventId) : null
+      resolved.push(
+        applyFollowUpPairing(event, {
+          priorEvidence: prior,
+          priorEventId,
+          matchConfidence,
+          initiation: resolveFollowUpInitiation({
+            db,
+            askedMemberId,
+            prior: priorAnchor && { messageId: priorAnchor.messageId, timestamp: priorAnchor.timestamp },
+            followUp: { messageId: event.anchorMessageId, timestamp: event.anchorTs },
+            matterKeywords: details.matterKeywords,
+            priorEventEvidence: priorEvent?.evidence ?? [],
+          }),
+          candidateMessageIds,
+          lookbackStartTs,
+        })
+      )
+    }
+    return { run, events: resolved }
+  }
+
+  /** One matching call. An unreadable answer costs the pairing, never the window it belongs to. */
+  async function matchFollowUp(
+    run: IntimacyRun,
+    modelClient: ChatTopicModelClient,
+    execution: ActiveExecution,
+    input: { prompt: FollowUpMatchPromptInput; anchorMessageId: number }
+  ): Promise<{ run: IntimacyRun; value: FollowUpMatch | null }> {
+    try {
+      const result = await completeValidated(
+        run,
+        modelClient,
+        buildFollowUpMatchPrompt(input.prompt),
+        execution.controller.signal,
+        (text) =>
+          parseFollowUpMatch(text, {
+            candidates: input.prompt.candidates,
+            askedMemberId: input.prompt.askedMemberId,
+            anchorMessageId: input.anchorMessageId,
+          }),
+        `intimacy:${run.sessionId}:follow-up:${input.anchorMessageId}`
+      )
+      return { run: result.run, value: result.value }
+    } catch (error) {
+      if ((error as { code?: string } | null)?.code !== INTIMACY_WINDOW_INVALID) throw error
+      appLogger.warn('intimacy', 'intimacy analysis could not pair a follow-up question', {
+        runId: run.id,
+        sessionId: run.sessionId,
+        anchorMessageId: input.anchorMessageId,
+      })
+      return { run: (error as { run?: IntimacyRun }).run ?? run, value: null }
     }
   }
 
