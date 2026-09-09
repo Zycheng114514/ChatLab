@@ -256,6 +256,14 @@ const rejections: Array<{ name: string; payload: string }> = [
   },
   { name: 'an unknown good news reading', payload: response({ ...goodNewsWithReply, positiveForSharer: 'maybe' }) },
   {
+    name: 'a distress disclosure whose reply was never checked',
+    payload: response({ ...disclosureWithReply, responses: undefined }),
+  },
+  {
+    name: 'good news whose reply was never checked',
+    payload: response({ ...goodNewsWithReply, responses: undefined }),
+  },
+  {
     name: 'a continued event with neither new messages nor a reply',
     payload: response({ ...validEvent, coreMessageIds: [], categories: [], continuesContextEvent: true }),
   },

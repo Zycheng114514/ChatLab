@@ -241,6 +241,8 @@ function parseIntimacyEvent(
   if (kind === 'good_news') {
     const responses = parseResponses(value.responses, GOOD_NEWS_RESPONSE_LABELS, responseScope)
     requireContinuationResponse(coreMessageIds, responses)
+    // The observation is the finding; an omitted block would otherwise read as "no reply", which nobody checked.
+    if (!responses) throw new Error('A good news event requires a responses object')
     return {
       ...base,
       kind,
@@ -255,13 +257,16 @@ function parseIntimacyEvent(
   }
   const responses = parseResponses(value.responses, SUPPORT_RESPONSE_LABELS, responseScope)
   requireContinuationResponse(coreMessageIds, responses)
+  const distress = parseEnum(value.distress, DISTRESS_VALUES, 'uncertain', 'distress')
+  // Same reason as for good news: a disclosure with no responses block is unchecked, not unanswered.
+  if (distress === 'yes' && !responses) throw new Error('A distress disclosure requires a responses object')
   return {
     ...base,
     kind,
     // A continuation that only adds a reply carries no new labels of its own.
     categories: parseCategories(value.categories, coreMessageIds.length === 0),
     topic: parseEnum(value.topic, SHARING_TOPICS, 'other', 'topic'),
-    distress: parseEnum(value.distress, DISTRESS_VALUES, 'uncertain', 'distress'),
+    distress,
     responses,
   }
 }
