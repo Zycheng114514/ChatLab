@@ -54,6 +54,7 @@ import {
   resolveEventStatus,
   summarizeFollowUps,
   summarizeResponses,
+  summarizeSharedPlans,
   summarizeSharing,
 } from './events'
 import {
@@ -359,7 +360,7 @@ export function createIntimacyService(deps: IntimacyServiceDeps): IntimacyServic
           })
         )
       ),
-      summaries: buildSummaries(events, members),
+      summaries: buildSummaries(events, members, range),
       orphanReviews: [...reviews.keys()].filter((eventId) => !storedIds.has(eventId)).length,
       semanticSearchAvailable: await canSearchSemantically(sessionId),
       modelId: deps.getModelClient()?.modelId ?? null,
@@ -547,6 +548,11 @@ export function createIntimacyService(deps: IntimacyServiceDeps): IntimacyServic
       )
       confirmEvent(sessionId, record, { currentEvents, coreMessageIds, timestamp })
       return getResults(sessionId)
+    }
+
+    // Confirming a shared plan lands in the next step; the contract already carries its shape.
+    if (kind === 'shared_plan') {
+      throw Object.assign(new Error('Confirming a shared plan is not available yet'), { statusCode: 400 })
     }
 
     // K2 counts a reply to a disclosure, so the disclosure has to exist as a K1 event of its own.
@@ -1399,12 +1405,17 @@ export function createIntimacyService(deps: IntimacyServiceDeps): IntimacyServic
 }
 
 /** One summary per implemented kind, so the page can show every card without asking for each kind. */
-function buildSummaries(events: IntimacyEvent[], members: IntimacyMember[]): IntimacyKindSummary[] {
+function buildSummaries(
+  events: IntimacyEvent[],
+  members: IntimacyMember[],
+  range?: IntimacyResultRange
+): IntimacyKindSummary[] {
   return [
     { kind: 'sharing', members: summarizeSharing(events, members) },
     { kind: 'support_response', members: summarizeResponses(events, members, 'support_response') },
     { kind: 'follow_up', members: summarizeFollowUps(events, members) },
     { kind: 'good_news_response', members: summarizeResponses(events, members, 'good_news_response') },
+    summarizeSharedPlans(events, members, range),
   ]
 }
 
@@ -1565,6 +1576,7 @@ function toReviewDetails(record: IntimacyEventRecord): IntimacyReviewDetails {
   if (details.kind === 'good_news_response') {
     return { positiveForSharer: details.positiveForSharer, responseLabels: details.responseLabels }
   }
+  if (details.kind === 'shared_plan') return { lastObservedStage: details.lastObservedStage }
   return {
     priorMessageIds: record.evidence
       .filter((evidence) => evidence.role === 'prior')
@@ -1580,6 +1592,9 @@ function toReviewDetails(record: IntimacyEventRecord): IntimacyReviewDetails {
 /** A revision may only touch the fields of the kind it is about, and only label a reply that was seen. */
 function requireRevisableDetails(event: IntimacyEvent, details: IntimacyReviewDetails): IntimacyReviewDetails {
   if (event.details.kind === 'sharing') return requirePartialSharingDetails(details)
+  if (event.details.kind === 'shared_plan') {
+    throw Object.assign(new Error('Revising a shared plan is not available yet'), { statusCode: 400 })
+  }
   if (event.details.kind === 'follow_up') {
     throw Object.assign(new Error('A follow-up revision needs the earlier messages it asks about'), {
       statusCode: 400,

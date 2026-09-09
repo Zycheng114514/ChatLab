@@ -6,12 +6,13 @@ export type IntimacyKind =
   | 'shared_plan'
   | 'repair_attempt'
 
-/** 已实现 K1 个人分享、K2 倾诉后的回应、K3 事后追问、K4 好消息回应；其余值先占位，服务端对未实现的 kind 返回 400 */
+/** 已实现 K1 个人分享、K2 倾诉后的回应、K3 事后追问、K4 好消息回应、K5 共同安排；其余值先占位，服务端对未实现的 kind 返回 400 */
 export const IMPLEMENTED_INTIMACY_KINDS: readonly IntimacyKind[] = [
   'sharing',
   'support_response',
   'follow_up',
   'good_news_response',
+  'shared_plan',
 ]
 
 export type IntimacyRunStatus = 'pending' | 'running' | 'paused' | 'completed' | 'failed' | 'cancelled'
@@ -21,8 +22,11 @@ export type IntimacyReviewDecision = 'included' | 'excluded'
 export type IntimacyObservation = 'sufficient' | 'boundary_limited' | 'media_missing'
 /** 展示状态（服务端派生）：auto 自动识别、uncertain 待核对、confirmed 用户确认、excluded 已排除 */
 export type IntimacyEventStatus = 'auto' | 'uncertain' | 'confirmed' | 'excluded'
-/** response = 另一方针对锚点消息的回复；prior = K3 里被问者更早提到那件事的消息 */
-export type IntimacyEvidenceRole = 'core' | 'related' | 'response' | 'prior'
+/**
+ * response = 另一方针对锚点消息的回复；prior = K3 里被问者更早提到那件事的消息；
+ * stage = K5 里推进同一个安排的消息（提议之后的商量 / 确认 / 改期 / 取消 / 回顾）
+ */
+export type IntimacyEvidenceRole = 'core' | 'related' | 'response' | 'prior' | 'stage'
 
 export interface IntimacyMember {
   memberId: number
@@ -171,7 +175,47 @@ export interface FollowUpDetails {
   candidateMessageIds: number[]
 }
 
-export type IntimacyEventDetails = SharingDetails | SupportResponseDetails | GoodNewsResponseDetails | FollowUpDetails
+/**
+ * K5 的阶段：只描述聊天里可见的进展，不推断安排在现实中是否发生。
+ * 一个安排无论改期几次都只是一个事件，阶段按时间排成一条时间线。
+ */
+export type SharedPlanStage =
+  | 'proposed'
+  | 'discussed'
+  | 'mutually_confirmed'
+  | 'rescheduled'
+  | 'cancelled'
+  | 'retrospective_mentioned'
+
+export interface SharedPlanStageRecord {
+  stage: SharedPlanStage
+  /** mutually_confirmed 时是明确同意的一方；其余阶段的消息全部由该成员发送 */
+  actorMemberId: number
+  messageIds: number[]
+  /** 该阶段最早一条消息的时间（秒） */
+  at: number
+}
+
+export interface SharedPlanDetails {
+  kind: 'shared_plan'
+  /** 提议不在本次可见范围内（只看到后续阶段且没有关联到更早的安排）时为 null */
+  proposerMemberId: number | null
+  /** ≤ 40 字，只用证据里出现的活动 / 地点 / 时间词；「下周」保留原文，不解析成某天 */
+  activitySummary: string
+  /** 按时间升序 */
+  stages: SharedPlanStageRecord[]
+  /** 服务端派生：目标范围截止时的最后一个阶段，范围之后的阶段不算进来 */
+  lastObservedStage: SharedPlanStage
+  /** not_covered = 只看到后续阶段，较早的提议没有被覆盖到 */
+  priorCoverage: 'covered' | 'not_covered'
+}
+
+export type IntimacyEventDetails =
+  | SharingDetails
+  | SupportResponseDetails
+  | GoodNewsResponseDetails
+  | FollowUpDetails
+  | SharedPlanDetails
 
 /**
  * K3 修订：用户从候选列表或被问者任意更早的消息里指定先前事件。客户端只传 `priorMessageIds`，
@@ -187,12 +231,18 @@ export interface FollowUpReviewDetails {
   matter?: string
 }
 
+/** K5 修订：用户只能改最后一个阶段，且只能选六种之一；把一个安排并入另一个留待后续 */
+export interface SharedPlanReviewDetails {
+  lastObservedStage: SharedPlanStage
+}
+
 /** 用户改写的标签；服务端按事件 kind 校验，只接受该 kind 可改写的字段 */
 export type IntimacyReviewDetails =
   | Partial<Omit<SharingDetails, 'kind'>>
   | Partial<Omit<SupportResponseDetails, 'kind'>>
   | Partial<Omit<GoodNewsResponseDetails, 'kind'>>
   | FollowUpReviewDetails
+  | SharedPlanReviewDetails
 
 export interface IntimacyEvidence {
   messageId: number
@@ -216,9 +266,9 @@ export interface IntimacyEvent {
   /** 用户确认候选生成的事件为 null */
   runId: string | null
   kind: IntimacyKind
-  /** K1 = 分享者，K2 = 倾诉者，K3 = 被问者，K4 = 好消息的分享者 */
+  /** K1 = 分享者，K2 = 倾诉者，K3 = 被问者，K4 = 好消息的分享者，K5 = 提议者（没有提议时是最早阶段的行为者） */
   subjectMemberId: number
-  /** K2 / K4 = 回复方，K3 = 追问者 */
+  /** K2 / K4 = 回复方，K3 = 追问者，K5 = 另一方 */
   otherMemberId: number
   anchorMessageId: number
   anchorTs: number
@@ -301,7 +351,25 @@ export interface FollowUpSummary {
   members: IntimacyFollowUpMemberSummary[]
 }
 
-export type IntimacyKindSummary = SharingSummary | ResponseSummary | FollowUpSummary
+/**
+ * 共同安排的计数。一个安排只计一次，无论它经历了几个阶段；`byLastStage` 各项之和 = `updatedInRange`。
+ * 只统计 status ∈ auto、confirmed 的安排。
+ */
+export interface SharedPlanSummary {
+  kind: 'shared_plan'
+  /** 提议锚点落在目标范围内的安排数 */
+  newlyProposed: number
+  /** 任一阶段落在目标范围内的安排数 */
+  updatedInRange: number
+  /** 目标范围截止时的最后可见阶段；范围之后的阶段不泄漏到过去的视图里 */
+  byLastStage: Record<SharedPlanStage, number>
+  /** memberId → 该成员提议的安排数；两位成员都有条目（可能为 0） */
+  proposedBy: Record<number, number>
+  /** memberId → 该成员给出明确同意的安排数；两位成员都有条目（可能为 0） */
+  confirmedBy: Record<number, number>
+}
+
+export type IntimacyKindSummary = SharingSummary | ResponseSummary | FollowUpSummary | SharedPlanSummary
 
 export interface IntimacyResults {
   /** 提供事件的那次 run；只有用户确认事件时为 null */
@@ -350,18 +418,32 @@ export interface IntimacyCandidates {
 /** K3 用户确认只需要事情描述，配对结果（先前事件、间隔、主动性）由服务端按证据算出 */
 export type CreateFollowUpDetails = Pick<FollowUpDetails, 'matter'>
 
+/** K5 用户确认的一个阶段；服务端按证据算出时间并校验发送者 */
+export interface CreateSharedPlanStage {
+  stage: SharedPlanStage
+  actorMemberId: number
+  messageIds: number[]
+}
+
+/** K5 用户确认：提议消息走 coreMessageIds，这里给活动描述与阶段列表；最后阶段由服务端派生 */
+export interface CreateSharedPlanDetails {
+  activitySummary: string
+  stages: CreateSharedPlanStage[]
+}
+
 /** 服务端填 K2 的 disclosureEventId，并按有没有勾选回复消息派生 responseObservation */
 export type CreateIntimacyEventDetails =
   | Omit<SharingDetails, 'kind'>
   | Omit<SupportResponseDetails, 'kind' | 'disclosureEventId' | 'responseObservation'>
   | Omit<GoodNewsResponseDetails, 'kind' | 'responseObservation'>
   | CreateFollowUpDetails
+  | CreateSharedPlanDetails
 
 export interface CreateIntimacyEventRequest {
   kind: IntimacyKind
   /** 核心消息的发送者：K1 / K2 / K4 是事件主体，K3 是追问者（事件主体是被问的另一方） */
   subjectMemberId: number
-  /** 非空，全部由 subjectMemberId 发送；K3 是追问消息 */
+  /** 非空，全部由 subjectMemberId 发送；K3 是追问消息，K5 是提议消息 */
   coreMessageIds: number[]
   relatedMessageIds?: number[]
   /** K2 / K4：另一方的回复消息，必须由 otherMemberId 发送且 id 大于锚点 */

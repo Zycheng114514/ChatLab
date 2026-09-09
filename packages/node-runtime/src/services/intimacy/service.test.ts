@@ -1253,7 +1253,7 @@ test('group chats, unimplemented kinds and a missing LLM are refused before any 
       (error: unknown) => (error as { statusCode?: number }).statusCode === 400
     )
     await assert.rejects(
-      () => withoutLlm.service.preflight('private', { kinds: ['shared_plan'] }),
+      () => withoutLlm.service.preflight('private', { kinds: ['repair_attempt'] }),
       (error: unknown) => (error as { statusCode?: number }).statusCode === 400
     )
     assert.throws(

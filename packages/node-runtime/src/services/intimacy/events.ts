@@ -16,6 +16,10 @@ import type {
   IntimacyObservation,
   IntimacyResponseMemberSummary,
   ResponseObservation,
+  SharedPlanDetails,
+  SharedPlanReviewDetails,
+  SharedPlanStage,
+  SharedPlanSummary,
   SharingCategory,
   SharingDetails,
   SupportResponseDetails,
@@ -29,7 +33,12 @@ import type {
   ParsedResponseGroup,
   ParsedSharingEvent,
 } from './model-protocol'
-import { GOOD_NEWS_RESPONSE_LABELS, SHARING_CATEGORIES, SUPPORT_RESPONSE_LABELS } from './model-protocol'
+import {
+  GOOD_NEWS_RESPONSE_LABELS,
+  SHARED_PLAN_STAGES,
+  SHARING_CATEGORIES,
+  SUPPORT_RESPONSE_LABELS,
+} from './model-protocol'
 import type { IntimacySourceMessage, IntimacyWindow } from './source'
 import type { IntimacyEventRecord } from './store'
 
@@ -432,6 +441,11 @@ export function applyReviewDetails(
       gapSeconds: revised.gapSeconds ?? null,
     }
   }
+  if (details.kind === 'shared_plan') {
+    // The stages themselves are evidence; the user may only say where the plan stands now.
+    const revised = revision as SharedPlanReviewDetails
+    return revised.lastObservedStage ? { ...details, lastObservedStage: revised.lastObservedStage } : details
+  }
   const revised = revision as Partial<Omit<GoodNewsResponseDetails, 'kind'>>
   return {
     ...details,
@@ -522,6 +536,63 @@ export function summarizeFollowUps(
       initiationUncertain: countInitiation('uncertain'),
     }
   })
+}
+
+/** The target range a summary describes; an open end counts everything that is there. */
+export interface SharedPlanRange {
+  startTs?: number
+  endTs?: number
+}
+
+/**
+ * Count shared plans. One arrangement counts once however many times it was moved, and the stages it reached
+ * after the target range are not part of this view: the caller hands over events whose stages already end with
+ * the range, so `byLastStage` describes where each plan stood then and its entries add up to `updatedInRange`.
+ */
+export function summarizeSharedPlans(
+  events: IntimacyEvent[],
+  members: IntimacyMember[],
+  range?: SharedPlanRange
+): SharedPlanSummary {
+  const counted = events.filter(
+    (event) => event.kind === 'shared_plan' && (event.status === 'auto' || event.status === 'confirmed')
+  )
+  const byLastStage = Object.fromEntries(SHARED_PLAN_STAGES.map((stage) => [stage, 0])) as Record<
+    SharedPlanStage,
+    number
+  >
+  const proposedBy = Object.fromEntries(members.map((member) => [member.memberId, 0])) as Record<number, number>
+  const confirmedBy = Object.fromEntries(members.map((member) => [member.memberId, 0])) as Record<number, number>
+  let newlyProposed = 0
+  let updatedInRange = 0
+
+  for (const event of counted) {
+    const details = sharedPlanDetailsOf(event)
+    if (!details) continue
+    if (!details.stages.some((stage) => withinPlanRange(stage.at, range))) continue
+    updatedInRange += 1
+    byLastStage[details.lastObservedStage] += 1
+    if (details.proposerMemberId !== null) {
+      if (proposedBy[details.proposerMemberId] !== undefined) proposedBy[details.proposerMemberId] += 1
+      if (withinPlanRange(event.anchorTs, range)) newlyProposed += 1
+    }
+    const confirmers = new Set(
+      details.stages.filter((stage) => stage.stage === 'mutually_confirmed').map((stage) => stage.actorMemberId)
+    )
+    for (const memberId of confirmers) {
+      if (confirmedBy[memberId] !== undefined) confirmedBy[memberId] += 1
+    }
+  }
+  return { kind: 'shared_plan', newlyProposed, updatedInRange, byLastStage, proposedBy, confirmedBy }
+}
+
+function withinPlanRange(timestamp: number, range?: SharedPlanRange): boolean {
+  if (range?.startTs !== undefined && timestamp < range.startTs) return false
+  return !(range?.endTs !== undefined && timestamp > range.endTs)
+}
+
+function sharedPlanDetailsOf(event: IntimacyEvent): SharedPlanDetails | null {
+  return event.details.kind === 'shared_plan' ? event.details : null
 }
 
 /** Two questions about the same earlier matter are one matter, whether or not that matter is a coded K1 event. */

@@ -211,7 +211,7 @@ test('confirmed events and reviews stay inside one session and refuse a stale re
   assert.equal(supportEvent.statusCode, 200)
   assert.deepEqual(
     supportEvent.json().summaries.map((summary: { kind: string }) => summary.kind),
-    ['sharing', 'support_response', 'follow_up', 'good_news_response'],
+    ['sharing', 'support_response', 'follow_up', 'good_news_response', 'shared_plan'],
     'one request answers for every implemented kind'
   )
 
@@ -268,7 +268,7 @@ test('confirmed events and reviews stay inside one session and refuse a stale re
     method: 'POST',
     url: '/_web/sessions/private/intimacy/events',
     payload: {
-      kind: 'shared_plan',
+      kind: 'repair_attempt',
       subjectMemberId: 1,
       coreMessageIds: [1],
       details: { categories: ['feeling'], topic: 'other', isDistressDisclosure: 'no' },

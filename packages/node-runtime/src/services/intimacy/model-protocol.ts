@@ -5,6 +5,7 @@ import {
   type IntimacyMember,
   type IntimacyObservation,
   type ResponseObservation,
+  type SharedPlanStage,
   type SharingCategory,
   type SharingDetails,
   type SharingTopic,
@@ -54,6 +55,15 @@ export const RESPONSE_OBSERVATIONS: readonly ResponseObservation[] = [
 export const POSITIVE_FOR_SHARER_VALUES: readonly GoodNewsResponseDetails['positiveForSharer'][] = [
   'explicit_or_context_supported',
   'uncertain',
+]
+/** Display and counting order of the stages one shared plan may pass through. */
+export const SHARED_PLAN_STAGES: readonly SharedPlanStage[] = [
+  'proposed',
+  'discussed',
+  'mutually_confirmed',
+  'rescheduled',
+  'cancelled',
+  'retrospective_mentioned',
 ]
 
 const MAX_EVENTS_PER_WINDOW = 30
