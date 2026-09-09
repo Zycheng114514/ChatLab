@@ -1150,7 +1150,7 @@ test('a confirmed response counts the reply the user picked and refuses one the 
       ['a reply the discloser sent themselves', [BOB_LATE_DISCLOSURE], ['unclear']],
       ['a reply that came before the disclosure', [ALICE_FIRST_SHARING], ['unclear']],
       ['labels without a reply to attach them to', [], ['unclear']],
-      ['a reply with no label at all', [ALICE_SUPPORTS_BOB], []],
+      ['a reply with no label at all', [ALICE_DECORATION_PRIOR], []],
     ]
     for (const [name, responseMessageIds, responseLabels] of rejected) {
       await assert.rejects(
@@ -1723,7 +1723,7 @@ test('a user can pair a follow-up question by hand and is refused a pair the cha
       ['an earlier message that comes after the question', [ALICE_CHECKUP_QUESTION], MATTER_VISIT],
       ['an earlier message with no readable text', [23], MATTER_VISIT],
       ['no earlier message at all', [], MATTER_VISIT],
-      ['no matter to show the pair under', [ALICE_VISIT_PRIOR], '  '],
+      ['no matter to show the pair under', [ALICE_DECORATION_PRIOR], '  '],
     ]
     for (const [name, priorMessageIds, matter] of rejected) {
       await assert.rejects(
