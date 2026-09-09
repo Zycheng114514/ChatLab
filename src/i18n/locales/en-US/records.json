@@ -137,5 +137,11 @@
     "replyTo": "Reply to",
     "expandMessyContent": "Show full content",
     "collapseMessyContent": "Collapse"
+  },
+  "attachments": {
+    "reveal": "Show in folder",
+    "download": "Download attachment",
+    "missing": "File not found",
+    "unavailable": "Attachments cannot be opened on this platform"
   }
 }

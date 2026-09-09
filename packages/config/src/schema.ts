@@ -48,6 +48,20 @@ export const cliConfigSchema = z.object({
 
 export const desktopConfigSchema = z.object({
   close_behavior: z.enum(['background', 'quit']).default('background'),
+  ui_scale: z.number().min(0.8).max(2).default(1),
+})
+
+export const transcriptionConfigSchema = z.object({
+  /** Whisper size; base is the quality/download compromise (~80 MB). */
+  model: z.enum(['tiny', 'base', 'small']).default('base'),
+  /** `auto` picks zh or en from the session's own messages. */
+  language: z.enum(['auto', 'zh', 'en']).default('auto'),
+  /**
+   * Which Chinese script transcripts are stored in; `auto` follows the script
+   * the session is already written in (Whisper's Chinese output is traditional
+   * regardless of what the chat uses).
+   */
+  chinese_script: z.enum(['auto', 'simplified', 'traditional']).default('auto'),
 })
 
 export const configSchema = z.object({
@@ -58,6 +72,7 @@ export const configSchema = z.object({
   ui: uiConfigSchema.default({}),
   cli: cliConfigSchema.default({}),
   desktop: desktopConfigSchema.default({}),
+  transcription: transcriptionConfigSchema.default({}),
 })
 
 export type ChatLabConfig = z.infer<typeof configSchema>
@@ -68,3 +83,4 @@ export type LocaleConfig = z.infer<typeof localeConfigSchema>
 export type UiConfig = z.infer<typeof uiConfigSchema>
 export type CliConfig = z.infer<typeof cliConfigSchema>
 export type DesktopConfig = z.infer<typeof desktopConfigSchema>
+export type TranscriptionConfig = z.infer<typeof transcriptionConfigSchema>

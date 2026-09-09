@@ -126,6 +126,7 @@ test('exports JSON as ChatLab format that can be parsed for re-import', async ()
         content: '你好',
         platformMessageId: 'msg-2',
         replyToMessageId: undefined,
+        attachments: undefined,
       },
       {
         senderPlatformId: 'bob',
@@ -136,6 +137,7 @@ test('exports JSON as ChatLab format that can be parsed for re-import', async ()
         content: null,
         platformMessageId: 'msg-3',
         replyToMessageId: 'msg-2',
+        attachments: undefined,
       },
     ])
 

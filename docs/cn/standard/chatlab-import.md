@@ -426,11 +426,11 @@ ChatLab 不为调用方维护游标。推荐结构：
 
 ---
 
-## 媒体附件（协议预留）
+## 媒体附件
 
-当前版本重点保证文本消息的导入稳定性。`attachments` 作为协议预留字段：调用方可在消息中携带该字段，ChatLab 当前接收但不承诺完整落库与渲染。
+消息可以携带 `attachments` 数组，ChatLab 会把每个附件落库，并在聊天记录中显示附件芯片。字段结构见 [ChatLab 格式规范](./chatlab-format.md#附件-attachments)。
 
-预留字段结构见 [ChatLab 格式规范](./chatlab-format.md)。
+推送导入没有对应的本地导出目录，`path` 需要使用绝对路径或 http(s) URL；相对路径会原样保存，但 ChatLab 无法定位到文件。
 
 ---
 

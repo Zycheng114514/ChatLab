@@ -7,6 +7,7 @@
     "aiConfig": "Model Service",
     "aiDefaultModel": "Default Model",
     "semanticIndex": "Semantic Index",
+    "transcription": "Voice to Text",
     "chatPreferences": "Preferences",
     "aiPreprocess": "Preprocess",
     "dataManage": "Data Management",
@@ -34,6 +35,8 @@
     "appearance": {
       "title": "Appearance",
       "themeMode": "Theme Mode",
+      "uiScale": "UI scale",
+      "uiScaleDesc": "Adjust the size of the whole interface and text",
       "insightCardTheme": "Insight card colors",
       "insightCardThemeOption": "Color scheme {index}",
       "auto": "System",
@@ -361,6 +364,14 @@
         "confirmRemoveTitle": "Confirm Remove",
         "confirmRemoveMessage": "The semantic index for these conversations will be permanently deleted."
       }
+    },
+    "transcription": {
+      "title": "Voice to Text",
+      "description": "Turn voice messages into text on this machine. The transcript is written back to the message, where search and analysis can read it.",
+      "model": "Model",
+      "modelHint": "The model is downloaded on first use: tiny ~42 MB, base ~77 MB, small ~260 MB. Use base or larger for Chinese.",
+      "language": "Default language",
+      "chineseScript": "Chinese script"
     }
   },
   "aiPrompt": {

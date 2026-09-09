@@ -46,7 +46,32 @@
     "semanticIndex": "セマンティックインデックス",
     "incrementalImport": "追加インポート",
     "memberManagement": "メンバー管理",
-    "more": "その他"
+    "more": "その他",
+    "transcription": "音声を文字起こし"
+  },
+  "transcription": {
+    "title": "音声の文字起こし",
+    "description": "この会話でまだ文字になっていない音声添付を文字起こしします。結果はメッセージに書き戻され、検索や分析でも使えます。",
+    "empty": "この会話に文字起こし待ちの音声添付はありません。",
+    "pendingLabel": "対象",
+    "pendingCount": "音声 {count} 件",
+    "modelLabel": "モデル",
+    "languageLabel": "言語",
+    "downloadHint": "初回はモデルをダウンロードします（tiny 約 42 MB、base 約 77 MB、small 約 260 MB）。以降はオフラインでも使えます。",
+    "start": "文字起こしを開始",
+    "startRemaining": "残りを文字起こし",
+    "progressLabel": "進捗",
+    "waiting": "待機中",
+    "loadingModel": "モデルを読み込んで文字起こし中…",
+    "transcribing": "文字起こし中…",
+    "unnamedAudio": "名称未設定の音声",
+    "summary": "成功 {done} 件、失敗 {failed} 件",
+    "status": {
+      "done": "文字起こし済み",
+      "unsupported": "非対応の形式",
+      "tooLong": "30 分を超過",
+      "failed": "失敗"
+    }
   },
   "incremental": {
     "title": "チャット記録を追加",

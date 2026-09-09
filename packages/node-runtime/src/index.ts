@@ -491,6 +491,50 @@ export type {
   LocalEmbeddingRuntimeConfig,
 } from './semantic-index'
 
+// Local voice transcription (Whisper via Transformers.js)
+export * as transcription from './transcription'
+export {
+  createTranscriber,
+  createTranscriptionWorkerClient,
+  detectSessionChineseScript,
+  findAudioDecoder,
+  normalizeChineseScript,
+  resolveChineseScript,
+  planSessionTranscription,
+  registerAudioDecoder,
+  resolveTranscriptionModelCacheDir,
+  transcribeAttachmentPcm,
+  TranscribeAttachmentPcmError,
+  transcribeSessionAttachments,
+  DEFAULT_TRANSCRIPTION_PROFILE_ID,
+  MAX_TRANSCRIPTION_PCM_SAMPLES,
+  TRANSCRIPTION_MODEL_CACHE_DIR_ENV,
+  TRANSCRIPTION_PROFILE_IDS,
+  TRANSCRIPTION_PROFILES,
+  WHISPER_SAMPLE_RATE,
+  TranscriptionWorkerClient,
+  UnsupportedAudioFormatError,
+} from './transcription'
+export type {
+  AudioDecoder,
+  ChineseScript,
+  ChineseScriptSetting,
+  CreateTranscriberOptions,
+  ResolvedTranscriptionLanguage,
+  TranscribeAttachmentPcmErrorCode,
+  TranscribeAttachmentPcmResult,
+  Transcriber,
+  TranscriptionCandidate,
+  TranscriptionLanguage,
+  TranscriptionPlan,
+  TranscriptionProfileId,
+  TranscriptionProgress,
+  TranscriptionSkip,
+  TranscribeSessionAttachmentsResult,
+  TranscribeWorkerPcmResult,
+  TranscriptionWorkerClientOptions,
+} from './transcription'
+
 export {
   CONTACTS_ALGORITHM_VERSION,
   PEOPLE_RELATIONSHIPS_ALGORITHM_VERSION,
@@ -516,6 +560,12 @@ export {
   createNavigationLayoutService,
   NavigationLayoutValidationError,
   createDatabaseManagerAdapter,
+  resolveAttachmentFile,
+  getTranscriptionSettings,
+  InvalidTranscriptionSettingError,
+  listSessionTranscriptionQueue,
+  transcribeSessionAttachmentPcm,
+  updateTranscriptionSettings,
   executePushImportUnlocked,
   DEFAULT_IMPORT_IDEMPOTENCY_TTL_MS,
   hashImportBody,
@@ -524,6 +574,7 @@ export {
 } from './services'
 export type {
   SessionRuntimeAdapter,
+  SessionAttachmentFile,
   AnalysisSessionDTO,
   ListSessionsOptions,
   MembersPaginatedDTO,
@@ -598,4 +649,7 @@ export type {
   PushImportMessage,
   PushImportMember,
   PushImportMeta,
+  PendingTranscriptionItem,
+  TranscriptionSettings,
+  TranscriptionWorker,
 } from './services'

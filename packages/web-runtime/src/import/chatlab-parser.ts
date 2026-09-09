@@ -1,3 +1,5 @@
+import { inferAttachmentFromContent, normalizeAttachments } from '@openchatlab/parser/browser'
+import type { ParsedAttachment } from '@openchatlab/shared-types'
 import { WebRuntimeError } from '../runtime-error'
 
 export type ChatLabBrowserFormatId = 'chatlab' | 'chatlab-jsonl'
@@ -39,6 +41,7 @@ export interface BrowserParsedMessage {
   content: string | null
   platformMessageId?: string
   replyToMessageId?: string
+  attachments?: ParsedAttachment[]
 }
 
 export interface BrowserChatParseResult {
@@ -268,7 +271,16 @@ function parseMessage(value: unknown, path: string): BrowserParsedMessage {
   if (senderGroupNickname !== undefined) message.senderGroupNickname = senderGroupNickname
   if (platformMessageId !== undefined) message.platformMessageId = platformMessageId
   if (replyToMessageId !== undefined) message.replyToMessageId = replyToMessageId
+
+  // Same attachment rules as the Node parser and the Rust kernel.
+  const attachments =
+    normalizeAttachments(value.attachments).attachments ?? toList(inferAttachmentFromContent(type, content))
+  if (attachments !== undefined) message.attachments = attachments
   return message
+}
+
+function toList(attachment: ParsedAttachment | undefined): ParsedAttachment[] | undefined {
+  return attachment ? [attachment] : undefined
 }
 
 function mergeInferredMembers(

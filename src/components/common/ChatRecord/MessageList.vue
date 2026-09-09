@@ -10,6 +10,7 @@ import dayjs from 'dayjs'
 import MessageItem from './MessageItem.vue'
 import { chatTopicColorStyle, isMessageInChatTopicHighlight, type ChatTopicHighlight } from './topic-highlight'
 import type { ChatRecordMessage, ChatRecordQuery } from './types'
+import type { MessageAttachment } from '@openchatlab/core'
 import { useSessionStore } from '@/stores/session'
 import { useMessageService } from '@/services'
 import { resolveChatRecordSessionId } from './query-session'
@@ -73,6 +74,9 @@ const isFiltered = computed(() => {
 
 // 消息列表
 const messages = ref<ChatRecordMessage[]>([])
+// 已加载页的附件，按消息 ID 分组；没有附件的消息不会出现在这里
+const attachmentsByMessageId = ref<Record<number, MessageAttachment[]>>({})
+const requestedAttachmentMessageIds = new Set<number>()
 const highlightedTopicMessageIds = computed(() => new Set(props.highlightTopic?.messageIds ?? []))
 const isLoading = ref(false)
 const isLoadingMore = ref(false)
@@ -544,6 +548,37 @@ function measureElement(el: Element | null) {
   }
 }
 
+// 每页消息加载后批量取附件：一次 IN 查询覆盖整页，未命中的消息不会重复请求
+watch(
+  messages,
+  async (currentMessages) => {
+    const sessionId = effectiveSessionId.value
+    if (!sessionId) return
+
+    const pendingIds = currentMessages
+      .map((message) => message.id)
+      .filter((id) => typeof id === 'number' && !requestedAttachmentMessageIds.has(id))
+    if (pendingIds.length === 0) return
+    for (const id of pendingIds) requestedAttachmentMessageIds.add(id)
+
+    try {
+      const attachments = await useMessageService().getMessageAttachments(sessionId, pendingIds)
+      if (Object.keys(attachments).length === 0) return
+      attachmentsByMessageId.value = { ...attachmentsByMessageId.value, ...attachments }
+    } catch {
+      // 附件是附加信息，取不到时消息本身仍然正常显示
+      for (const id of pendingIds) requestedAttachmentMessageIds.delete(id)
+    }
+  },
+  { immediate: true }
+)
+
+// 切换会话时丢弃上一会话的附件缓存
+watch(effectiveSessionId, () => {
+  attachmentsByMessageId.value = {}
+  requestedAttachmentMessageIds.clear()
+})
+
 // 监听查询变化
 watch(
   () => props.query,
@@ -650,6 +685,8 @@ defineExpose({
             :topic-color-index="isTopicMessage(messages[virtualItem.index]!) ? highlightTopic?.colorIndex : undefined"
             :highlight-keywords="query.highlightKeywords"
             :is-filtered="isFiltered"
+            :session-id="effectiveSessionId ?? undefined"
+            :attachments="attachmentsByMessageId[messages[virtualItem.index]!.id]"
             @view-context="(id) => emit('jump-to-message', id)"
           />
         </div>

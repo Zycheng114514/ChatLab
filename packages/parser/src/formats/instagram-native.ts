@@ -17,7 +17,7 @@
 
 import * as fs from 'fs'
 import * as path from 'path'
-import { KNOWN_PLATFORMS, ChatType, MessageType } from '@openchatlab/shared-types'
+import { KNOWN_PLATFORMS, ChatType, MessageType, type ParsedAttachment } from '@openchatlab/shared-types'
 import { PARSER_FORMAT_IDS } from '../format-ids'
 import type {
   FormatFeature,
@@ -189,6 +189,19 @@ function detectMessageType(msg: InstagramMessage): MessageType {
 }
 
 /**
+ * 构建附件列表
+ * uri 是相对导出目录的路径（如 messages/inbox/xxx/photos/1.jpg）
+ */
+function buildAttachments(msg: InstagramMessage): ParsedAttachment[] | undefined {
+  const attachments: ParsedAttachment[] = [
+    ...(msg.photos ?? []).map((photo) => ({ kind: 'image' as const, path: photo.uri })),
+    ...(msg.videos ?? []).map((video) => ({ kind: 'video' as const, path: video.uri })),
+    ...(msg.audio_files ?? []).map((audio) => ({ kind: 'audio' as const, path: audio.uri })),
+  ]
+  return attachments.length > 0 ? attachments : undefined
+}
+
+/**
  * 获取消息内容
  */
 function getMessageContent(msg: InstagramMessage): string | null {
@@ -314,6 +327,7 @@ async function* parseInstagram(options: ParseOptions): AsyncGenerator<ParseEvent
       timestamp,
       type,
       content,
+      attachments: buildAttachments(msg),
     })
 
     messagesProcessed++

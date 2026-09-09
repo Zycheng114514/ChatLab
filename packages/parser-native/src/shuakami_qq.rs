@@ -628,6 +628,7 @@ pub(crate) fn parse_shuakami_qq_single_file_message(
         message_type,
         content: build_shuakami_qq_message_content(content.text, is_recalled),
         reply_to_message_id: content.reply_to_message_id,
+        attachments: None,
     };
 
     Ok(Some(ShuakamiQqObservedMessage {

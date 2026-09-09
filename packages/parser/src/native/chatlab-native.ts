@@ -11,7 +11,12 @@
 import type { ChatType, MessageType } from '@openchatlab/shared-types'
 import type { NativeMember, NativeMessage } from '@openchatlab/parser-native'
 import type { ParsedMember, ParsedMessage, ParsedMeta } from '../types'
-import { createNativeFirstParser, type NativeFormatAdapter, type ParseGenerator } from './create-native-parser'
+import {
+  createNativeFirstParser,
+  toParsedAttachment,
+  type NativeFormatAdapter,
+  type ParseGenerator,
+} from './create-native-parser'
 
 /** Shape of metaJson() from the Rust chatlab kernel. */
 interface ChatlabMetaJson {
@@ -85,6 +90,7 @@ const chatlabAdapter: NativeFormatAdapter = {
       content: message.content ?? null,
       platformMessageId: message.platformMessageId,
       replyToMessageId: message.replyToMessageId,
+      attachments: message.attachments?.map(toParsedAttachment),
     }
   },
 }

@@ -5,6 +5,7 @@ import type { MergeRouteContext } from '../../context/merge'
 import type { RuntimeRouteContext } from '../../context/runtime'
 import type { ServiceRouteContext } from '../../context/services'
 import type { StorageRouteContext } from '../../context/storage'
+import type { TranscriptionWorker } from '@openchatlab/node-runtime'
 import { registerNodePlugins, type NodePluginDescriptor } from '../../plugins/node'
 import { registerAiRoutes, type AiRouteOptions } from './register-ai'
 import { registerAnalyticsRoutes } from './analytics'
@@ -22,6 +23,7 @@ import { registerSessionIndexRoutes } from './session-index'
 import { registerSessionRoutes } from './sessions'
 import { registerSqlRoutes } from './sql'
 import { registerTelemetryRoutes } from './telemetry'
+import { registerTranscriptionRoutes } from './transcription'
 
 export type WebRoutesContext = RuntimeRouteContext &
   ServiceRouteContext &
@@ -32,6 +34,11 @@ export type WebRoutesContext = RuntimeRouteContext &
 export interface WebRouteOptions extends AiRouteOptions {
   /** Trusted Node plugin facets selected by the platform's static catalog. */
   nodePlugins?: readonly NodePluginDescriptor[]
+  /**
+   * Worker client that runs Whisper. CLI Web injects one; the desktop app
+   * transcribes over IPC instead, so its routes are simply not registered.
+   */
+  transcriptionWorker?: TranscriptionWorker
 }
 
 /** Register the internal Web API under /_web, excluding lifecycle-owned automation routes. */
@@ -57,5 +64,8 @@ export function registerWebRoutes(server: FastifyInstance, ctx: WebRoutesContext
   registerMergeRoutes(server, resolvedCtx)
   registerCacheRoutes(server, resolvedCtx)
   registerTelemetryRoutes(server, resolvedCtx)
+  if (options?.transcriptionWorker) {
+    registerTranscriptionRoutes(server, resolvedCtx, options.transcriptionWorker)
+  }
   registerLogRoutes(server)
 }

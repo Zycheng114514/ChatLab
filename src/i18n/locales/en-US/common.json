@@ -51,6 +51,18 @@
     "other": "Other",
     "unknown": "Unknown"
   },
+  "transcriptionLanguage": {
+    "auto": "Auto",
+    "zh": "Chinese",
+    "en": "English",
+    "autoHint": "\"Auto\" picks Chinese or English from the text already in this conversation."
+  },
+  "chineseScript": {
+    "auto": "Auto",
+    "simplified": "Simplified",
+    "traditional": "Traditional",
+    "autoHint": "Speech recognition always writes Chinese in traditional characters; \"Auto\" stores the transcript in whichever script this conversation already uses."
+  },
   "weekday": {
     "mon": "Mon",
     "tue": "Tue",

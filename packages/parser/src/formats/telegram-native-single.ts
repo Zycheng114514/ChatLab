@@ -16,7 +16,13 @@ import type {
   Parser,
 } from '../types'
 import { createProgress, getFileSize } from '../utils'
-import { buildContent, detectMessageType, extractPlatformId, mapChatType } from './utils/telegram-utils'
+import {
+  buildAttachments,
+  buildContent,
+  detectMessageType,
+  extractPlatformId,
+  mapChatType,
+} from './utils/telegram-utils'
 import type { TelegramMessage } from './utils/telegram-utils'
 
 const { parser } = streamJson
@@ -179,10 +185,16 @@ function parseTelegramMessage(message: TelegramMessage, memberMap: Map<string, P
     type: detectMessageType(message),
     content: buildContent(message),
     replyToMessageId: message.reply_to_message_id ? String(message.reply_to_message_id) : undefined,
+    attachments: buildAttachments(message),
   }
 }
 
-export const parser_: Parser = { feature, parse: parseTelegramSingle }
+import { withNativeTelegramSingle } from '../native/telegram-native'
+
+// parseTelegramSingleAccelerated：优先走 Rust 内核，native 不可用/失败时自动回退本文件的 TS 实现
+export const parseTelegramSingleAccelerated = withNativeTelegramSingle(parseTelegramSingle)
+
+export const parser_: Parser = { feature, parse: parseTelegramSingleAccelerated }
 
 const module_: FormatModule = { feature, parser: parser_ }
 

@@ -18,6 +18,8 @@ export interface SessionMeta {
   groupId: string | null
   groupAvatar: string | null
   ownerId: string | null
+  /** Directory the export file was imported from; null for imports without a local source. */
+  sourceDir: string | null
 }
 
 export interface SessionOverview {
@@ -145,6 +147,7 @@ export function getSessionMeta(db: DatabaseAdapter): SessionMeta | null {
     groupId: (row.group_id as string) || null,
     groupAvatar: (row.group_avatar as string) || null,
     ownerId: (row.owner_id as string) || null,
+    sourceDir: (row.source_dir as string) || null,
   }
 }
 

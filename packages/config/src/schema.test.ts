@@ -35,3 +35,43 @@ test('accepts supported Windows close behaviors and rejects invalid values', () 
   assert.throws(() => configSchema.parse({ desktop: { close_behavior: 'ask' } }))
   assert.throws(() => configSchema.parse({ desktop: { close_behavior: 'hide-forever' } }))
 })
+
+test('defaults the desktop UI scale to 1', () => {
+  const config = configSchema.parse({})
+
+  assert.equal(config.desktop.ui_scale, 1)
+})
+
+test('accepts supported desktop UI scales and rejects out-of-range or non-numeric values', () => {
+  for (const uiScale of [0.8, 1.25, 2]) {
+    assert.equal(configSchema.parse({ desktop: { ui_scale: uiScale } }).desktop.ui_scale, uiScale)
+  }
+
+  for (const uiScale of [0.5, 3, '1']) {
+    assert.throws(() => configSchema.parse({ desktop: { ui_scale: uiScale } }))
+  }
+})
+
+test('defaults transcription to the base model, automatic language and automatic Chinese script', () => {
+  const config = configSchema.parse({})
+
+  assert.equal(config.transcription.model, 'base')
+  assert.equal(config.transcription.language, 'auto')
+  assert.equal(config.transcription.chinese_script, 'auto')
+})
+
+test('accepts supported transcription models, languages and Chinese scripts and rejects the rest', () => {
+  for (const model of ['tiny', 'base', 'small']) {
+    assert.equal(configSchema.parse({ transcription: { model } }).transcription.model, model)
+  }
+  for (const language of ['auto', 'zh', 'en']) {
+    assert.equal(configSchema.parse({ transcription: { language } }).transcription.language, language)
+  }
+  for (const script of ['auto', 'simplified', 'traditional']) {
+    assert.equal(configSchema.parse({ transcription: { chinese_script: script } }).transcription.chinese_script, script)
+  }
+
+  assert.throws(() => configSchema.parse({ transcription: { model: 'large' } }))
+  assert.throws(() => configSchema.parse({ transcription: { language: 'ja' } }))
+  assert.throws(() => configSchema.parse({ transcription: { chinese_script: 'zh-TW' } }))
+})

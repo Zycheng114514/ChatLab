@@ -12,6 +12,7 @@
 import type { DatabaseAdapter } from '@openchatlab/core'
 import {
   CHAT_DB_INDEXES,
+  ensureMessageSearchIndex,
   generateSessionIndex as generateCoreSessionIndex,
   normalizeSessionGapThreshold,
 } from '@openchatlab/core'
@@ -30,6 +31,7 @@ import {
   type ParseProgress,
 } from '@openchatlab/parser'
 import * as fs from 'fs'
+import * as path from 'path'
 import { performance } from 'node:perf_hooks'
 import { MessageBatchInserter, type MessageInsertRow } from './message-batch-inserter'
 import { createMessageDedupState, registerMessageAndCheckDuplicate, type DedupMessage } from './message-deduplicator'
@@ -68,6 +70,8 @@ export interface ImportStageTimings {
   messageWriteMs: number
   nicknameHistoryMs: number
   indexCreationMs: number
+  /** Time spent creating and backfilling the message full-text index. */
+  searchIndexMs: number
   checkpointMs: number
   sessionIndexMs: number
   postImportHookMs: number
@@ -305,6 +309,7 @@ async function streamImportSingle(
     messageWriteMs: 0,
     nicknameHistoryMs: 0,
     indexCreationMs: 0,
+    searchIndexMs: 0,
     checkpointMs: 0,
     sessionIndexMs: 0,
     postImportHookMs: 0,
@@ -321,6 +326,8 @@ async function streamImportSingle(
   logger?.init(sessionId)
 
   logger?.info(`File path: ${filePath}`)
+  // Attachment paths in an export are relative to the export file, not to the preprocessed temp copy.
+  const sourceDir = path.dirname(path.resolve(filePath))
   logger?.info(`Detected format: ${formatFeature.name} (${formatFeature.id})`)
   logger?.info(`Platform: ${formatFeature.platform}`)
   logger?.perf('Import started', 0)
@@ -377,7 +384,8 @@ async function streamImportSingle(
         ok: true as const,
         db,
         insertMeta: db.prepare(
-          `INSERT INTO meta (name, platform, type, imported_at, group_id, group_avatar, owner_id) VALUES (?, ?, ?, ?, ?, ?, ?)`
+          `INSERT INTO meta (name, platform, type, imported_at, group_id, group_avatar, owner_id, source_dir)
+           VALUES (?, ?, ?, ?, ?, ?, ?, ?)`
         ),
         insertMember: db.prepare(
           `INSERT INTO member (platform_id, account_name, group_nickname, aliases, avatar, roles)
@@ -582,7 +590,8 @@ async function streamImportSingle(
                 Math.floor(Date.now() / 1000),
                 meta.groupId || null,
                 meta.groupAvatar || null,
-                meta.ownerId || null
+                meta.ownerId || null,
+                sourceDir
               )
               metaInserted = true
             }
@@ -685,6 +694,7 @@ async function streamImportSingle(
                 content: dedupMessage.content,
                 replyToMessageId: msg.replyToMessageId || null,
                 platformMessageId: msg.platformMessageId || null,
+                attachments: msg.attachments,
               })
               messageCountInBatch++
               totalMessageCount++
@@ -764,6 +774,17 @@ async function streamImportSingle(
     sampleRss()
     logger?.perf('Indexes created', totalMessageCount)
 
+    // The bulk INSERTs ran before message_fts existed, so the index starts empty
+    // and has to be backfilled once here; later writes go through its triggers.
+    const searchIndexStartedAt = now()
+    const searchIndex = ensureMessageSearchIndex(db)
+    timings.searchIndexMs = elapsedMs(searchIndexStartedAt, now)
+    sampleRss()
+    logger?.perf(
+      `Search index ${searchIndex.rebuilt ? 'built' : 'reused'} (${searchIndex.rows} rows)`,
+      totalMessageCount
+    )
+
     // Final WAL checkpoint + session index + post-import hook
     onProgress({
       stage: 'indexing',
@@ -809,7 +830,7 @@ async function streamImportSingle(
 
     logger?.perfDetail(
       `[Stages] parser=${timings.parserMs.toFixed(1)}ms | message-write=${timings.messageWriteMs.toFixed(1)}ms | ` +
-        `indexes=${timings.indexCreationMs.toFixed(1)}ms | ` +
+        `indexes=${timings.indexCreationMs.toFixed(1)}ms | search-index=${timings.searchIndexMs.toFixed(1)}ms | ` +
         `session-index=${timings.sessionIndexMs.toFixed(1)}ms | hook=${timings.postImportHookMs.toFixed(1)}ms`
     )
     logger?.perf('Import completed', totalMessageCount)

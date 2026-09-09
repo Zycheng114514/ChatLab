@@ -14,7 +14,8 @@
  * identical to the TS parser of the same format (verified by parity tests).
  */
 
-import type { NativeMember, NativeMessage, NativeParser } from '@openchatlab/parser-native'
+import type { AttachmentKind, ParsedAttachment } from '@openchatlab/shared-types'
+import type { NativeAttachment, NativeMember, NativeMessage, NativeParser } from '@openchatlab/parser-native'
 import type { ParseEvent, ParseOptions, ParsedMember, ParsedMessage, ParsedMeta } from '../types'
 import { getFileSize, createProgress } from '../utils'
 import { loadNativeParser } from './loader'
@@ -36,6 +37,20 @@ export interface NativeFormatAdapter {
   mapMessage: (message: NativeMessage, metaJson: unknown) => ParsedMessage
   /** Optional format-specific summary lines emitted after a successful parse. */
   completionLogs?: (metaJson: unknown) => string[]
+}
+
+/** Same key set as the TS parsers' attachments, so parity assertions hold. */
+export function toParsedAttachment(attachment: NativeAttachment): ParsedAttachment {
+  return {
+    kind: attachment.kind as AttachmentKind,
+    path: attachment.path,
+    name: attachment.name ?? undefined,
+    mimeType: attachment.mimeType ?? undefined,
+    size: attachment.size ?? undefined,
+    durationMs: attachment.durationMs ?? undefined,
+    width: attachment.width ?? undefined,
+    height: attachment.height ?? undefined,
+  }
 }
 
 async function* pumpNativeParser(

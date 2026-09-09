@@ -46,7 +46,32 @@
     "semanticIndex": "Semantic Index",
     "incrementalImport": "Import More",
     "memberManagement": "Manage Member",
-    "more": "More"
+    "more": "More",
+    "transcription": "Transcribe Voice"
+  },
+  "transcription": {
+    "title": "Voice to Text",
+    "description": "Transcribe the voice attachments in this conversation that have no text yet. The transcript is written back to the message, so search and analysis can see it.",
+    "empty": "This conversation has no voice attachments left to transcribe.",
+    "pendingLabel": "To transcribe",
+    "pendingCount": "{count} voice messages",
+    "modelLabel": "Model",
+    "languageLabel": "Language",
+    "downloadHint": "The model is downloaded the first time you use it (tiny ~42 MB, base ~77 MB, small ~260 MB) and works offline afterwards.",
+    "start": "Start transcribing",
+    "startRemaining": "Transcribe the rest",
+    "progressLabel": "Progress",
+    "waiting": "Waiting",
+    "loadingModel": "Loading the model and transcribing…",
+    "transcribing": "Transcribing…",
+    "unnamedAudio": "Untitled audio",
+    "summary": "{done} transcribed, {failed} failed",
+    "status": {
+      "done": "Transcribed",
+      "unsupported": "Format not supported yet",
+      "tooLong": "Longer than 30 minutes",
+      "failed": "Failed"
+    }
   },
   "incremental": {
     "title": "Append Chat Records",

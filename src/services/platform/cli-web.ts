@@ -11,9 +11,17 @@ import type {
   RemoteConfigResult,
   CheckUpdateResult,
   PerformUpdateResult,
+  TranscriptionCapability,
 } from './types'
 import type { AnalyticsEventName, DesktopCloseBehavior } from '@openchatlab/shared-types'
-import { fetchWithAuth } from '../utils/http'
+import type {
+  PendingTranscriptionItem,
+  TranscriptionLanguage,
+  TranscriptionResult,
+  TranscriptionSettings,
+} from '../transcription/types'
+import { fetchWithAuth, get, getBaseUrl, patch } from '../utils/http'
+import { pcmToArrayBuffer } from '../transcription/decode-audio'
 import { reportError } from '../log-report'
 
 declare const __APP_VERSION__: string
@@ -54,6 +62,48 @@ export class CliWebPlatformAdapter implements PlatformAdapter {
 
   async setDesktopCloseBehavior(_behavior: DesktopCloseBehavior): Promise<{ success: boolean; error?: string }> {
     return { success: false, error: 'Not available in CLI Web' }
+  }
+
+  async getUiScale(): Promise<number> {
+    return 1
+  }
+
+  async setUiScale(_scale: number): Promise<{ success: boolean; error?: string }> {
+    return { success: false, error: 'UI scale is only available on desktop' }
+  }
+
+  // No revealAttachment: the browser has no file manager, so chips download instead.
+  getAttachmentUrl(sessionId: string, attachmentId: number): string | null {
+    return `${getBaseUrl()}/sessions/${encodeURIComponent(sessionId)}/attachments/${attachmentId}`
+  }
+
+  readonly transcription: TranscriptionCapability = {
+    getConfig: () => get<TranscriptionSettings>('/transcription/config'),
+    setConfig: (body: Partial<TranscriptionSettings>) => patch<TranscriptionSettings>('/transcription/config', body),
+    listPending: async (sessionId: string) =>
+      (
+        await get<{ items: PendingTranscriptionItem[] }>(
+          `/sessions/${encodeURIComponent(sessionId)}/transcription/pending`
+        )
+      ).items,
+    transcribePcm: async (
+      sessionId: string,
+      attachmentId: number,
+      pcm: Float32Array,
+      language?: TranscriptionLanguage
+    ) => {
+      // Raw little-endian Float32 samples; the route parses the body as a Buffer.
+      const query = language ? `?language=${language}` : ''
+      const resp = await fetchWithAuth(
+        `${getBaseUrl()}/sessions/${encodeURIComponent(sessionId)}/attachments/${attachmentId}/transcribe${query}`,
+        { method: 'POST', headers: { 'Content-Type': 'application/octet-stream' }, body: pcmToArrayBuffer(pcm) }
+      )
+      if (!resp.ok) {
+        const text = await resp.text().catch(() => '')
+        throw new Error(`HTTP ${resp.status}: ${text}`)
+      }
+      return (await resp.json()) as TranscriptionResult
+    },
   }
 
   async getAnalyticsEnabled(): Promise<boolean> {

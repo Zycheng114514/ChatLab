@@ -46,7 +46,32 @@
     "semanticIndex": "語意索引",
     "incrementalImport": "追加匯入",
     "memberManagement": "成員管理",
-    "more": "更多"
+    "more": "更多",
+    "transcription": "轉寫語音"
+  },
+  "transcription": {
+    "title": "語音轉文字",
+    "description": "把這個對話裡還沒有文字的語音附件轉成文字，結果會寫回訊息，之後可以搜尋和分析。",
+    "empty": "這個對話沒有需要轉寫的語音附件。",
+    "pendingLabel": "待轉寫",
+    "pendingCount": "{count} 則語音",
+    "modelLabel": "模型",
+    "languageLabel": "語言",
+    "downloadHint": "第一次使用會下載模型（tiny 約 42 MB、base 約 77 MB、small 約 260 MB），下載後可離線使用。",
+    "start": "開始轉寫",
+    "startRemaining": "繼續轉寫",
+    "progressLabel": "轉寫進度",
+    "waiting": "等待中",
+    "loadingModel": "載入模型並轉寫…",
+    "transcribing": "轉寫中…",
+    "unnamedAudio": "未命名音訊",
+    "summary": "成功 {done} 則，失敗 {failed} 則",
+    "status": {
+      "done": "已轉寫",
+      "unsupported": "格式暫不支援",
+      "tooLong": "超過 30 分鐘",
+      "failed": "失敗"
+    }
   },
   "incremental": {
     "title": "新增聊天紀錄",

@@ -2,6 +2,8 @@ import { ElectronAPI } from '@electron-toolkit/preload'
 import type { ImportProgress, ExportProgress } from '../../../src/types/base'
 import type { TokenUsage, AgentRuntimeStatus, SerializedErrorInfo, SecurityApi } from '../shared/types'
 import type { AnalyticsEventName, DesktopCloseBehavior, TimeFilter } from '@openchatlab/shared-types'
+import type { PendingTranscriptionItem, TranscriptionSettings } from '@openchatlab/node-runtime'
+import type { TranscriptionLanguage } from '@openchatlab/core'
 
 // 迁移相关类型
 interface MigrationInfo {
@@ -50,6 +52,7 @@ interface ImportDiagnostics {
       messageWriteMs: number
       nicknameHistoryMs: number
       indexCreationMs: number
+      searchIndexMs: number
       checkpointMs: number
       sessionIndexMs: number
       postImportHookMs: number
@@ -72,10 +75,22 @@ interface ChatImportResult {
   error?: string
   importMode?: 'created' | 'incremental'
   matchedBy?: 'source-session-id' | 'stable-id' | 'trailing-messages'
-  createReason?: 'no-match' | 'ambiguous'
+  createReason?: 'no-match' | 'ambiguous' | 'user-choice'
   newMessageCount?: number
   duplicateCount?: number
   diagnostics?: ImportDiagnostics
+}
+
+interface ChatAutoImportAnalysis {
+  success: boolean
+  importMode?: 'created' | 'incremental'
+  sessionId?: string
+  matchedBy?: 'source-session-id' | 'stable-id' | 'trailing-messages'
+  createReason?: 'no-match' | 'ambiguous' | 'user-choice'
+  totalMessageCount?: number
+  newMessageCount?: number
+  duplicateCount?: number
+  error?: string
 }
 
 /**
@@ -87,6 +102,7 @@ interface ChatApi {
   import: (filePath: string) => Promise<ChatImportResult>
   importDirectory: (dirPath: string, options?: Record<string, unknown>) => Promise<ChatImportResult>
   importWithOptions: (filePath: string, formatOptions: Record<string, unknown>) => Promise<ChatImportResult>
+  analyzeAutoImport: (filePath: string, formatOptions?: Record<string, unknown>) => Promise<ChatAutoImportAnalysis>
   importBatch: (
     batchId: string,
     items: Array<{ id: string; filePath: string }>,
@@ -194,6 +210,22 @@ interface Api {
     setOpenAtLogin: (enabled: boolean) => Promise<{ success: boolean; error?: string }>
     getDesktopCloseBehavior: () => Promise<DesktopCloseBehavior>
     setDesktopCloseBehavior: (behavior: DesktopCloseBehavior) => Promise<{ success: boolean; error?: string }>
+    getUiScale: () => Promise<number>
+    setUiScale: (scale: number) => Promise<{ success: boolean; error?: string }>
+  }
+  attachment: {
+    revealInFolder: (sessionId: string, attachmentId: number) => Promise<boolean>
+  }
+  transcription: {
+    getConfig: () => Promise<TranscriptionSettings>
+    setConfig: (patch: Partial<TranscriptionSettings>) => Promise<TranscriptionSettings>
+    listPending: (sessionId: string) => Promise<{ items: PendingTranscriptionItem[] }>
+    transcribePcm: (
+      sessionId: string,
+      attachmentId: number,
+      pcm: ArrayBuffer,
+      language?: TranscriptionLanguage
+    ) => Promise<{ text: string; contentUpdated: boolean }>
   }
 }
 

@@ -26,6 +26,7 @@ import type {
   ParsedMessage,
 } from '../types'
 import { getFileSize, createProgress, readFileHeadBytes } from '../utils'
+import { inferAttachmentFromContent, normalizeAttachments } from './utils/attachments'
 import * as path from 'path'
 
 const { parser } = streamJson
@@ -72,6 +73,7 @@ interface ChatLabMessage {
   type: number // MessageType
   content: string | null
   replyToMessageId?: string // 回复的目标消息 ID（平台原始 ID）
+  attachments?: unknown // 媒体附件，解析时校验
 }
 
 interface ChatLabMember {
@@ -161,6 +163,7 @@ async function* parseChatLab(options: ParseOptions): AsyncGenerator<ParseEvent, 
   const members: ParsedMember[] = []
   const memberMapFromMessages = new Map<string, ParsedMember>()
   const messageBatch: ParsedMessage[] = []
+  let skippedAttachments = 0
 
   // 流式解析
   await new Promise<void>((resolve, reject) => {
@@ -200,6 +203,10 @@ async function* parseChatLab(options: ParseOptions): AsyncGenerator<ParseEvent, 
         })
       }
 
+      const normalized = normalizeAttachments(msg.attachments)
+      skippedAttachments += normalized.skipped
+      const inferred = normalized.attachments ? undefined : inferAttachmentFromContent(msg.type, msg.content)
+
       batchCollector.push({
         senderPlatformId: msg.sender,
         senderAccountName: msg.accountName,
@@ -209,6 +216,7 @@ async function* parseChatLab(options: ParseOptions): AsyncGenerator<ParseEvent, 
         content: msg.content,
         platformMessageId: msg.platformMessageId,
         replyToMessageId: msg.replyToMessageId,
+        attachments: normalized.attachments ?? (inferred ? [inferred] : undefined),
       })
 
       messagesProcessed++
@@ -261,6 +269,9 @@ async function* parseChatLab(options: ParseOptions): AsyncGenerator<ParseEvent, 
   // 记录解析摘要
   const memberCount = members.length > 0 ? members.length : memberMapFromMessages.size
   onLog?.('info', `解析完成: ${messagesProcessed} 条消息, ${memberCount} 个成员`)
+  if (skippedAttachments > 0) {
+    onLog?.('info', `跳过 ${skippedAttachments} 条结构非法的附件`)
+  }
 
   yield {
     type: 'done',

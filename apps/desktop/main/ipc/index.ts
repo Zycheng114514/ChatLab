@@ -16,6 +16,7 @@ import { registerAnalyticsHandlers } from '../analytics'
 import { registerApiHandlers, initApiServer, cleanupApiServer } from './api'
 import { registerDemoHandlers } from './demo'
 import { registerSecurityHandlers } from './security'
+import { closeTranscriptionWorker, registerTranscriptionHandlers } from './transcription'
 import { cleanupArchiveImportSources } from '../import/archive-source-runtime'
 // 导入 Worker 模块（用于异步分析查询和流式导入）
 import * as worker from '../worker/workerManager'
@@ -48,6 +49,7 @@ const mainIpcMain = (win: BrowserWindow) => {
   registerApiHandlers(context)
   registerDemoHandlers(context)
   registerSecurityHandlers(context)
+  registerTranscriptionHandlers()
 
   // 启动 ChatLab API 服务（异步，不阻塞 IPC 注册）
   initApiServer(context).catch((err) => {
@@ -75,6 +77,7 @@ export const cleanupAsync = async () => {
   try {
     // 关闭 ChatLab API 服务
     await cleanupApiServer()
+    await closeTranscriptionWorker()
     await cleanupArchiveImportSources()
     // 等待 Worker 完全关闭
     await worker.closeWorkerAsync()

@@ -9,11 +9,14 @@ import * as fs from 'fs'
 import { DataDirCompatibilityError } from '../data-dir-compat'
 import {
   CHAT_DB_SCHEMA,
+  ensureMessageSearchIndex,
   generateSessionIndex,
   generateIncrementalSessionIndex,
   getSessionIndexStats,
+  insertMessageAttachments,
 } from '@openchatlab/core'
-import type { DatabaseAdapter } from '@openchatlab/core'
+import type { DatabaseAdapter, MessageAttachmentInsert } from '@openchatlab/core'
+import { ATTACHMENT_KINDS, type AttachmentKind, type ParsedAttachment } from '@openchatlab/shared-types'
 import type { DatabaseManager } from '../database-manager'
 import { writeParseResultToDb } from '../import'
 import { ImportInProgressError, withDataDirImportLock } from '../import/import-lock'
@@ -38,6 +41,7 @@ export interface PushImportMessage {
   content?: string | null
   platformMessageId?: string
   replyToMessageId?: string
+  attachments?: ParsedAttachment[]
 }
 
 export interface PushImportMember {
@@ -191,6 +195,17 @@ function validatePayload(payload: PushImportPayload, isNew: boolean): string | n
       return `messages[${i}].platformMessageId must be a string`
     if (msg.replyToMessageId !== undefined && typeof msg.replyToMessageId !== 'string')
       return `messages[${i}].replyToMessageId must be a string`
+    if (msg.attachments !== undefined) {
+      if (!Array.isArray(msg.attachments)) return `messages[${i}].attachments must be an array`
+      for (let j = 0; j < msg.attachments.length; j++) {
+        const attachment = msg.attachments[j]
+        if (!isRecord(attachment)) return `messages[${i}].attachments[${j}] must be an object`
+        if (!ATTACHMENT_KINDS.includes(attachment.kind as AttachmentKind))
+          return `messages[${i}].attachments[${j}].kind must be one of ${ATTACHMENT_KINDS.join(', ')}`
+        if (typeof attachment.path !== 'string' || attachment.path.length === 0)
+          return `messages[${i}].attachments[${j}].path must be a string`
+      }
+    }
   }
 
   return null
@@ -299,16 +314,18 @@ function writeMessages(
   membersAdded: number
   minWrittenTs: number
 } {
-  const insertMsg = db.prepare(
-    `INSERT INTO message (sender_id, sender_account_name, sender_group_nickname, ts, type, content, reply_to_message_id, platform_message_id)
+  const insertMsgSql = `INSERT INTO message (sender_id, sender_account_name, sender_group_nickname, ts, type, content, reply_to_message_id, platform_message_id)
      VALUES (?, ?, ?, ?, ?, ?, ?, ?)`
-  )
+  const insertMsg = db.prepare(insertMsgSql)
+  // RETURNING materializes a row per message; only attachment messages need the id.
+  const insertMsgReturningId = db.prepare(`${insertMsgSql} RETURNING id`)
   const getMemberId = db.prepare('SELECT id FROM member WHERE platform_id = ?')
   const insertMinimalMember = db.prepare(
     'INSERT OR IGNORE INTO member (platform_id, account_name, group_nickname) VALUES (?, ?, ?)'
   )
 
   const memberIdCache = new Map<string, number>()
+  const attachmentRows: MessageAttachmentInsert[] = []
   let writtenCount = 0
   let duplicateCount = 0
   let membersAdded = 0
@@ -339,7 +356,7 @@ function writeMessages(
       }
       if (!memberId) continue
 
-      insertMsg.run(
+      const messageParams = [
         memberId,
         normalizeSenderAccountName(msg.sender, msg.accountName) || null,
         normalizeSenderGroupNickname(msg.sender, msg.groupNickname) || null,
@@ -347,11 +364,22 @@ function writeMessages(
         msg.type,
         msg.content ?? null,
         msg.replyToMessageId || null,
-        msg.platformMessageId || null
-      )
+        msg.platformMessageId || null,
+      ]
+      if (msg.attachments?.length) {
+        const inserted = insertMsgReturningId.get(...messageParams) as { id: number } | undefined
+        if (inserted) {
+          for (const attachment of msg.attachments) {
+            attachmentRows.push({ messageId: inserted.id, attachment })
+          }
+        }
+      } else {
+        insertMsg.run(...messageParams)
+      }
       if (msg.timestamp < minWrittenTs) minWrittenTs = msg.timestamp
       writtenCount++
     }
+    insertMessageAttachments(db, attachmentRows)
   })
 
   return { writtenCount, duplicateCount, membersAdded, minWrittenTs }
@@ -412,6 +440,7 @@ function fullImport(
       content: m.content ?? null,
       platformMessageId: m.platformMessageId,
       replyToMessageId: m.replyToMessageId,
+      attachments: m.attachments,
     }))
   )
 
@@ -420,8 +449,23 @@ function fullImport(
   } catch {
     /* non-fatal */
   }
+  ensureSearchIndex(db, 'push-import full')
 
   return { writtenCount: stats.messageCount, duplicateCount }
+}
+
+/**
+ * Keep the message full-text index usable after a push write. Normally the
+ * triggers have already done the work and this is two COUNT(*); it only rebuilds
+ * when the index was missing, e.g. the first push into a pre-v11 database.
+ */
+function ensureSearchIndex(db: DatabaseAdapter, context: string): void {
+  const result = ensureMessageSearchIndex(db)
+  if (!result.rebuilt) return
+  appLogger.info('push-import', `Message search index rebuilt (${context})`, {
+    rows: result.rows,
+    durationMs: result.durationMs,
+  })
 }
 
 interface IncrementalImportStats {
@@ -516,6 +560,7 @@ function writeIncrementalImport(db: DatabaseAdapter, payload: PushImportPayload)
   if (!metaUpdated) {
     db.prepare('UPDATE meta SET imported_at = ?').run(Math.floor(Date.now() / 1000))
   }
+  ensureSearchIndex(db, 'push-import incremental')
 
   return {
     writtenCount,

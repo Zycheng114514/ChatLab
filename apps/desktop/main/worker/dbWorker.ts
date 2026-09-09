@@ -81,6 +81,7 @@ import {
 import {
   streamImport,
   autoImport,
+  analyzeAutoImport,
   autoImportBatch,
   streamParseFileInfo,
   analyzeIncrementalImport,
@@ -215,7 +216,7 @@ const syncHandlers: Record<string, (payload: any) => any> = {
   getRelationshipStats: (p) => getRelationshipStats(p.sessionId, p.filter, p.options),
 
   // AI 查询
-  searchMessages: (p) => searchMessages(p.sessionId, p.keywords, p.filter, p.limit, p.offset, p.senderId),
+  searchMessages: (p) => searchMessages(p.sessionId, p.keywords, p.filter, p.limit, p.offset, p.senderId, p.options),
   getMessageContext: (p) => getMessageContext(p.sessionId, p.messageIds, p.contextSize),
   getSearchMessageContext: (p) => getSearchMessageContext(p.sessionId, p.messageIds, p.contextBefore, p.contextAfter),
   getRecentMessages: (p) => getRecentMessages(p.sessionId, p.filter, p.limit),
@@ -250,7 +251,7 @@ const syncHandlers: Record<string, (payload: any) => any> = {
   segmentText: (p) => segmentText(p.text, p.locale, p.minLength),
   getPosTags: () => getPosTagDefinitions(),
 
-  // 深度搜索（LIKE 子串匹配）
+  // 深度搜索（强制 LIKE 逐条子串扫描）
   deepSearchMessages: (p) => deepSearchMessages(p.sessionId, p.keywords, p.filter, p.limit, p.offset, p.senderId),
 }
 
@@ -258,7 +259,9 @@ const syncHandlers: Record<string, (payload: any) => any> = {
 const asyncHandlers: Record<string, (payload: any, requestId: string) => Promise<any>> = {
   // 流式导入
   streamImport: (p, id) => streamImport(p.filePath, id, p.formatOptions, p.externalSessionId, p.sessionGapThreshold),
-  autoImport: (p, id) => autoImport(p.filePath, id, p.formatOptions, p.explicitSessionId, p.sessionGapThreshold),
+  autoImport: (p, id) =>
+    autoImport(p.filePath, id, p.formatOptions, p.explicitSessionId, p.sessionGapThreshold, p.forceCreate),
+  analyzeAutoImport: (p, id) => analyzeAutoImport(p.filePath, id, p.formatOptions),
   autoImportBatch: async (p, id) => {
     const controller = new AbortController()
     importBatchControllers.set(p.batchId, controller)

@@ -6,6 +6,20 @@ import { BetterSqliteAdapter } from '../better-sqlite3-adapter'
 import { MESSAGE_INSERT_MAX_ROWS, MessageBatchInserter, type MessageInsertRow } from './message-batch-inserter'
 
 const nativeBinding = path.resolve('apps/cli/native/better_sqlite3.node')
+const attachmentSchema = `
+  CREATE TABLE message_attachment (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    message_id INTEGER NOT NULL,
+    kind TEXT NOT NULL,
+    relative_path TEXT NOT NULL,
+    file_name TEXT,
+    mime_type TEXT,
+    size_bytes INTEGER,
+    duration_ms INTEGER,
+    width INTEGER,
+    height INTEGER
+  )
+`
 const messageSchema = `
   CREATE TABLE message (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -103,5 +117,61 @@ test('MessageBatchInserter failure can roll back the complete active transaction
   db.exec('ROLLBACK')
 
   assert.equal((raw.prepare('SELECT COUNT(*) AS count FROM message').get() as { count: number }).count, 0)
+  raw.close()
+})
+
+test('MessageBatchInserter links attachments to their own message across variable-limit chunks', () => {
+  const raw = new Database(':memory:', { nativeBinding })
+  raw.exec(messageSchema)
+  raw.exec(attachmentSchema)
+
+  // Attachments on a subset of rows in every chunk: a one-row mapping slip renames the wrong message's file.
+  const rows = makeRows(MESSAGE_INSERT_MAX_ROWS * 2 + 7).map((row, index) =>
+    index % 5 === 0
+      ? {
+          ...row,
+          attachments: [
+            { kind: 'image' as const, path: `${row.timestamp}.jpg`, name: 'photo.jpg', size: 1024, width: 40 },
+            ...(index % 10 === 0 ? [{ kind: 'file' as const, path: `${row.timestamp}.pdf` }] : []),
+          ],
+        }
+      : row
+  )
+
+  new MessageBatchInserter(new BetterSqliteAdapter(raw)).insert(rows)
+
+  const linked = raw
+    .prepare(
+      `SELECT m.ts AS ts, a.kind AS kind, a.relative_path AS relativePath, a.file_name AS fileName,
+              a.size_bytes AS sizeBytes, a.width AS width, a.mime_type AS mimeType
+       FROM message_attachment a
+       JOIN message m ON m.id = a.message_id
+       ORDER BY a.id`
+    )
+    .all() as Array<Record<string, unknown>>
+
+  const expected = rows.flatMap((row) =>
+    (row.attachments ?? []).map((attachment) => ({
+      ts: row.timestamp,
+      kind: attachment.kind,
+      relativePath: attachment.path,
+      fileName: attachment.name ?? null,
+      sizeBytes: attachment.size ?? null,
+      width: attachment.width ?? null,
+      mimeType: null,
+    }))
+  )
+
+  assert.equal(linked.length, expected.length)
+  assert.deepEqual(linked, expected)
+  raw.close()
+})
+
+test('MessageBatchInserter writes no attachment rows when no message has attachments', () => {
+  const raw = new Database(':memory:', { nativeBinding })
+  raw.exec(messageSchema)
+  // No message_attachment table: the inserter must not touch it for attachment-free imports.
+  new MessageBatchInserter(new BetterSqliteAdapter(raw)).insert(makeRows(20))
+  assert.equal((raw.prepare('SELECT COUNT(*) AS count FROM message').get() as { count: number }).count, 20)
   raw.close()
 })

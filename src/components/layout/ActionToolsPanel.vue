@@ -3,9 +3,12 @@ import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { storeToRefs } from 'pinia'
 import { useLayoutStore } from '@/stores/layout'
+import { usePlatformService } from '@/services'
 
 const { t } = useI18n()
 const layoutStore = useLayoutStore()
+/** 只有能跑本地推理的平台（桌面 / CLI Web）有转写能力；Web WASM 不显示入口。 */
+const canTranscribe = !!usePlatformService().transcription
 const { isToolsPanelMini, effectiveToolsPanelPosition, isToolsPanelOpen } = storeToRefs(layoutStore)
 
 const isHeaderMode = computed(() => effectiveToolsPanelPosition.value === 'header')
@@ -18,6 +21,7 @@ type ToolEvent =
   | 'openMemberManagement'
   | 'openChatRecord'
   | 'openMessageExport'
+  | 'openTranscription'
 
 const emit = defineEmits<{
   (e: ToolEvent): void
@@ -42,7 +46,7 @@ function handleDocumentMouseDown(event: MouseEvent) {
   isToolsPanelOpen.value = false
 }
 
-const tools = [
+const allTools = [
   {
     event: 'openIncrementalImport' as const,
     icon: 'i-heroicons-plus-circle',
@@ -78,24 +82,20 @@ const tools = [
     miniHoverBg: 'hover:text-green-500',
     labelKey: 'analysis.messageExport.title',
   },
+  {
+    event: 'openTranscription' as const,
+    icon: 'i-heroicons-microphone',
+    hoverColor: 'group-hover:text-rose-500',
+    miniHoverBg: 'hover:text-rose-500',
+    labelKey: 'analysis.tooltip.transcription',
+  },
 ]
 
-const headerTools = [
-  {
-    event: 'openSemanticIndex' as const,
-    icon: 'i-heroicons-circle-stack',
-    hoverColor: 'group-hover:text-indigo-500',
-    miniHoverBg: 'hover:text-indigo-500',
-    labelKey: 'analysis.tooltip.semanticIndex',
-  },
-  {
-    event: 'openMessageExport' as const,
-    icon: 'i-heroicons-document-arrow-down',
-    hoverColor: 'group-hover:text-green-500',
-    miniHoverBg: 'hover:text-green-500',
-    labelKey: 'analysis.messageExport.title',
-  },
-]
+const tools = allTools.filter((tool) => tool.event !== 'openTranscription' || canTranscribe)
+
+/** header 精简模式只放常用项；转写按平台能力出现在这里，否则普通用户（恒为 header 模式）没有入口。 */
+const HEADER_TOOL_EVENTS: ToolEvent[] = ['openSemanticIndex', 'openTranscription', 'openMessageExport']
+const headerTools = HEADER_TOOL_EVENTS.flatMap((event) => tools.filter((tool) => tool.event === event))
 
 const visibleTools = computed(() => (isHeaderMode.value ? headerTools : tools))
 

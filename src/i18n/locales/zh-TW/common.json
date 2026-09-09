@@ -51,6 +51,18 @@
     "other": "其他",
     "unknown": "未知"
   },
+  "transcriptionLanguage": {
+    "auto": "自動",
+    "zh": "中文",
+    "en": "英文",
+    "autoHint": "「自動」會依對話中既有的文字判斷中文或英文。"
+  },
+  "chineseScript": {
+    "auto": "自動",
+    "simplified": "簡體",
+    "traditional": "繁體",
+    "autoHint": "語音辨識的中文輸出一律是繁體；「自動」會依對話中既有的文字決定轉寫使用簡體或繁體。"
+  },
   "weekday": {
     "mon": "週一",
     "tue": "週二",

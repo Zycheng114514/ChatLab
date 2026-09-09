@@ -48,6 +48,7 @@ import {
   AnalyticsService,
   MergeSessionCache,
   type SemanticIndexRuntime,
+  type TranscriptionWorker,
 } from '@openchatlab/node-runtime'
 import { annualSummaryNodePlugin, registerSharedRoutes, timeInvestmentNodePlugin } from '@openchatlab/http-routes'
 import type { HttpRouteContext } from '@openchatlab/http-routes'
@@ -82,6 +83,8 @@ export function registerWebRoutes(
     aiContext?: AiContextOptions
     /** 由 server 入口注入的共享语义索引运行时；传入时由调用方管理生命周期 */
     semanticIndexService?: SemanticIndexRuntime
+    /** 由 server 入口注入的转写 worker client；传入时由调用方管理生命周期 */
+    transcriptionWorker?: TranscriptionWorker
   }
 ): void {
   const adapter = createDatabaseManagerAdapter(dbManager)
@@ -176,6 +179,15 @@ export function registerWebRoutes(
       ...(mergeCache && {
         mergeSessionCache: mergeCache,
         streamImport: cliStreamImport,
+        onMergedSessionImported: async ({
+          sessionId,
+          sourceSessionIds,
+        }: {
+          sessionId: string
+          sourceSessionIds: string[]
+        }) => {
+          await semanticIndexService?.carryOver({ targetSessionId: sessionId, sourceSessionIds })
+        },
       }),
       ...(ai && {
         aiDataDir: ai.aiDataDir,
@@ -191,6 +203,7 @@ export function registerWebRoutes(
     },
     {
       nodePlugins: [annualSummaryNodePlugin, timeInvestmentNodePlugin],
+      transcriptionWorker: options?.transcriptionWorker,
       ...(ai && { requireAi: true }),
     }
   )

@@ -1,5 +1,14 @@
 export { buildTimeFilter, buildSystemMessageFilter, hasTable, hasColumn } from './filters'
 
+export { getMessageAttachments, getMessageAttachmentById, fetchMessageAttachments } from './message-attachments'
+export type { MessageAttachment } from './message-attachments'
+
+export { applyTranscript, formatVoiceTranscription, listPendingAudioAttachments } from './attachment-transcripts'
+export type { ApplyTranscriptInput, ApplyTranscriptResult, PendingAudioAttachment } from './attachment-transcripts'
+
+export { detectSessionLanguage, resolveTranscriptionLanguage, sampleRecentTextMessages } from './session-language'
+export type { ResolvedTranscriptionLanguage, TranscriptionLanguage } from './session-language'
+
 export {
   isChatSessionDb,
   getSessionMeta,
@@ -198,6 +207,16 @@ export {
   buildExcludeKeywordsConditions,
 } from './message-sql'
 export type { FullMessageRow, MappedMessage, MsgQueryConditions } from './message-sql'
+
+// Message full-text search index (FTS5 trigram)
+export {
+  hasMessageSearchIndex,
+  hasMessageSearchIndexAsync,
+  ensureMessageSearchIndex,
+  canUseFtsKeywords,
+  buildFtsMatchExpression,
+} from './search-index'
+export type { MessageSearchIndexResult } from './search-index'
 
 // Response time analysis (shared by AI tool and CLI stats response)
 export { computeResponseTimeStats } from './response-time'

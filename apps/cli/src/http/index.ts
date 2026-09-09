@@ -6,6 +6,7 @@
  */
 
 import * as fs from 'fs'
+import * as path from 'path'
 import * as crypto from 'crypto'
 import type { FastifyInstance } from 'fastify'
 import { loadConfig, writeConfigField, MigrationRunner, ALL_MIGRATIONS } from '@openchatlab/config'
@@ -19,6 +20,9 @@ import {
   hasPendingElectronDataWarning,
   verifyCliDataPath,
   createSemanticIndexWorkerRuntimeClient,
+  createTranscriptionWorkerClient,
+  SemanticIndexConfigStore,
+  SEMANTIC_INDEX_CONFIG_FILE,
   initAppLogger,
   appLogger,
   logNativeParserStatus,
@@ -220,6 +224,19 @@ export async function startHttpServer(options?: HttpServerOptions): Promise<{
     semanticIndexService = undefined
   }
 
+  // 转写 worker client：同样不在启动时拉起线程，首个转写请求才建模型。
+  const transcriptionWorker = createTranscriptionWorkerClient({
+    aiDataDir,
+    localEmbeddingRuntime: resolveCliLocalEmbeddingRuntimeConfig(aiDataDir),
+    downloadSource: new SemanticIndexConfigStore(path.join(aiDataDir, SEMANTIC_INDEX_CONFIG_FILE)).get().local
+      .downloadSource,
+    profile: config.transcription.model,
+    workerEntryUrl: import.meta.url.endsWith('.ts')
+      ? undefined
+      : new URL('./transcription-worker.mjs', import.meta.url),
+  })
+  server.addHook('onClose', async () => transcriptionWorker.close())
+
   registerWebRoutes(server, dbManager, {
     pathProvider,
     nativeBinding,
@@ -228,6 +245,7 @@ export async function startHttpServer(options?: HttpServerOptions): Promise<{
     globalInsightService,
     preferencesManager,
     semanticIndexService,
+    transcriptionWorker,
     aiContext: {
       aiDataDir,
       aiChatManager,

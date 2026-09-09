@@ -17,6 +17,7 @@ export interface MainWindowPaths {
 }
 
 export async function createMainWindow(paths: MainWindowPaths): Promise<BrowserWindow> {
+  const uiScale = loadConfig().desktop.ui_scale
   const windowOptions: Electron.BrowserWindowConstructorOptions = {
     width: 1180,
     height: 752,
@@ -28,6 +29,7 @@ export async function createMainWindow(paths: MainWindowPaths): Promise<BrowserW
       preload: paths.preloadPath,
       sandbox: false,
       devTools: true,
+      zoomFactor: uiScale,
     },
   }
 
@@ -44,6 +46,13 @@ export async function createMainWindow(paths: MainWindowPaths): Promise<BrowserW
 
   const win = new BrowserWindow(windowOptions)
   currentMainWindow = win
+
+  // Chromium may restore a persisted per-origin zoom level, which overrides zoomFactor.
+  // Read the config again here: the renderer is reloaded after a crash, and the
+  // setting may have changed since the window was created.
+  win.webContents.on('did-finish-load', () => {
+    win.webContents.setZoomFactor(loadConfig().desktop.ui_scale)
+  })
 
   win.once('ready-to-show', () => {
     currentMainWindow?.show()
