@@ -21,7 +21,7 @@ function replaceGlobal(name: string, value: unknown): () => void {
 /** Web Audio 不存在于 Node：只替身出解码这一步，够测错误映射。 */
 function stubAudioContext(decodeAudioData: () => Promise<unknown>): () => void {
   return replaceGlobal(
-    'AudioContext',
+    'OfflineAudioContext',
     class {
       decodeAudioData = decodeAudioData
       close(): Promise<void> {
