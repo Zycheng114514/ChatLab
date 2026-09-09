@@ -13,6 +13,9 @@ import type {
   IntimacyMember,
   IntimacyMemberSummary,
   IntimacyResponseMemberSummary,
+  RepairAttemptDetails,
+  RepairLabel,
+  RepairSummary,
   ResponseObservation,
   ResponseSummary,
   SharedPlanDetails,
@@ -21,6 +24,7 @@ import type {
   SharingCategory,
   SharingDetails,
   SharingTopic,
+  SubsequentObservation,
   SupportResponseDetails,
   SupportResponseLabel,
 } from '@openchatlab/shared-types'
@@ -28,12 +32,13 @@ import type {
 /** 话题筛选值：`all` = 不筛选 */
 export type IntimacyTopicFilter = SharingTopic | 'all'
 
-/** 一次结果里混着五种 kind，卡片各取自己那一份；details 与 kind 一一对应，narrow 后模板不必再判断。 */
+/** 一次结果里混着六种 kind，卡片各取自己那一份；details 与 kind 一一对应，narrow 后模板不必再判断。 */
 export type IntimacySharingEvent = IntimacyEvent & { details: SharingDetails }
 export type IntimacySupportEvent = IntimacyEvent & { details: SupportResponseDetails }
 export type IntimacyGoodNewsEvent = IntimacyEvent & { details: GoodNewsResponseDetails }
 export type IntimacyFollowUpEvent = IntimacyEvent & { details: FollowUpDetails }
 export type IntimacySharedPlanEvent = IntimacyEvent & { details: SharedPlanDetails }
+export type IntimacyRepairEvent = IntimacyEvent & { details: RepairAttemptDetails }
 export type IntimacyResponseEvent = IntimacySupportEvent | IntimacyGoodNewsEvent
 
 /**
@@ -104,11 +109,33 @@ export const SHARED_PLAN_STAGE_LABEL_KEYS: Record<SharedPlanStage, string> = {
   retrospective_mentioned: 'views.intimacy.planStage.retrospectiveMentioned',
 }
 
+/** K6 的四种修复方式都是聊天里看得见的表达，不是对动机的判断，所以按契约顺序展示，不排序也不着色。 */
+export const REPAIR_LABEL_KEYS: Record<RepairLabel, string> = {
+  apology: 'views.intimacy.repairLabel.apology',
+  clarification: 'views.intimacy.repairLabel.clarification',
+  acknowledges_part: 'views.intimacy.repairLabel.acknowledgesPart',
+  deescalation_or_reconnect: 'views.intimacy.repairLabel.deescalationOrReconnect',
+}
+
+/**
+ * 五种后续表现并列：接纳表达只是另一方说了那样一句话，不等于和解成功；「未见后续」也不等于修复失败。
+ * 所以这五项既不排序也不着色，页面只按契约顺序把它们列出来。
+ */
+export const SUBSEQUENT_OBSERVATION_LABEL_KEYS: Record<SubsequentObservation, string> = {
+  explicit_acceptance_expression: 'views.intimacy.subsequent.acceptance',
+  continued_discussion: 'views.intimacy.subsequent.continuedDiscussion',
+  explicit_rejection_expression: 'views.intimacy.subsequent.rejection',
+  no_visible_follow_up: 'views.intimacy.subsequent.noVisibleFollowUp',
+  uncertain: 'views.intimacy.subsequent.uncertain',
+}
+
 export const SHARING_CATEGORIES = Object.keys(SHARING_CATEGORY_LABEL_KEYS) as SharingCategory[]
 export const SHARING_TOPICS = Object.keys(SHARING_TOPIC_LABEL_KEYS) as SharingTopic[]
 export const SUPPORT_RESPONSE_LABELS = Object.keys(SUPPORT_RESPONSE_LABEL_KEYS) as SupportResponseLabel[]
 export const GOOD_NEWS_RESPONSE_LABELS = Object.keys(GOOD_NEWS_RESPONSE_LABEL_KEYS) as GoodNewsResponseLabel[]
 export const SHARED_PLAN_STAGES = Object.keys(SHARED_PLAN_STAGE_LABEL_KEYS) as SharedPlanStage[]
+export const REPAIR_LABELS = Object.keys(REPAIR_LABEL_KEYS) as RepairLabel[]
+export const SUBSEQUENT_OBSERVATIONS = Object.keys(SUBSEQUENT_OBSERVATION_LABEL_KEYS) as SubsequentObservation[]
 
 export interface IntimacyStatusBadge {
   labelKey: string
@@ -160,6 +187,10 @@ export function selectFollowUpEvents(events: IntimacyEvent[]): IntimacyFollowUpE
 
 export function selectSharedPlanEvents(events: IntimacyEvent[]): IntimacySharedPlanEvent[] {
   return events.filter((event): event is IntimacySharedPlanEvent => event.details.kind === 'shared_plan')
+}
+
+export function selectRepairEvents(events: IntimacyEvent[]): IntimacyRepairEvent[] {
+  return events.filter((event): event is IntimacyRepairEvent => event.details.kind === 'repair_attempt')
 }
 
 /**
@@ -273,6 +304,65 @@ export function resolveSharedPlanStages(
   }
   if (stages.length === 0) fail('views.intimacy.k5.stageNeedsMessage')
   return { stages, errorKey }
+}
+
+/** 分歧后的修复尝试同样直接用后端汇总；这张卡也没有前端筛选，缺这一条 kind 时页面显示 0。 */
+export function selectRepairSummary(summaries: IntimacyKindSummary[]): RepairSummary | null {
+  return summaries.find((item): item is RepairSummary => item.kind === 'repair_attempt') ?? null
+}
+
+export interface IntimacyRepairMemberCount {
+  memberId: number
+  attempts: number
+}
+
+/** 修复尝试按发起者分开数：同一次分歧里两个人各修复一次，是一个分歧、两个尝试。 */
+export function buildRepairMemberCounts(
+  summary: RepairSummary | null,
+  members: IntimacyMember[]
+): IntimacyRepairMemberCount[] {
+  return members.map((member) => ({
+    memberId: member.memberId,
+    attempts: summary?.members.find((item) => item.memberId === member.memberId)?.attempts ?? 0,
+  }))
+}
+
+export interface IntimacyRepairLabelCount {
+  label: RepairLabel
+  labelKey: string
+  count: number
+}
+
+/** 四格「修复方式」：多标签，一个尝试可以同时算进几格，所以四格之和可以大于尝试数。 */
+export function buildRepairLabelCounts(summary: RepairSummary | null): IntimacyRepairLabelCount[] {
+  return REPAIR_LABELS.map((label) => ({
+    label,
+    labelKey: REPAIR_LABEL_KEYS[label],
+    count: (summary?.members ?? []).reduce((total, member) => total + (member.byLabel[label] ?? 0), 0),
+  }))
+}
+
+export interface IntimacySubsequentCount {
+  observation: SubsequentObservation
+  labelKey: string
+  count: number
+}
+
+/** 五格「后续表现」：每个计入的尝试恰好属于一种，所以五格之和等于尝试数。 */
+export function buildSubsequentCounts(summary: RepairSummary | null): IntimacySubsequentCount[] {
+  return SUBSEQUENT_OBSERVATIONS.map((observation) => ({
+    observation,
+    labelKey: SUBSEQUENT_OBSERVATION_LABEL_KEYS[observation],
+    count: (summary?.members ?? []).reduce((total, member) => total + (member.bySubsequent[observation] ?? 0), 0),
+  }))
+}
+
+/**
+ * 与后端 `requireRepairReviewDetails` 同一条规则：没有引用后续消息的事件不能被改成「出现接纳表达」
+ * 「继续讨论」「出现拒绝表达」——那三种说法都要有一条后续原话撑着。前端先把它们禁用，省得提交后才报错。
+ */
+export function canReadSubsequent(observation: SubsequentObservation, hasSubsequentEvidence: boolean): boolean {
+  return hasSubsequentEvidence || observation === 'no_visible_follow_up' || observation === 'uncertain'
 }
 
 export interface IntimacyInitiationCount {

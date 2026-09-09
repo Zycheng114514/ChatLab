@@ -92,6 +92,9 @@ export type {
   IntimacyResults,
   IntimacyReviewDetails,
   IntimacyRun,
+  RepairAttemptDetails,
+  RepairLabel,
+  RepairSummary,
   ResponseObservation,
   SharedPlanDetails,
   SharedPlanStage,
@@ -100,6 +103,7 @@ export type {
   SharingCategory,
   SharingDetails,
   SharingTopic,
+  SubsequentObservation,
   SupportResponseDetails,
   SupportResponseLabel,
 } from './intimacy/types'
