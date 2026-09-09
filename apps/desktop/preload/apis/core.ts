@@ -3,6 +3,8 @@
  */
 import { ipcRenderer } from 'electron'
 import type { AnalyticsEventName, DesktopCloseBehavior } from '@openchatlab/shared-types'
+import type { PendingTranscriptionItem, TranscriptionSettings } from '@openchatlab/node-runtime'
+import type { TranscriptionLanguage } from '@openchatlab/core'
 
 // Custom APIs for renderer
 export const api = {
@@ -134,6 +136,27 @@ export const extendedApi = {
     /** 在系统文件管理器中定位附件文件；文件不存在或路径越界时返回 false */
     revealInFolder: (sessionId: string, attachmentId: number): Promise<boolean> => {
       return ipcRenderer.invoke('attachment:revealInFolder', sessionId, attachmentId)
+    },
+  },
+  transcription: {
+    getConfig: (): Promise<TranscriptionSettings> => {
+      return ipcRenderer.invoke('transcription:getConfig')
+    },
+    setConfig: (patch: Partial<TranscriptionSettings>): Promise<TranscriptionSettings> => {
+      return ipcRenderer.invoke('transcription:setConfig', patch)
+    },
+    /** Voice attachments of this session with no transcript yet; the renderer builds their URLs with getAttachmentUrl. */
+    listPending: (sessionId: string): Promise<{ items: PendingTranscriptionItem[] }> => {
+      return ipcRenderer.invoke('transcription:listPending', sessionId)
+    },
+    /** `pcm` holds the mono 16 kHz Float32 samples the renderer decoded with Web Audio. */
+    transcribePcm: (
+      sessionId: string,
+      attachmentId: number,
+      pcm: ArrayBuffer,
+      language?: TranscriptionLanguage
+    ): Promise<{ text: string; contentUpdated: boolean }> => {
+      return ipcRenderer.invoke('transcription:transcribePcm', sessionId, attachmentId, pcm, language)
     },
   },
 }

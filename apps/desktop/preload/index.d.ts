@@ -2,6 +2,8 @@ import { ElectronAPI } from '@electron-toolkit/preload'
 import type { ImportProgress, ExportProgress } from '../../../src/types/base'
 import type { TokenUsage, AgentRuntimeStatus, SerializedErrorInfo, SecurityApi } from '../shared/types'
 import type { AnalyticsEventName, DesktopCloseBehavior, TimeFilter } from '@openchatlab/shared-types'
+import type { PendingTranscriptionItem, TranscriptionSettings } from '@openchatlab/node-runtime'
+import type { TranscriptionLanguage } from '@openchatlab/core'
 
 // 迁移相关类型
 interface MigrationInfo {
@@ -213,6 +215,17 @@ interface Api {
   }
   attachment: {
     revealInFolder: (sessionId: string, attachmentId: number) => Promise<boolean>
+  }
+  transcription: {
+    getConfig: () => Promise<TranscriptionSettings>
+    setConfig: (patch: Partial<TranscriptionSettings>) => Promise<TranscriptionSettings>
+    listPending: (sessionId: string) => Promise<{ items: PendingTranscriptionItem[] }>
+    transcribePcm: (
+      sessionId: string,
+      attachmentId: number,
+      pcm: ArrayBuffer,
+      language?: TranscriptionLanguage
+    ) => Promise<{ text: string; contentUpdated: boolean }>
   }
 }
 

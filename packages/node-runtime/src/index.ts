@@ -508,6 +508,7 @@ export {
   TRANSCRIPTION_MODEL_CACHE_DIR_ENV,
   TRANSCRIPTION_PROFILE_IDS,
   TRANSCRIPTION_PROFILES,
+  WHISPER_SAMPLE_RATE,
   TranscriptionWorkerClient,
   UnsupportedAudioFormatError,
 } from './transcription'
@@ -555,6 +556,11 @@ export {
   NavigationLayoutValidationError,
   createDatabaseManagerAdapter,
   resolveAttachmentFile,
+  getTranscriptionSettings,
+  InvalidTranscriptionSettingError,
+  listSessionTranscriptionQueue,
+  transcribeSessionAttachmentPcm,
+  updateTranscriptionSettings,
   executePushImportUnlocked,
   DEFAULT_IMPORT_IDEMPOTENCY_TTL_MS,
   hashImportBody,
@@ -638,4 +644,7 @@ export type {
   PushImportMessage,
   PushImportMember,
   PushImportMeta,
+  PendingTranscriptionItem,
+  TranscriptionSettings,
+  TranscriptionWorker,
 } from './services'
