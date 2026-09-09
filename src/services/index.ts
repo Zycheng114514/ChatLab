@@ -71,6 +71,7 @@ export { useIntimacyService } from './intimacy/service'
 export { IntimacyRequestError } from './intimacy/types'
 export type {
   CreateIntimacyEventRequest,
+  FollowUpDetails,
   GoodNewsResponseDetails,
   GoodNewsResponseLabel,
   IntimacyAdapter,

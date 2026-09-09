@@ -1,13 +1,17 @@
 import type {
+  FollowUpDetails,
+  FollowUpSummary,
   GoodNewsResponseDetails,
   GoodNewsResponseLabel,
   IntimacyEvent,
   IntimacyEventStatus,
+  IntimacyFollowUpMemberSummary,
   IntimacyKindSummary,
   IntimacyMember,
   IntimacyMemberSummary,
   IntimacyResponseMemberSummary,
   ResponseObservation,
+  ResponseSummary,
   SharingCategory,
   SharingDetails,
   SharingTopic,
@@ -18,10 +22,11 @@ import type {
 /** 话题筛选值：`all` = 不筛选 */
 export type IntimacyTopicFilter = SharingTopic | 'all'
 
-/** 一次结果里混着三种 kind，卡片各取自己那一份；details 与 kind 一一对应，narrow 后模板不必再判断。 */
+/** 一次结果里混着四种 kind，卡片各取自己那一份；details 与 kind 一一对应，narrow 后模板不必再判断。 */
 export type IntimacySharingEvent = IntimacyEvent & { details: SharingDetails }
 export type IntimacySupportEvent = IntimacyEvent & { details: SupportResponseDetails }
 export type IntimacyGoodNewsEvent = IntimacyEvent & { details: GoodNewsResponseDetails }
+export type IntimacyFollowUpEvent = IntimacyEvent & { details: FollowUpDetails }
 export type IntimacyResponseEvent = IntimacySupportEvent | IntimacyGoodNewsEvent
 
 /**
@@ -121,6 +126,10 @@ export function selectGoodNewsEvents(events: IntimacyEvent[]): IntimacyGoodNewsE
   return events.filter((event): event is IntimacyGoodNewsEvent => event.details.kind === 'good_news_response')
 }
 
+export function selectFollowUpEvents(events: IntimacyEvent[]): IntimacyFollowUpEvent[] {
+  return events.filter((event): event is IntimacyFollowUpEvent => event.details.kind === 'follow_up')
+}
+
 /**
  * 回应方计数直接用后端的汇总：K2 / K4 的卡片没有前端筛选，重算一遍只会引入第二套规则。
  * 缺这一条 kind 时返回空数组，页面显示 0，而不是崩在 undefined 上。
@@ -129,8 +138,14 @@ export function selectResponseSummary(
   summaries: IntimacyKindSummary[],
   kind: 'support_response' | 'good_news_response'
 ): IntimacyResponseMemberSummary[] {
-  const summary = summaries.find((item) => item.kind === kind)
-  return summary && summary.kind !== 'sharing' ? summary.members : []
+  const summary = summaries.find((item): item is ResponseSummary => item.kind === kind)
+  return summary?.members ?? []
+}
+
+/** 追问者计数同样直接用后端汇总（配对数 / 事情数 / 待核对数），K3 卡片也没有前端筛选。 */
+export function selectFollowUpSummary(summaries: IntimacyKindSummary[]): IntimacyFollowUpMemberSummary[] {
+  const summary = summaries.find((item): item is FollowUpSummary => item.kind === 'follow_up')
+  return summary?.members ?? []
 }
 
 /** 已排除的事件默认折叠，所以列表按这条界线分成两组。 */

@@ -1,5 +1,6 @@
 import type {
   CreateIntimacyEventRequest,
+  FollowUpDetails,
   GoodNewsResponseDetails,
   GoodNewsResponseLabel,
   IntimacyAnalysisRequest,
@@ -66,6 +67,7 @@ export class IntimacyRequestError extends Error {
 
 export type {
   CreateIntimacyEventRequest,
+  FollowUpDetails,
   GoodNewsResponseDetails,
   GoodNewsResponseLabel,
   IntimacyAnalysisRequest,
