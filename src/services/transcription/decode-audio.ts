@@ -62,23 +62,23 @@ export async function decodeAudioToPcm16k(url: string, options: DecodeAudioOptio
   const bytes = await response.arrayBuffer()
   if (bytes.byteLength === 0) throw new UnsupportedAudioError('The audio file is empty')
 
-  const context = new AudioContext()
+  // 在 16 kHz 的 OfflineAudioContext 里解码：Chromium 会在解码时直接重采样到上下文的采样率，
+  // 避免「先到设备采样率、再回到 16 kHz」的两次重采样（实测两次重采样会让 Whisper 多出错字），
+  // 也不会像 AudioContext 那样占着音频硬件。
+  const context = new OfflineAudioContext(1, 1, TRANSCRIPTION_SAMPLE_RATE)
   let decoded: AudioBuffer
   try {
     decoded = await context.decodeAudioData(bytes)
   } catch (error) {
     const detail = error instanceof Error ? error.message : String(error)
     throw new UnsupportedAudioError(detail || 'The browser could not decode this audio format', { cause: error })
-  } finally {
-    // 解码用的 context 不再需要；不关会一直占着音频硬件。
-    void context.close()
   }
 
   const frames = targetFrameCount(decoded.duration)
   return await renderMono16k(decoded, frames)
 }
 
-/** 用 OfflineAudioContext 把任意声道数 / 采样率的解码结果压成单声道 16 kHz。 */
+/** 把解码结果压成单声道；解码已在 16 kHz 完成，这里主要做声道混合。 */
 async function renderMono16k(decoded: AudioBuffer, frames: number): Promise<Float32Array> {
   const offline = new OfflineAudioContext(1, frames, TRANSCRIPTION_SAMPLE_RATE)
   const source = offline.createBufferSource()
