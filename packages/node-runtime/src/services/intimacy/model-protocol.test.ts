@@ -1,7 +1,12 @@
 import assert from 'node:assert/strict'
 import test from 'node:test'
 import type { IntimacyMember } from '@openchatlab/shared-types'
-import { buildIntimacyWindowPrompt, parseIntimacyResponse } from './model-protocol'
+import {
+  buildIntimacyWindowPrompt,
+  parseIntimacyResponse,
+  type ParsedIntimacyEvent,
+  type ParsedSharingEvent,
+} from './model-protocol'
 import type { IntimacySourceMessage, IntimacyWindow } from './source'
 
 const members: [IntimacyMember, IntimacyMember] = [
@@ -25,6 +30,12 @@ const window: IntimacyWindow = {
     message(5, { isText: false, content: '', type: 2 }),
     message(6),
   ],
+}
+
+function firstSharing(parsed: ParsedIntimacyEvent[]): ParsedSharingEvent {
+  const event = parsed[0]
+  assert.ok(event?.kind === 'sharing')
+  return event
 }
 
 function response(event: Record<string, unknown>): string {
@@ -56,7 +67,7 @@ test('a valid window response is accepted, deduplicated and readable from a fenc
   assert.deepEqual(parsed[0]?.coreMessageIds, [3, 6])
   assert.deepEqual(parsed[0]?.relatedMessageIds, [4])
   assert.equal(parsed[0]?.confidence, 'clear')
-  assert.equal(parsed[0]?.topic, 'work_study')
+  assert.equal(firstSharing(parsed).topic, 'work_study')
 })
 
 test('optional label fields fall back to their neutral value and a long reason is bounded', () => {
@@ -73,12 +84,68 @@ test('optional label fields fall back to their neutral value and a long reason i
     members
   )
 
-  assert.equal(parsed[0]?.topic, 'other')
-  assert.equal(parsed[0]?.distress, 'uncertain')
+  assert.equal(firstSharing(parsed).topic, 'other')
+  assert.equal(firstSharing(parsed).distress, 'uncertain')
   assert.equal(parsed[0]?.observation, 'sufficient')
   assert.equal(parsed[0]?.continuesContextEvent, false)
   assert.deepEqual(parsed[0]?.relatedMessageIds, [])
   assert.equal(parsed[0]?.reason.length, 300)
+})
+
+/** A disclosure with the answer the other participant gave to it. */
+const disclosureWithReply = {
+  ...validEvent,
+  coreMessageIds: [3],
+  relatedMessageIds: [],
+  distress: 'yes',
+  responses: { observation: 'visible_response', messageIds: [4], labels: ['asks_details', 'acknowledges_feeling'] },
+}
+
+const goodNewsWithReply = {
+  kind: 'good_news',
+  discloser: 'A',
+  coreMessageIds: [3],
+  relatedMessageIds: [],
+  positiveForSharer: 'explicit_or_context_supported',
+  confidence: 'clear',
+  continuesContextEvent: false,
+  observation: 'sufficient',
+  reason: 'Alice reports her own offer.',
+  responses: { observation: 'visible_response', messageIds: [4], labels: ['explicitly_diminishes'] },
+}
+
+test('a coded reply is read back from the window with its labels in a stable order', () => {
+  const parsed = parseIntimacyResponse(response(disclosureWithReply), window, members)
+
+  assert.equal(parsed[0]?.kind, 'sharing')
+  assert.deepEqual(parsed[0]?.responses, {
+    observation: 'visible_response',
+    messageIds: [4],
+    labels: ['acknowledges_feeling', 'asks_details'],
+  })
+})
+
+test('good news is coded as its own kind and an unstated reading stays the cautious one', () => {
+  const parsed = parseIntimacyResponse(
+    response({ ...goodNewsWithReply, positiveForSharer: undefined }),
+    window,
+    members
+  )
+
+  assert.equal(parsed[0]?.kind, 'good_news')
+  assert.equal(parsed[0]?.kind === 'good_news' ? parsed[0].positiveForSharer : null, 'uncertain')
+  assert.deepEqual(parsed[0]?.responses?.labels, ['explicitly_diminishes'])
+})
+
+test('a reply to an event of the previous window is accepted without new messages of its own', () => {
+  const parsed = parseIntimacyResponse(
+    response({ ...disclosureWithReply, coreMessageIds: [], categories: [], continuesContextEvent: true }),
+    window,
+    members
+  )
+
+  assert.deepEqual(parsed[0]?.coreMessageIds, [])
+  assert.deepEqual(parsed[0]?.responses?.messageIds, [4])
 })
 
 const rejections: Array<{ name: string; payload: string }> = [
@@ -116,6 +183,81 @@ const rejections: Array<{ name: string; payload: string }> = [
   {
     name: 'more events than one window may contain',
     payload: JSON.stringify({ events: Array.from({ length: 31 }, () => validEvent) }),
+  },
+  { name: 'an unknown event kind', payload: response({ ...validEvent, kind: 'rant' }) },
+  { name: 'a missing event kind', payload: response({ ...validEvent, kind: undefined }) },
+  {
+    name: 'a reply the discloser sent themselves',
+    payload: response({
+      ...disclosureWithReply,
+      responses: { observation: 'visible_response', messageIds: [6], labels: ['unclear'] },
+    }),
+  },
+  {
+    name: 'a reply that came before the message it answers',
+    payload: response({
+      ...disclosureWithReply,
+      coreMessageIds: [6],
+      responses: { observation: 'visible_response', messageIds: [4], labels: ['unclear'] },
+    }),
+  },
+  {
+    name: 'a reply from outside this window',
+    payload: response({
+      ...disclosureWithReply,
+      responses: { observation: 'visible_response', messageIds: [99], labels: ['unclear'] },
+    }),
+  },
+  {
+    name: 'a visible reply with no labels',
+    payload: response({
+      ...disclosureWithReply,
+      responses: { observation: 'visible_response', messageIds: [4], labels: [] },
+    }),
+  },
+  {
+    name: 'a visible reply with no cited message',
+    payload: response({
+      ...disclosureWithReply,
+      responses: { observation: 'visible_response', messageIds: [], labels: ['unclear'] },
+    }),
+  },
+  {
+    name: 'a reply reported as absent that still cites a message',
+    payload: response({
+      ...disclosureWithReply,
+      responses: { observation: 'no_visible_response', messageIds: [4], labels: [] },
+    }),
+  },
+  {
+    name: 'a reply reported as unreadable that still carries a label',
+    payload: response({
+      ...disclosureWithReply,
+      responses: { observation: 'insufficient_context', messageIds: [], labels: ['unclear'] },
+    }),
+  },
+  {
+    name: 'an unknown response label',
+    payload: response({
+      ...disclosureWithReply,
+      responses: { observation: 'visible_response', messageIds: [4], labels: ['hug'] },
+    }),
+  },
+  {
+    name: 'a support label on a good news reply',
+    payload: response({
+      ...goodNewsWithReply,
+      responses: { observation: 'visible_response', messageIds: [4], labels: ['acknowledges_feeling'] },
+    }),
+  },
+  {
+    name: 'a reply with no observation at all',
+    payload: response({ ...disclosureWithReply, responses: { messageIds: [4], labels: ['unclear'] } }),
+  },
+  { name: 'an unknown good news reading', payload: response({ ...goodNewsWithReply, positiveForSharer: 'maybe' }) },
+  {
+    name: 'a continued event with neither new messages nor a reply',
+    payload: response({ ...validEvent, coreMessageIds: [], categories: [], continuesContextEvent: true }),
   },
 ]
 

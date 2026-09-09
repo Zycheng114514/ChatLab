@@ -1,8 +1,20 @@
 import assert from 'node:assert/strict'
 import test from 'node:test'
-import type { IntimacyEvent, IntimacyEventReview, IntimacyMember } from '@openchatlab/shared-types'
-import { applyReviewDetails, buildIntimacyEvents, resolveEventStatus, summarizeSharing } from './events'
-import type { ParsedSharingEvent } from './model-protocol'
+import type {
+  IntimacyEvent,
+  IntimacyEventDetails,
+  IntimacyEventReview,
+  IntimacyMember,
+  SharingDetails,
+} from '@openchatlab/shared-types'
+import {
+  applyReviewDetails,
+  buildIntimacyEvents,
+  resolveEventStatus,
+  summarizeResponses,
+  summarizeSharing,
+} from './events'
+import type { ParsedGoodNewsEvent, ParsedSharingEvent } from './model-protocol'
 import type { IntimacySourceMessage, IntimacyWindow } from './source'
 import type { IntimacyEventRecord } from './store'
 
@@ -11,6 +23,11 @@ const members: [IntimacyMember, IntimacyMember] = [
   { memberId: 1, name: 'Alice', isOwner: true },
   { memberId: 2, name: 'Bob', isOwner: false },
 ]
+
+function sharingDetails(details: IntimacyEventDetails): SharingDetails {
+  assert.ok(details.kind === 'sharing')
+  return details
+}
 
 function message(id: number, senderId = 1): IntimacySourceMessage {
   return { id, senderId, timestamp: baseTs + id, type: 0, content: 'text', isText: true }
@@ -37,6 +54,22 @@ function parsedEvent(overrides: Partial<ParsedSharingEvent> = {}): ParsedSharing
     continuesContextEvent: false,
     observation: 'sufficient',
     reason: 'Alice describes her own week.',
+    ...overrides,
+  }
+}
+
+function parsedGoodNews(overrides: Partial<ParsedGoodNewsEvent> = {}): ParsedGoodNewsEvent {
+  return {
+    kind: 'good_news',
+    discloser: 'A',
+    coreMessageIds: [3],
+    relatedMessageIds: [],
+    positiveForSharer: 'explicit_or_context_supported',
+    confidence: 'clear',
+    continuesContextEvent: false,
+    observation: 'sufficient',
+    reason: 'Alice reports her own offer.',
+    responses: null,
     ...overrides,
   }
 }
@@ -164,8 +197,8 @@ test('a sharing continued from the previous window keeps one event instead of st
     merged.evidence.map((evidence) => evidence.messageId),
     [1, 3]
   )
-  assert.deepEqual(merged.details.categories, ['experience_or_update', 'feeling'])
-  assert.equal(merged.details.isDistressDisclosure, 'yes')
+  assert.deepEqual(sharingDetails(merged.details).categories, ['experience_or_update', 'feeling'])
+  assert.equal(sharingDetails(merged.details).isDistressDisclosure, 'yes')
   assert.equal(merged.modelDecision, 'uncertain')
 })
 
@@ -193,6 +226,146 @@ test('a continuation without a matching previous event becomes its own event', (
     outsideContext.map((event) => event.id),
     ['sharing:3']
   )
+})
+
+test('a disclosure marked as distress gets one support event, a sharing without distress gets none', () => {
+  const withDistress = buildIntimacyEvents(
+    [
+      parsedEvent({
+        coreMessageIds: [3],
+        distress: 'yes',
+        responses: { observation: 'visible_response', messageIds: [4], labels: ['acknowledges_feeling'] },
+      }),
+    ],
+    window,
+    members,
+    [],
+    123
+  )
+
+  assert.deepEqual(
+    withDistress.map((event) => event.id),
+    ['sharing:3', 'support_response:3']
+  )
+  const support = withDistress[1]!
+  assert.equal(support.subjectMemberId, 1, 'the discloser stays the subject')
+  assert.equal(support.otherMemberId, 2, 'the participant who answered is the other side')
+  assert.deepEqual(
+    support.evidence.map((evidence) => [evidence.messageId, evidence.role]),
+    [
+      [3, 'core'],
+      [4, 'response'],
+    ]
+  )
+  assert.deepEqual(support.details, {
+    kind: 'support_response',
+    disclosureEventId: 'sharing:3',
+    responseObservation: 'visible_response',
+    responseLabels: ['acknowledges_feeling'],
+  })
+
+  const withoutDistress = buildIntimacyEvents([parsedEvent({ coreMessageIds: [3] })], window, members, [], 123)
+  assert.deepEqual(
+    withoutDistress.map((event) => event.id),
+    ['sharing:3']
+  )
+})
+
+test('a reply that only becomes visible in the next window joins the support event it answers', () => {
+  const previousSharing = previousEvent({
+    details: { kind: 'sharing', categories: ['worry_or_need'], topic: 'family', isDistressDisclosure: 'yes' },
+  })
+  const previousSupport: IntimacyEventRecord = {
+    id: 'support_response:1',
+    kind: 'support_response',
+    subjectMemberId: 1,
+    otherMemberId: 2,
+    anchorMessageId: 1,
+    anchorTs: baseTs + 1,
+    evidence: [{ messageId: 1, timestamp: baseTs + 1, senderId: 1, role: 'core' }],
+    observation: 'sufficient',
+    origin: 'model',
+    modelDecision: 'included',
+    modelReason: 'Alice said she is struggling.',
+    details: {
+      kind: 'support_response',
+      disclosureEventId: 'sharing:1',
+      responseLabels: [],
+      responseObservation: 'insufficient_context',
+    },
+    createdAt: baseTs * 1000,
+  }
+
+  const events = buildIntimacyEvents(
+    [
+      parsedEvent({
+        coreMessageIds: [],
+        categories: [],
+        continuesContextEvent: true,
+        distress: 'yes',
+        responses: { observation: 'visible_response', messageIds: [4], labels: ['offers_advice_or_help'] },
+      }),
+    ],
+    window,
+    members,
+    [previousSharing, previousSupport],
+    123
+  )
+
+  assert.deepEqual(
+    events.map((event) => event.id),
+    ['sharing:1', 'support_response:1'],
+    'the answer joins the disclosure instead of opening a second support event'
+  )
+  const support = events[1]!
+  assert.deepEqual(
+    support.evidence.map((evidence) => [evidence.messageId, evidence.role]),
+    [
+      [1, 'core'],
+      [4, 'response'],
+    ]
+  )
+  assert.deepEqual(support.details, {
+    kind: 'support_response',
+    disclosureEventId: 'sharing:1',
+    responseObservation: 'visible_response',
+    responseLabels: ['offers_advice_or_help'],
+  })
+})
+
+test('the same messages can be a sharing and good news, but never two events of one kind', () => {
+  const events = buildIntimacyEvents(
+    [
+      parsedEvent({ coreMessageIds: [3] }),
+      parsedGoodNews({
+        coreMessageIds: [3],
+        responses: { observation: 'visible_response', messageIds: [4], labels: ['explicitly_diminishes'] },
+      }),
+      parsedGoodNews({ coreMessageIds: [3] }),
+    ],
+    window,
+    members,
+    [],
+    123
+  )
+
+  assert.deepEqual(
+    events.map((event) => event.id),
+    ['sharing:3', 'good_news_response:3']
+  )
+  assert.deepEqual(events[1]?.details, {
+    kind: 'good_news_response',
+    positiveForSharer: 'explicit_or_context_supported',
+    responseObservation: 'visible_response',
+    responseLabels: ['explicitly_diminishes'],
+  })
+})
+
+test('good news the sharer may not welcome is never coded as a clear case', () => {
+  const events = buildIntimacyEvents([parsedGoodNews({ positiveForSharer: 'uncertain' })], window, members, [], 123)
+
+  assert.equal(events[0]?.modelDecision, 'uncertain')
+  assert.equal(resolveEventStatus({ origin: 'model', modelDecision: 'uncertain' }, null), 'uncertain')
 })
 
 const statusCases: Array<{
@@ -244,9 +417,99 @@ test('a user revision overrides the labels used for display and counting', () =>
     updatedAt: 1,
   })
 
-  assert.deepEqual(details.categories, ['feeling', 'worry_or_need'])
-  assert.equal(details.topic, 'health')
-  assert.equal(details.isDistressDisclosure, 'no')
+  assert.deepEqual(sharingDetails(details).categories, ['feeling', 'worry_or_need'])
+  assert.equal(sharingDetails(details).topic, 'health')
+  assert.equal(sharingDetails(details).isDistressDisclosure, 'no')
+})
+
+function responseEvent(overrides: Partial<IntimacyEvent> = {}): IntimacyEvent {
+  return {
+    ...storedEvent(),
+    kind: 'support_response',
+    details: {
+      kind: 'support_response',
+      disclosureEventId: 'sharing:3',
+      responseLabels: ['acknowledges_feeling', 'asks_details'],
+      responseObservation: 'visible_response',
+    },
+    ...overrides,
+  }
+}
+
+test('response summaries count every answered disclosure once and leave a missing reply unlabelled', () => {
+  const events: IntimacyEvent[] = [
+    responseEvent({ id: 'support_response:3' }),
+    responseEvent({
+      id: 'support_response:5',
+      status: 'confirmed',
+      details: {
+        kind: 'support_response',
+        disclosureEventId: 'sharing:5',
+        responseLabels: [],
+        responseObservation: 'no_visible_response',
+      },
+    }),
+    responseEvent({
+      id: 'support_response:7',
+      status: 'excluded',
+      details: {
+        kind: 'support_response',
+        disclosureEventId: 'sharing:7',
+        responseLabels: ['unclear'],
+        responseObservation: 'visible_response',
+      },
+    }),
+    responseEvent({
+      id: 'support_response:9',
+      status: 'uncertain',
+      details: {
+        kind: 'support_response',
+        disclosureEventId: 'sharing:9',
+        responseLabels: [],
+        responseObservation: 'insufficient_context',
+      },
+    }),
+  ]
+
+  const [alice, bob] = summarizeResponses(events, members, 'support_response')
+
+  assert.equal(alice?.anchors, 0, 'the discloser is not the one who could answer')
+  assert.deepEqual(bob, {
+    memberId: 2,
+    anchors: 2,
+    visibleResponse: 1,
+    noVisibleResponse: 1,
+    insufficientContext: 0,
+    byLabel: {
+      acknowledges_feeling: 1,
+      addresses_situation: 0,
+      asks_details: 1,
+      offers_advice_or_help: 0,
+      shares_related_experience: 0,
+      unclear: 0,
+    },
+  })
+})
+
+test('a revision may relabel a reply that was seen but never one that was not', () => {
+  const seen = applyReviewDetails(responseEvent().details, {
+    decision: 'included',
+    details: { responseLabels: ['offers_advice_or_help'] },
+    revision: 1,
+    updatedAt: 1,
+  })
+  assert.deepEqual(seen.kind === 'support_response' ? seen.responseLabels : [], ['offers_advice_or_help'])
+
+  const missing = applyReviewDetails(
+    {
+      kind: 'support_response',
+      disclosureEventId: 'sharing:5',
+      responseLabels: [],
+      responseObservation: 'no_visible_response',
+    },
+    { decision: 'included', details: { responseLabels: ['acknowledges_feeling'] }, revision: 1, updatedAt: 1 }
+  )
+  assert.deepEqual(missing.kind === 'support_response' ? missing.responseLabels : ['x'], [])
 })
 
 test('summaries count each confirmed or automatic event once and each of its labels once', () => {

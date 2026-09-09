@@ -335,7 +335,8 @@ function parseMessageIds(value: unknown, field: string): number[] {
 }
 
 function parseCategories(value: unknown, optional: boolean): SharingCategory[] {
-  if (optional && (value === undefined || value === null)) return []
+  const empty = value === undefined || value === null || (Array.isArray(value) && value.length === 0)
+  if (optional && empty) return []
   if (!Array.isArray(value) || value.length === 0) throw new Error('An intimacy event requires at least one category')
   const categories = [...new Set(value)]
   for (const category of categories) {

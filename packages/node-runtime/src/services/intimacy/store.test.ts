@@ -104,6 +104,7 @@ test('a window commit stores events with their evidence and merges a sharing con
         [24, 'core'],
       ]
     )
+    assert.ok(merged.details.kind === 'sharing')
     assert.deepEqual(merged.details.categories, ['experience_or_update', 'feeling'])
     assert.equal(merged.modelDecision, 'uncertain')
   } finally {

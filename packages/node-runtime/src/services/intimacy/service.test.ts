@@ -5,7 +5,15 @@ import path from 'node:path'
 import test from 'node:test'
 import Database from 'better-sqlite3'
 import { CHAT_DB_SCHEMA, type PathProvider } from '@openchatlab/core'
-import type { IntimacyMemberSummary, IntimacyResults } from '@openchatlab/shared-types'
+import type {
+  GoodNewsResponseDetails,
+  IntimacyEvent,
+  IntimacyMemberSummary,
+  IntimacyResponseMemberSummary,
+  IntimacyResults,
+  SharingDetails,
+  SupportResponseDetails,
+} from '@openchatlab/shared-types'
 import { assertDataDirCompatible, DataDirCompatibilityError, readDataDirCompatibilityMeta } from '../../data-dir-compat'
 import { DatabaseManager } from '../../database-manager'
 import { createDatabaseManagerAdapter } from '../adapters'
@@ -21,7 +29,15 @@ const MESSAGE_COUNT = 48
 const ALICE_FIRST_SHARING = 5
 const ALICE_CONTINUED_SHARING = 17
 const BOB_RELAYED_THIRD_PARTY = 12
+const ALICE_GOOD_NEWS = 25
+const BOB_DIMINISHES_GOOD_NEWS = 26
 const BOB_OWN_SHARING = 30
+const ALICE_SUPPORTS_BOB = 31
+/** The last messages of window 2, so their answer can only appear in window 3. */
+const BOB_LATE_DISCLOSURE = 34
+const ALICE_LATE_SUPPORT = 37
+const ALICE_UNANSWERED_DISCLOSURE = 39
+const BOB_DISCLOSURE_AT_RANGE_END = 48
 const BOB_PHONE_NUMBER = '13800001111'
 
 /** UTC-10 all year, so a message sent at 08:30 UTC belongs to the previous local calendar day. */
@@ -76,10 +92,17 @@ function createSession(root: string, chatType: 'private' | 'group' = 'private'):
     [BOB_RELAYED_THIRD_PARTY, { type: 0, content: '她说她很难过，我不知道该怎么接这句话' }],
     [ALICE_CONTINUED_SHARING, { type: 0, content: 'The launch is finally out, and I am mostly relieved now.' }],
     [23, { type: 2, content: null }],
+    [ALICE_GOOD_NEWS, { type: 0, content: '我拿到那个 offer 了！下周一入职' }],
+    [BOB_DIMINISHES_GOOD_NEWS, { type: 0, content: '就这？那家公司谁都能进吧' }],
     [
       BOB_OWN_SHARING,
       { type: 0, content: `我最近体检结果有点问题，说实话有点担心，医院让我打 ${BOB_PHONE_NUMBER} 约复查` },
     ],
+    [ALICE_SUPPORTS_BOB, { type: 0, content: '听起来挺吓人的，你现在感觉怎么样？复查约在哪天' }],
+    [BOB_LATE_DISCLOSURE, { type: 0, content: '我爸这两天住院了，我一个人跑上跑下有点撑不住' }],
+    [ALICE_LATE_SUPPORT, { type: 0, content: '需要我请假过去帮你盯一天吗？我明天上午没会' }],
+    [ALICE_UNANSWERED_DISCLOSURE, { type: 0, content: '我这两天总睡不着，心里一直发慌' }],
+    [BOB_DISCLOSURE_AT_RANGE_END, { type: 0, content: '简历改完了，但一直没敢投，怕又是白忙一场' }],
   ])
   const insert = db.prepare('INSERT INTO message (id, sender_id, ts, type, content) VALUES (?, ?, ?, ?, ?)')
   db.transaction(() => {
@@ -154,56 +177,138 @@ function readWindow(userPrompt: string): PromptWindow {
   return { index: Number(header[1]), total: Number(header[2]), messages: readMessageLines(userPrompt) }
 }
 
-function pickMessage(window: PromptWindow, from: 'A' | 'B', preferred: number[] = []): number {
-  const usable = window.messages.filter((item) => !item.context && item.from === from && item.type === 'text')
-  const preferredHit = usable.find((item) => preferred.includes(item.id))
-  const chosen = preferredHit ?? usable.at(-1)
-  assert.ok(chosen, `window ${window.index} has no usable message for ${from}`)
-  return chosen.id
+function sharingEvent(event: Record<string, unknown>): Record<string, unknown> {
+  return {
+    kind: 'sharing',
+    relatedMessageIds: [],
+    categories: ['experience_or_update'],
+    topic: 'work_study',
+    distress: 'no',
+    confidence: 'clear',
+    continuesContextEvent: false,
+    observation: 'sufficient',
+    reason: 'synthetic coding decision',
+    ...event,
+  }
+}
+
+function goodNewsEvent(event: Record<string, unknown>): Record<string, unknown> {
+  return {
+    kind: 'good_news',
+    relatedMessageIds: [],
+    positiveForSharer: 'explicit_or_context_supported',
+    confidence: 'clear',
+    continuesContextEvent: false,
+    observation: 'sufficient',
+    reason: 'synthetic coding decision',
+    ...event,
+  }
 }
 
 function sharingResponse(event: Record<string, unknown>): string {
-  return JSON.stringify({
-    events: [
-      {
-        kind: 'sharing',
-        relatedMessageIds: [],
-        categories: ['experience_or_update'],
-        topic: 'work_study',
-        distress: 'no',
-        confidence: 'clear',
-        continuesContextEvent: false,
-        observation: 'sufficient',
-        reason: 'synthetic coding decision',
-        ...event,
-      },
-    ],
-  })
+  return JSON.stringify({ events: [sharingEvent(event)] })
 }
 
-/** Alice shares in window 1, continues it in window 2, Bob shares his own matter in the last window. */
+function visibleResponse(messageIds: number[], labels: string[]): Record<string, unknown> {
+  return { observation: 'visible_response', messageIds, labels }
+}
+
+const NO_VISIBLE_RESPONSE = { observation: 'no_visible_response', messageIds: [], labels: [] }
+const RESPONSE_NOT_YET_VISIBLE = { observation: 'insufficient_context', messageIds: [], labels: [] }
+
+/**
+ * The synthetic coding decisions, keyed on the messages a window actually contains: a sharing without distress
+ * and one continued in the next window, the same messages coded as both a sharing and good news, a disclosure
+ * answered inside its window, one whose answer only arrives in the next window, one nobody answered, and one at
+ * the end of the range where an answer could not be seen yet.
+ */
 function defaultWindowResponse(window: PromptWindow): string {
-  if (window.index === 1) {
-    return sharingResponse({ discloser: 'A', coreMessageIds: [pickMessage(window, 'A', [ALICE_FIRST_SHARING])] })
+  const own = (id: number) => window.messages.some((message) => message.id === id && !message.context)
+  const asContext = (id: number) => window.messages.some((message) => message.id === id && message.context)
+  const events: Record<string, unknown>[] = []
+  if (own(ALICE_FIRST_SHARING)) {
+    events.push(sharingEvent({ discloser: 'A', coreMessageIds: [ALICE_FIRST_SHARING] }))
   }
-  if (window.index === 2) {
-    return sharingResponse({
-      discloser: 'A',
-      coreMessageIds: [pickMessage(window, 'A', [ALICE_CONTINUED_SHARING])],
-      continuesContextEvent: true,
-      categories: ['feeling'],
-    })
+  if (own(ALICE_CONTINUED_SHARING)) {
+    events.push(
+      sharingEvent({
+        discloser: 'A',
+        coreMessageIds: [ALICE_CONTINUED_SHARING],
+        continuesContextEvent: true,
+        categories: ['feeling'],
+      })
+    )
   }
-  if (window.index === window.total) {
-    return sharingResponse({
-      discloser: 'B',
-      coreMessageIds: [pickMessage(window, 'B', [BOB_OWN_SHARING])],
-      topic: 'health',
-      distress: 'yes',
-      categories: ['worry_or_need'],
-    })
+  if (own(ALICE_GOOD_NEWS)) {
+    events.push(sharingEvent({ discloser: 'A', coreMessageIds: [ALICE_GOOD_NEWS] }))
+    events.push(
+      goodNewsEvent({
+        discloser: 'A',
+        coreMessageIds: [ALICE_GOOD_NEWS],
+        responses: visibleResponse([BOB_DIMINISHES_GOOD_NEWS], ['explicitly_diminishes']),
+      })
+    )
   }
-  return JSON.stringify({ events: [] })
+  if (own(BOB_OWN_SHARING)) {
+    events.push(
+      sharingEvent({
+        discloser: 'B',
+        coreMessageIds: [BOB_OWN_SHARING],
+        categories: ['worry_or_need'],
+        topic: 'health',
+        distress: 'yes',
+        responses: visibleResponse([ALICE_SUPPORTS_BOB], ['acknowledges_feeling', 'asks_details']),
+      })
+    )
+  }
+  if (own(BOB_LATE_DISCLOSURE)) {
+    events.push(
+      sharingEvent({
+        discloser: 'B',
+        coreMessageIds: [BOB_LATE_DISCLOSURE],
+        categories: ['worry_or_need'],
+        topic: 'family',
+        distress: 'yes',
+        responses: RESPONSE_NOT_YET_VISIBLE,
+      })
+    )
+  }
+  if (asContext(BOB_LATE_DISCLOSURE) && own(ALICE_LATE_SUPPORT)) {
+    events.push(
+      sharingEvent({
+        discloser: 'B',
+        coreMessageIds: [],
+        categories: [],
+        continuesContextEvent: true,
+        distress: 'yes',
+        responses: visibleResponse([ALICE_LATE_SUPPORT], ['offers_advice_or_help']),
+      })
+    )
+  }
+  if (own(ALICE_UNANSWERED_DISCLOSURE)) {
+    events.push(
+      sharingEvent({
+        discloser: 'A',
+        coreMessageIds: [ALICE_UNANSWERED_DISCLOSURE],
+        categories: ['feeling', 'worry_or_need'],
+        topic: 'health',
+        distress: 'yes',
+        responses: NO_VISIBLE_RESPONSE,
+      })
+    )
+  }
+  if (own(BOB_DISCLOSURE_AT_RANGE_END)) {
+    events.push(
+      sharingEvent({
+        discloser: 'B',
+        coreMessageIds: [BOB_DISCLOSURE_AT_RANGE_END],
+        categories: ['worry_or_need'],
+        distress: 'yes',
+        responses: RESPONSE_NOT_YET_VISIBLE,
+      })
+    )
+  }
+  return JSON.stringify({ events })
 }
 
 interface Harness {
@@ -282,6 +387,31 @@ function sharingSummary(results: IntimacyResults): IntimacyMemberSummary[] {
   return summary.members
 }
 
+function responseSummary(
+  results: IntimacyResults,
+  kind: 'support_response' | 'good_news_response'
+): IntimacyResponseMemberSummary[] {
+  const summary = results.summaries.find((item) => item.kind === kind)
+  assert.ok(summary && summary.kind !== 'sharing')
+  return summary.members
+}
+
+function event(results: IntimacyResults, eventId: string): IntimacyEvent {
+  const found = results.events.find((item) => item.id === eventId)
+  assert.ok(found, `the results contain ${eventId}`)
+  return found
+}
+
+function sharingDetails(event: IntimacyEvent): SharingDetails {
+  assert.ok(event.details.kind === 'sharing')
+  return event.details
+}
+
+function responseDetails(event: IntimacyEvent): SupportResponseDetails | GoodNewsResponseDetails {
+  assert.ok(event.details.kind !== 'sharing')
+  return event.details
+}
+
 async function waitForRun(service: IntimacyService, sessionId: string, runId: string, status: string) {
   await waitUntil(() => service.getRun(sessionId, runId)?.status === status)
   return service.getRun(sessionId, runId)!
@@ -300,7 +430,9 @@ test('a full run codes each matter once and keeps a sharing continued across win
   const { service, manager } = createHarness(stub.client)
 
   try {
-    const preflight = await service.preflight('private', { kinds: ['sharing'] })
+    const preflight = await service.preflight('private', {
+      kinds: ['sharing', 'support_response', 'good_news_response'],
+    })
     assert.ok(preflight.estimatedWindows >= 3)
     assert.equal(preflight.messageCount, MESSAGE_COUNT)
     assert.equal(preflight.modelId, 'test/model')
@@ -322,22 +454,295 @@ test('a full run codes each matter once and keeps a sharing continued across win
 
     const results = await service.getResults('private')
     const sharingEvents = results.events.filter((event) => event.kind === 'sharing')
-    assert.equal(sharingEvents.length, 2)
     assert.equal(results.coverage?.complete, true)
     assert.equal(results.coverage?.sourceChanged, false)
 
-    const [aliceEvent, bobEvent] = sharingEvents
-    assert.equal(aliceEvent?.subjectMemberId, 1)
-    assert.equal(aliceEvent?.status, 'auto')
-    assert.equal(aliceEvent?.evidence.length, 2, 'the continued window appends evidence instead of adding an event')
-    assert.deepEqual(aliceEvent?.details.categories, ['experience_or_update', 'feeling'])
-    assert.equal(bobEvent?.subjectMemberId, 2)
-    assert.equal(bobEvent?.details.topic, 'health')
-    assert.equal(sharingSummary(results)[0]?.counted, 1)
-    assert.equal(sharingSummary(results)[1]?.counted, 1)
+    const aliceEvent = event(results, `sharing:${ALICE_FIRST_SHARING}`)
+    assert.equal(aliceEvent.subjectMemberId, 1)
+    assert.equal(aliceEvent.status, 'auto')
+    assert.equal(aliceEvent.evidence.length, 2, 'the continued window appends evidence instead of adding an event')
+    assert.deepEqual(sharingDetails(aliceEvent).categories, ['experience_or_update', 'feeling'])
+    assert.equal(sharingDetails(event(results, `sharing:${BOB_OWN_SHARING}`)).topic, 'health')
+    assert.deepEqual(
+      sharingEvents.map((item) => item.id),
+      [
+        `sharing:${ALICE_FIRST_SHARING}`,
+        `sharing:${ALICE_GOOD_NEWS}`,
+        `sharing:${BOB_OWN_SHARING}`,
+        `sharing:${BOB_LATE_DISCLOSURE}`,
+        `sharing:${ALICE_UNANSWERED_DISCLOSURE}`,
+        `sharing:${BOB_DISCLOSURE_AT_RANGE_END}`,
+      ]
+    )
+    assert.equal(sharingSummary(results)[0]?.counted, 3)
+    assert.equal(sharingSummary(results)[1]?.counted, 3)
     assert.equal(results.orphanReviews, 0)
-    for (const evidence of aliceEvent?.evidence ?? []) {
+    for (const evidence of aliceEvent.evidence) {
       assert.ok(results.messages[evidence.messageId], 'every cited message is returned for the evidence view')
+    }
+  } finally {
+    service.close()
+    manager.closeAll()
+  }
+})
+
+test('a disclosure and the answer to it stay one support event, and a sharing with no distress makes none', async () => {
+  const stub = modelStub((window) => defaultWindowResponse(window))
+  const { service, manager } = createHarness(stub.client)
+
+  try {
+    const started = service.start('private', { kinds: ['sharing', 'support_response', 'good_news_response'] })
+    await waitForRun(service, 'private', started.id, 'completed')
+    const results = await service.getResults('private')
+
+    assert.deepEqual(
+      results.events.filter((item) => item.kind === 'support_response').map((item) => item.id),
+      [
+        `support_response:${BOB_OWN_SHARING}`,
+        `support_response:${BOB_LATE_DISCLOSURE}`,
+        `support_response:${ALICE_UNANSWERED_DISCLOSURE}`,
+        `support_response:${BOB_DISCLOSURE_AT_RANGE_END}`,
+      ],
+      'only a disclosure marked as distress gets a support event, and each gets exactly one'
+    )
+
+    const answered = event(results, `support_response:${BOB_OWN_SHARING}`)
+    assert.equal(answered.subjectMemberId, 2, 'the discloser is the subject')
+    assert.equal(answered.otherMemberId, 1, 'the participant who answered is the other side')
+    assert.deepEqual(
+      answered.evidence.map((item) => [item.messageId, item.role]),
+      [
+        [BOB_OWN_SHARING, 'core'],
+        [ALICE_SUPPORTS_BOB, 'response'],
+      ]
+    )
+    assert.deepEqual(responseDetails(answered), {
+      kind: 'support_response',
+      disclosureEventId: `sharing:${BOB_OWN_SHARING}`,
+      responseObservation: 'visible_response',
+      responseLabels: ['acknowledges_feeling', 'asks_details'],
+    })
+
+    // The answer arrives one window after the disclosure: it joins the same event instead of opening a second one.
+    const late = event(results, `support_response:${BOB_LATE_DISCLOSURE}`)
+    assert.deepEqual(
+      late.evidence.map((item) => [item.messageId, item.role]),
+      [
+        [BOB_LATE_DISCLOSURE, 'core'],
+        [ALICE_LATE_SUPPORT, 'response'],
+      ]
+    )
+    assert.equal(responseDetails(late).responseObservation, 'visible_response')
+    assert.deepEqual(responseDetails(late).responseLabels, ['offers_advice_or_help'])
+
+    const unanswered = event(results, `support_response:${ALICE_UNANSWERED_DISCLOSURE}`)
+    assert.equal(responseDetails(unanswered).responseObservation, 'no_visible_response')
+    assert.deepEqual(responseDetails(unanswered).responseLabels, [], 'a missing answer never carries a label')
+    assert.equal(
+      responseDetails(event(results, `support_response:${BOB_DISCLOSURE_AT_RANGE_END}`)).responseObservation,
+      'insufficient_context',
+      'a disclosure at the end of the range is reported as unreadable, not as unanswered'
+    )
+
+    const [alice, bob] = responseSummary(results, 'support_response')
+    assert.deepEqual(alice, {
+      memberId: 1,
+      anchors: 3,
+      visibleResponse: 2,
+      noVisibleResponse: 0,
+      insufficientContext: 1,
+      byLabel: {
+        acknowledges_feeling: 1,
+        addresses_situation: 0,
+        asks_details: 1,
+        offers_advice_or_help: 1,
+        shares_related_experience: 0,
+        unclear: 0,
+      },
+    })
+    assert.equal(bob?.anchors, 1)
+    assert.equal(bob?.noVisibleResponse, 1)
+    assert.deepEqual(
+      Object.values(bob?.byLabel ?? {}),
+      [0, 0, 0, 0, 0, 0],
+      'a disclosure nobody answered adds no response label at all'
+    )
+  } finally {
+    service.close()
+    manager.closeAll()
+  }
+})
+
+test('good news is counted next to the sharing that reports it, with the reply that played it down', async () => {
+  const stub = modelStub((window) => defaultWindowResponse(window))
+  const { service, manager } = createHarness(stub.client)
+
+  try {
+    const started = service.start('private', { kinds: ['sharing', 'good_news_response'] })
+    await waitForRun(service, 'private', started.id, 'completed')
+    const results = await service.getResults('private')
+
+    const goodNews = event(results, `good_news_response:${ALICE_GOOD_NEWS}`)
+    assert.equal(goodNews.subjectMemberId, 1)
+    assert.equal(goodNews.otherMemberId, 2)
+    assert.deepEqual(
+      goodNews.evidence.map((item) => [item.messageId, item.role]),
+      [
+        [ALICE_GOOD_NEWS, 'core'],
+        [BOB_DIMINISHES_GOOD_NEWS, 'response'],
+      ]
+    )
+    assert.deepEqual(responseDetails(goodNews).responseLabels, ['explicitly_diminishes'])
+    // The same messages are also a personal sharing: the two kinds count the same matter for different questions.
+    assert.ok(
+      results.events.some((item) => item.id === `sharing:${ALICE_GOOD_NEWS}`),
+      'a good news event does not take the messages away from the sharing card'
+    )
+
+    const [alice, bob] = responseSummary(results, 'good_news_response')
+    assert.equal(alice?.anchors, 0)
+    assert.equal(bob?.anchors, 1)
+    assert.equal(bob?.visibleResponse, 1)
+    assert.equal(bob?.byLabel.explicitly_diminishes, 1)
+  } finally {
+    service.close()
+    manager.closeAll()
+  }
+})
+
+test('a revision relabels a reply that was seen and is refused for one that was not', async () => {
+  const stub = modelStub((window) => defaultWindowResponse(window))
+  const { service, manager } = createHarness(stub.client)
+
+  try {
+    const started = service.start('private', { kinds: ['sharing', 'support_response'] })
+    await waitForRun(service, 'private', started.id, 'completed')
+
+    const reviewed = await service.reviewEvent('private', `support_response:${BOB_OWN_SHARING}`, {
+      decision: 'included',
+      expectedRevision: 0,
+      details: { responseLabels: ['addresses_situation'] },
+    })
+    const revised = event(reviewed, `support_response:${BOB_OWN_SHARING}`)
+    assert.equal(revised.status, 'confirmed')
+    assert.deepEqual(responseDetails(revised).responseLabels, ['addresses_situation'])
+    const [alice] = responseSummary(reviewed, 'support_response')
+    assert.equal(alice?.byLabel.addresses_situation, 1)
+    assert.equal(alice?.byLabel.acknowledges_feeling, 0, 'the counts follow the labels the user corrected')
+    assert.equal(alice?.anchors, 3)
+
+    await assert.rejects(
+      () =>
+        service.reviewEvent('private', `support_response:${BOB_OWN_SHARING}`, {
+          decision: 'included',
+          expectedRevision: 1,
+          details: { responseLabels: ['congratulates_or_affirms'] },
+        }),
+      (error: unknown) => (error as { statusCode?: number }).statusCode === 400,
+      'labels of another kind do not belong on a support response'
+    )
+    await assert.rejects(
+      () =>
+        service.reviewEvent('private', `support_response:${ALICE_UNANSWERED_DISCLOSURE}`, {
+          decision: 'included',
+          expectedRevision: 0,
+          details: { responseLabels: ['acknowledges_feeling'] },
+        }),
+      (error: unknown) => (error as { statusCode?: number }).statusCode === 400,
+      'a reply nobody could see must never be given a label'
+    )
+  } finally {
+    service.close()
+    manager.closeAll()
+  }
+})
+
+test('a confirmed response counts the reply the user picked and refuses one the other side never sent', async () => {
+  const { service, manager } = createHarness(null)
+
+  try {
+    const created = await service.createUserEvent('private', {
+      kind: 'good_news_response',
+      subjectMemberId: 1,
+      coreMessageIds: [ALICE_GOOD_NEWS],
+      responseMessageIds: [BOB_DIMINISHES_GOOD_NEWS],
+      details: { positiveForSharer: 'explicit_or_context_supported', responseLabels: ['explicitly_diminishes'] },
+    })
+    const goodNews = event(created, `good_news_response:${ALICE_GOOD_NEWS}`)
+    assert.equal(goodNews.status, 'confirmed')
+    assert.equal(goodNews.origin, 'user')
+    assert.deepEqual(
+      goodNews.evidence.map((item) => [item.messageId, item.role]),
+      [
+        [ALICE_GOOD_NEWS, 'core'],
+        [BOB_DIMINISHES_GOOD_NEWS, 'response'],
+      ]
+    )
+    assert.equal(responseSummary(created, 'good_news_response')[1]?.byLabel.explicitly_diminishes, 1)
+
+    // Confirming the same matter again relabels that event instead of counting the same reply twice.
+    const relabelled = await service.createUserEvent('private', {
+      kind: 'good_news_response',
+      subjectMemberId: 1,
+      coreMessageIds: [ALICE_GOOD_NEWS],
+      responseMessageIds: [BOB_DIMINISHES_GOOD_NEWS],
+      details: { positiveForSharer: 'uncertain', responseLabels: ['other_visible_response'] },
+    })
+    assert.equal(relabelled.events.filter((item) => item.kind === 'good_news_response').length, 1)
+    assert.deepEqual(responseDetails(event(relabelled, `good_news_response:${ALICE_GOOD_NEWS}`)).responseLabels, [
+      'other_visible_response',
+    ])
+    assert.equal(responseSummary(relabelled, 'good_news_response')[1]?.anchors, 1)
+
+    // A support response needs the disclosure it answers, so confirming one writes that disclosure as well.
+    const support = await service.createUserEvent('private', {
+      kind: 'support_response',
+      subjectMemberId: 2,
+      coreMessageIds: [BOB_OWN_SHARING],
+      responseMessageIds: [ALICE_SUPPORTS_BOB],
+      details: { responseLabels: ['acknowledges_feeling'] },
+    })
+    const disclosure = event(support, `sharing:${BOB_OWN_SHARING}`)
+    assert.equal(disclosure.origin, 'user')
+    assert.equal(sharingDetails(disclosure).isDistressDisclosure, 'yes')
+    assert.deepEqual(responseDetails(event(support, `support_response:${BOB_OWN_SHARING}`)), {
+      kind: 'support_response',
+      disclosureEventId: `sharing:${BOB_OWN_SHARING}`,
+      responseObservation: 'visible_response',
+      responseLabels: ['acknowledges_feeling'],
+    })
+
+    // Confirming a disclosure nobody answered records exactly that, never a label about how it went.
+    const unanswered = await service.createUserEvent('private', {
+      kind: 'support_response',
+      subjectMemberId: 1,
+      coreMessageIds: [ALICE_UNANSWERED_DISCLOSURE],
+      details: { responseLabels: [] },
+    })
+    assert.equal(
+      responseDetails(event(unanswered, `support_response:${ALICE_UNANSWERED_DISCLOSURE}`)).responseObservation,
+      'no_visible_response'
+    )
+
+    const rejected: Array<[string, number[], string[]]> = [
+      ['a reply the discloser sent themselves', [BOB_LATE_DISCLOSURE], ['unclear']],
+      ['a reply that came before the disclosure', [ALICE_FIRST_SHARING], ['unclear']],
+      ['labels without a reply to attach them to', [], ['unclear']],
+      ['a reply with no label at all', [ALICE_SUPPORTS_BOB], []],
+    ]
+    for (const [name, responseMessageIds, responseLabels] of rejected) {
+      await assert.rejects(
+        () =>
+          service.createUserEvent('private', {
+            kind: 'support_response',
+            subjectMemberId: 2,
+            coreMessageIds: [BOB_DISCLOSURE_AT_RANGE_END],
+            responseMessageIds,
+            details: { responseLabels: responseLabels as SupportResponseDetails['responseLabels'] },
+          }),
+        (error: unknown) => (error as { statusCode?: number }).statusCode === 400,
+        name
+      )
     }
   } finally {
     service.close()
@@ -419,7 +824,7 @@ test('resuming continues at the window the analysis stopped on instead of paying
     assert.equal(stub.windows.filter((index) => index === 1).length, 1, 'the first window is not analysed twice')
     assert.equal(completed.completedWindows, completed.totalWindows)
     const results = await service.getResults('private')
-    assert.equal(results.events.filter((event) => event.kind === 'sharing').length, 2)
+    assert.equal(results.events.filter((event) => event.kind === 'sharing').length, 6)
   } finally {
     service.close()
     manager.closeAll()
@@ -541,11 +946,12 @@ test('a rerun replaces the generated events but keeps the decisions the user mad
     const first = service.start('private', { kinds: ['sharing'] })
     await waitForRun(service, 'private', first.id, 'completed')
     const initial = await service.getResults('private')
-    const excludedId = initial.events[0]!.id
+    const excludedId = event(initial, `sharing:${ALICE_FIRST_SHARING}`).id
+    assert.equal(sharingSummary(initial)[0]?.counted, 3)
 
     const reviewed = await service.reviewEvent('private', excludedId, { decision: 'excluded', expectedRevision: 0 })
-    assert.equal(reviewed.events.find((event) => event.id === excludedId)?.status, 'excluded')
-    assert.equal(sharingSummary(reviewed)[0]?.counted, 0)
+    assert.equal(reviewed.events.find((item) => item.id === excludedId)?.status, 'excluded')
+    assert.equal(sharingSummary(reviewed)[0]?.counted, 2)
     await assert.rejects(
       () => service.reviewEvent('private', excludedId, { decision: 'included', expectedRevision: 0 }),
       (error: unknown) => (error as { statusCode?: number }).statusCode === 409
@@ -593,7 +999,7 @@ test('a confirmed candidate is counted without a run and rejects messages the pa
       details: { categories: ['feeling', 'worry_or_need'], topic: 'health', isDistressDisclosure: 'yes' },
     })
     assert.equal(relabelled.events.length, 1)
-    assert.deepEqual(relabelled.events[0]?.details.categories, ['feeling', 'worry_or_need'])
+    assert.deepEqual(sharingDetails(relabelled.events[0]!).categories, ['feeling', 'worry_or_need'])
     assert.equal(relabelled.events[0]?.review?.revision, 2)
     assert.equal(sharingSummary(relabelled)[1]?.counted, 1)
 

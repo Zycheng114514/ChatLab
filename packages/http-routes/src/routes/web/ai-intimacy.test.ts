@@ -197,6 +197,60 @@ test('confirmed events and reviews stay inside one session and refuse a stale re
   })
   assert.equal(unknownEvent.statusCode, 404)
 
+  const supportEvent = await app.inject({
+    method: 'POST',
+    url: '/_web/sessions/private/intimacy/events',
+    payload: {
+      kind: 'support_response',
+      subjectMemberId: 1,
+      coreMessageIds: [1],
+      responseMessageIds: [2],
+      details: { responseLabels: ['acknowledges_feeling'] },
+    },
+  })
+  assert.equal(supportEvent.statusCode, 200)
+  assert.deepEqual(
+    supportEvent.json().summaries.map((summary: { kind: string }) => summary.kind),
+    ['sharing', 'support_response', 'good_news_response'],
+    'one request answers for every implemented kind'
+  )
+
+  const wrongSender = await app.inject({
+    method: 'POST',
+    url: '/_web/sessions/private/intimacy/events',
+    payload: {
+      kind: 'support_response',
+      subjectMemberId: 1,
+      coreMessageIds: [1],
+      responseMessageIds: [1],
+      details: { responseLabels: ['acknowledges_feeling'] },
+    },
+  })
+  assert.equal(wrongSender.statusCode, 400, 'a reply the discloser sent themselves is refused')
+
+  const unimplementedKind = await app.inject({
+    method: 'POST',
+    url: '/_web/sessions/private/intimacy/events',
+    payload: {
+      kind: 'follow_up',
+      subjectMemberId: 1,
+      coreMessageIds: [1],
+      details: { categories: ['feeling'], topic: 'other', isDistressDisclosure: 'no' },
+    },
+  })
+  assert.equal(unimplementedKind.statusCode, 400)
+
+  const mixed = await app.inject({ method: 'GET', url: '/_web/sessions/private/intimacy/results' })
+  assert.equal(mixed.statusCode, 200)
+  assert.deepEqual(
+    mixed
+      .json()
+      .events.map((item: { id: string }) => item.id)
+      .sort(),
+    ['sharing:1', 'support_response:1'],
+    'the results contain every kind without asking for one'
+  )
+
   const cleared = await app.inject({
     method: 'DELETE',
     url: '/_web/sessions/private/intimacy/results?reviews=1',
