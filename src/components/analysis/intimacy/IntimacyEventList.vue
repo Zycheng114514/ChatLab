@@ -1,11 +1,13 @@
 <script setup lang="ts">
 // 亲密关系事件列表：每行是一个事件的证据、标签和修订入口。
-// 三种 kind 共用这一行：个人分享只有本人的原话，倾诉后的回应与好消息回应左边是本人原话、右边是另一方的回复。
+// 四种 kind 共用这一行：个人分享只有本人的原话；倾诉后的回应与好消息回应左边是本人原话、右边是另一方的回复；
+// 事后追问上面是被问者更早的原话、下面是追问者的原话。
 import { computed, ref } from 'vue'
 import dayjs from 'dayjs'
 import { useI18n } from 'vue-i18n'
 import { getMessageTypeName } from '@/types/base'
 import type {
+  FollowUpDetails,
   GoodNewsResponseDetails,
   GoodNewsResponseLabel,
   IntimacyEvent,
@@ -19,6 +21,7 @@ import type {
   SupportResponseLabel,
 } from '@/services'
 import {
+  FOLLOW_UP_INITIATION_LABEL_KEYS,
   GOOD_NEWS_RESPONSE_LABELS,
   GOOD_NEWS_RESPONSE_LABEL_KEYS,
   POSITIVE_FOR_SHARER_LABEL_KEYS,
@@ -29,6 +32,7 @@ import {
   SHARING_TOPIC_LABEL_KEYS,
   SUPPORT_RESPONSE_LABELS,
   SUPPORT_RESPONSE_LABEL_KEYS,
+  formatIntimacyGap,
   resolveIntimacyStatusBadge,
 } from './intimacy-summary'
 
@@ -60,12 +64,13 @@ const editTopic = ref<SharingTopic>('other')
 const editSupportLabels = ref<SupportResponseLabel[]>([])
 const editGoodNewsLabels = ref<GoodNewsResponseLabel[]>([])
 const editPositiveForSharer = ref(false)
+const editPriorIds = ref<number[]>([])
 
 const topicOptions = computed(() =>
   SHARING_TOPICS.map((topic) => ({ value: topic, label: t(SHARING_TOPIC_LABEL_KEYS[topic]) }))
 )
 
-/** 一次结果里混着三种 kind，类别与话题只属于个人分享事件。 */
+/** 一次结果里混着四种 kind，类别与话题只属于个人分享事件。 */
 function sharingDetails(event: IntimacyEvent): SharingDetails | null {
   return event.details.kind === 'sharing' ? event.details : null
 }
@@ -80,6 +85,10 @@ function goodNewsDetails(event: IntimacyEvent): GoodNewsResponseDetails | null {
 
 function responseDetails(event: IntimacyEvent): SupportResponseDetails | GoodNewsResponseDetails | null {
   return supportDetails(event) ?? goodNewsDetails(event)
+}
+
+function followUpDetails(event: IntimacyEvent): FollowUpDetails | null {
+  return event.details.kind === 'follow_up' ? event.details : null
 }
 
 /** 标签只描述看得见的回复，所以没有可见回复的事件这里就是空的。 */
@@ -102,17 +111,57 @@ function observationLabelKey(event: IntimacyEvent): string {
 }
 
 function coreEvidence(event: IntimacyEvent) {
-  return event.evidence.filter((evidence) => evidence.role !== 'response')
+  return event.evidence.filter((evidence) => evidence.role !== 'response' && evidence.role !== 'prior')
 }
 
 function responseEvidence(event: IntimacyEvent) {
   return event.evidence.filter((evidence) => evidence.role === 'response')
 }
 
+/** K3 的「先前」证据：被问者更早提到那件事的消息；没找到配对时是空的。 */
+function priorEvidence(event: IntimacyEvent) {
+  return event.evidence.filter((evidence) => evidence.role === 'prior')
+}
+
+function gapText(event: IntimacyEvent) {
+  const details = followUpDetails(event)
+  return details ? formatIntimacyGap(details.gapSeconds) : null
+}
+
+/** 阶段 B 给模型看过的候选先前消息，用户可以从中指定；原文随结果一起返回。 */
+function priorCandidates(event: IntimacyEvent): IntimacyMessageSnippet[] {
+  const details = followUpDetails(event)
+  if (!details) return []
+  return details.candidateMessageIds.flatMap((messageId) => {
+    const snippet = props.messages[messageId]
+    return snippet ? [snippet] : []
+  })
+}
+
 /** 没有可见回复的倾诉事件没有可改的标签；好消息事件还能改「对本人是否好消息」。 */
 function canEditLabels(event: IntimacyEvent): boolean {
   const support = supportDetails(event)
-  return support ? support.responseObservation === 'visible_response' : true
+  if (support) return support.responseObservation === 'visible_response'
+  // 指定先前事件要有候选可选；没有候选的追问在行里写明本次回查没找到，只能用候选检索自己指定。
+  if (followUpDetails(event)) return priorCandidates(event).length > 0
+  return true
+}
+
+function editButtonKey(event: IntimacyEvent): string {
+  if (sharingDetails(event)) return 'views.intimacy.event.editLabels'
+  if (followUpDetails(event)) return 'views.intimacy.k3.pickPrior'
+  return 'views.intimacy.event.editResponse'
+}
+
+function requiredHintKey(event: IntimacyEvent): string {
+  if (sharingDetails(event)) return 'views.intimacy.event.categoriesRequired'
+  if (followUpDetails(event)) return 'views.intimacy.k3.priorRequired'
+  return 'views.intimacy.event.labelsRequired'
+}
+
+/** 没有先前消息的追问不是一个配对，所以这一行只提供「指定先前事件」，不提供直接确认。 */
+function canConfirm(event: IntimacyEvent): boolean {
+  return !followUpDetails(event) || priorEvidence(event).length > 0
 }
 
 function memberName(memberId: number): string {
@@ -121,6 +170,10 @@ function memberName(memberId: number): string {
 
 function formatTime(timestamp: number): string {
   return dayjs.unix(timestamp).format('YYYY-MM-DD HH:mm')
+}
+
+function formatDay(timestamp: number): string {
+  return dayjs.unix(timestamp).format('YYYY-MM-DD')
 }
 
 function quoteText(messageId: number): string | null {
@@ -149,6 +202,14 @@ function startEditing(event: IntimacyEvent) {
   editSupportLabels.value = support ? [...support.responseLabels] : []
   editGoodNewsLabels.value = goodNews ? [...goodNews.responseLabels] : []
   editPositiveForSharer.value = goodNews?.positiveForSharer === 'explicit_or_context_supported'
+  editPriorIds.value = priorEvidence(event).map((evidence) => evidence.messageId)
+}
+
+function togglePrior(messageId: number) {
+  const next = new Set(editPriorIds.value)
+  if (next.has(messageId)) next.delete(messageId)
+  else next.add(messageId)
+  editPriorIds.value = [...next].sort((left, right) => left - right)
 }
 
 function toggleCategory(category: SharingCategory, checked: boolean) {
@@ -175,6 +236,7 @@ function toggleGoodNewsLabel(label: GoodNewsResponseLabel, checked: boolean) {
 /** 有可见回复的事件至少要留一个回复标签；没有可见回复的好消息事件只改「对本人是否好消息」。 */
 function canSubmitEdit(event: IntimacyEvent): boolean {
   if (sharingDetails(event)) return editCategories.value.length > 0
+  if (followUpDetails(event)) return editPriorIds.value.length > 0
   if (supportDetails(event)) return editSupportLabels.value.length > 0
   const goodNews = goodNewsDetails(event)
   return goodNews?.responseObservation !== 'visible_response' || editGoodNewsLabels.value.length > 0
@@ -184,7 +246,10 @@ function submitEdit(event: IntimacyEvent) {
   if (!canSubmitEdit(event)) return
   const goodNews = goodNewsDetails(event)
   let details: IntimacyReviewDetails
-  if (goodNews) {
+  if (followUpDetails(event)) {
+    // 服务端会按选中的消息重新算配对（先前事件、间隔、时机），前端只提交选择本身。
+    details = { priorMessageIds: [...editPriorIds.value] }
+  } else if (goodNews) {
     details = {
       positiveForSharer: editPositiveForSharer.value ? 'explicit_or_context_supported' : 'uncertain',
       // 后端拒绝给看不见的回复贴标签，所以这时只提交「对本人是否好消息」。
@@ -216,7 +281,7 @@ function submitEdit(event: IntimacyEvent) {
           {{ t(resolveIntimacyStatusBadge(event.status).labelKey) }}
         </span>
         <span class="text-sm font-medium text-gray-800 dark:text-gray-100">
-          {{ memberName(event.subjectMemberId) }}
+          {{ followUpDetails(event)?.matter ?? memberName(event.subjectMemberId) }}
         </span>
         <span class="text-xs tabular-nums text-gray-400">{{ formatTime(event.anchorTs) }}</span>
         <span
@@ -266,7 +331,7 @@ function submitEdit(event: IntimacyEvent) {
       </div>
 
       <!-- 个人分享：只有本人的原话 -->
-      <div v-if="!responseDetails(event)" class="mt-2 space-y-1">
+      <div v-if="!responseDetails(event) && !followUpDetails(event)" class="mt-2 space-y-1">
         <p
           v-for="evidence in event.evidence"
           :key="evidence.messageId"
@@ -282,6 +347,62 @@ function submitEdit(event: IntimacyEvent) {
           <span class="mr-1.5 text-[10px] tabular-nums text-gray-400">{{ formatTime(evidence.timestamp) }}</span>
           {{ quoteText(evidence.messageId) ?? t('views.intimacy.event.missingMessage') }}
         </p>
+      </div>
+
+      <!-- 事后追问：上面是被问者更早提到那件事的原话，下面是追问者的追问 -->
+      <div v-else-if="followUpDetails(event)" class="mt-2 space-y-1.5">
+        <div class="rounded-lg bg-gray-50 px-3 py-2 dark:bg-gray-800/50">
+          <p class="text-[10px] text-gray-400">
+            {{ t('views.intimacy.k3.priorColumn') }} · {{ memberName(event.subjectMemberId) }}
+          </p>
+          <p
+            v-for="evidence in priorEvidence(event)"
+            :key="evidence.messageId"
+            class="mt-1 text-xs leading-relaxed"
+            :class="
+              quoteText(evidence.messageId) === null ? 'text-gray-400 italic' : 'text-gray-700 dark:text-gray-200'
+            "
+          >
+            <span class="mr-1.5 text-[10px] tabular-nums text-gray-400">{{ formatTime(evidence.timestamp) }}</span>
+            {{ quoteText(evidence.messageId) ?? t('views.intimacy.event.missingMessage') }}
+          </p>
+          <p v-if="priorEvidence(event).length === 0" class="mt-1 text-xs text-gray-400">
+            {{ t('views.intimacy.k3.priorNotFound') }}
+          </p>
+        </div>
+
+        <p
+          v-if="priorEvidence(event).length > 0"
+          class="flex flex-wrap items-center gap-x-2 text-[11px] text-gray-500 dark:text-gray-400"
+        >
+          <span v-if="gapText(event)">{{ t(gapText(event)!.labelKey, { count: gapText(event)!.count }) }}</span>
+          <span>{{ t(FOLLOW_UP_INITIATION_LABEL_KEYS[followUpDetails(event)!.initiationInObservedRecord]) }}</span>
+        </p>
+        <p v-if="followUpDetails(event)!.lookbackStartTs > 0" class="text-[11px] text-gray-400">
+          {{ t('views.intimacy.k3.lookback', { date: formatDay(followUpDetails(event)!.lookbackStartTs) }) }}
+          <span v-if="priorEvidence(event).length === 0 && priorCandidates(event).length === 0">
+            {{ t('views.intimacy.k3.noCandidates') }}
+          </span>
+        </p>
+
+        <div class="rounded-lg bg-gray-50 px-3 py-2 dark:bg-gray-800/50">
+          <p class="text-[10px] text-gray-400">
+            {{ t('views.intimacy.k3.questionColumn') }} · {{ memberName(event.otherMemberId) }}
+          </p>
+          <p
+            v-for="evidence in coreEvidence(event)"
+            :key="evidence.messageId"
+            class="mt-1 text-xs leading-relaxed"
+            :class="
+              quoteText(evidence.messageId) === null
+                ? 'text-gray-400 italic'
+                : 'font-semibold text-gray-800 dark:text-gray-100'
+            "
+          >
+            <span class="mr-1.5 text-[10px] tabular-nums text-gray-400">{{ formatTime(evidence.timestamp) }}</span>
+            {{ quoteText(evidence.messageId) ?? t('views.intimacy.event.missingMessage') }}
+          </p>
+        </div>
       </div>
 
       <!-- 回应类事件：左边是本人的倾诉 / 好消息，右边是另一方的回复 -->
@@ -326,6 +447,32 @@ function submitEdit(event: IntimacyEvent) {
       </div>
 
       <div v-if="editingId === event.id" class="mt-2 rounded-lg bg-gray-50 p-3 dark:bg-gray-800/50">
+        <div v-if="followUpDetails(event)">
+          <p class="text-[11px] text-gray-400">{{ t('views.intimacy.k3.pickPriorHint') }}</p>
+          <ul class="mt-1.5 space-y-1">
+            <li v-for="candidate in priorCandidates(event)" :key="candidate.messageId">
+              <button
+                type="button"
+                class="w-full rounded-lg border px-2.5 py-1.5 text-left transition-colors"
+                :class="
+                  editPriorIds.includes(candidate.messageId)
+                    ? 'border-pink-400 bg-pink-50/60 dark:border-pink-700 dark:bg-pink-950/20'
+                    : 'border-gray-200 hover:bg-white dark:border-gray-700 dark:hover:bg-gray-800'
+                "
+                @click="togglePrior(candidate.messageId)"
+              >
+                <span class="flex items-center gap-1.5 text-[10px] text-gray-400">
+                  <span class="truncate">{{ candidate.senderName }}</span>
+                  <span class="tabular-nums">{{ formatTime(candidate.timestamp) }}</span>
+                </span>
+                <span class="mt-0.5 block text-xs leading-relaxed text-gray-700 dark:text-gray-200">
+                  {{ quoteText(candidate.messageId) }}
+                </span>
+              </button>
+            </li>
+          </ul>
+        </div>
+
         <div v-if="sharingDetails(event)" class="flex flex-wrap items-center gap-3">
           <UCheckbox
             v-for="category in SHARING_CATEGORIES"
@@ -369,11 +516,7 @@ function submitEdit(event: IntimacyEvent) {
         </div>
 
         <p v-if="!canSubmitEdit(event)" class="mt-2 text-[11px] text-amber-600 dark:text-amber-400">
-          {{
-            sharingDetails(event)
-              ? t('views.intimacy.event.categoriesRequired')
-              : t('views.intimacy.event.labelsRequired')
-          }}
+          {{ t(requiredHintKey(event)) }}
         </p>
         <div class="mt-2 flex gap-1.5">
           <UButton
@@ -402,7 +545,7 @@ function submitEdit(event: IntimacyEvent) {
           {{ t('common.viewChatRecords') }}
         </UButton>
         <UButton
-          v-if="event.status === 'auto' || event.status === 'uncertain'"
+          v-if="(event.status === 'auto' || event.status === 'uncertain') && canConfirm(event)"
           size="xs"
           color="primary"
           variant="ghost"
@@ -439,7 +582,7 @@ function submitEdit(event: IntimacyEvent) {
           :disabled="busy"
           @click="startEditing(event)"
         >
-          {{ sharingDetails(event) ? t('views.intimacy.event.editLabels') : t('views.intimacy.event.editResponse') }}
+          {{ t(editButtonKey(event)) }}
         </UButton>
       </div>
     </li>

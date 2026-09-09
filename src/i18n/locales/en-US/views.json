@@ -232,7 +232,7 @@
     },
     "preflight": {
       "title": "Analyse this range",
-      "description": "Messages in the range are sent to the configured model segment by segment, in time order, and each segment is read for personal sharing, responses after a disclosure and responses to good news. You can pause, resume or cancel once it starts.",
+      "description": "Messages in the range are sent to the configured model segment by segment, in time order, and each segment is read for personal sharing, responses after a disclosure, follow-up questions and responses to good news. You can pause, resume or cancel once it starts.",
       "range": "{start} to {end}",
       "messages": "Messages",
       "windows": "Segments",
@@ -272,6 +272,25 @@
       "anchorsLabel": "Disclosures by the other person",
       "coreColumn": "Disclosure",
       "empty": "No responses after a disclosure identified in this range yet."
+    },
+    "k3": {
+      "title": "Follow-up questions",
+      "definition": "One person mentions something of their own, and later the other person asks about that same thing. Only the pair of messages that can be read in the chat is counted.",
+      "asker": "Asked by {name}",
+      "pairsLabel": "Pairs found",
+      "countBreakdown": "Matters {matters} · To check {uncertain}",
+      "priorColumn": "Earlier",
+      "questionColumn": "Question",
+      "priorNotFound": "No earlier message about this was found in the range searched.",
+      "lookback": "Searched back to {date}.",
+      "gapDays": "{count} days later",
+      "gapOneDay": "1 day later",
+      "gapWithinDay": "Less than a day later",
+      "pickPrior": "Name the earlier message",
+      "pickPriorHint": "Pick the message where that matter first came up; the question is then recorded as a pair you confirmed.",
+      "priorRequired": "Pick at least one earlier message",
+      "noCandidates": "There were no candidate messages in the range searched; you can name one yourself with the candidate search below.",
+      "empty": "No follow-up questions identified in this range yet."
     },
     "k4": {
       "title": "Responses to good news",
@@ -314,6 +333,13 @@
     "positiveForSharer": {
       "supported": "Good news for this person",
       "uncertain": "Not clear it is good news"
+    },
+    "initiation": {
+      "title": "When the question came",
+      "beforeReintroduced": "Asked before the other person brought it up again",
+      "afterReintroduced": "Asked after the other person brought it up again",
+      "uncertain": "Cannot tell",
+      "note": "The three add up to the pairs above, and they only describe the order visible in the record."
     },
     "response": {
       "responder": "Replies by {name}",
@@ -370,7 +396,12 @@
       "selectedResponses": "{count} replies selected",
       "responseLabels": "How the reply answered (pick one or more)",
       "submitSupport": "Confirm as a response after a disclosure",
-      "submitGoodNews": "Confirm as a response to good news"
+      "submitGoodNews": "Confirm as a response to good news",
+      "followUpSelectHint": "Pick the question first, then pick the other person’s earlier message about that matter from the same result.",
+      "selectedPriors": "{count} earlier messages selected",
+      "matter": "What it is about",
+      "matterPlaceholder": "Describe the matter in one line",
+      "submitFollowUp": "Confirm as a follow-up question"
     },
     "methods": {
       "title": "Method and sources",
@@ -390,6 +421,9 @@
       "k4Title": "Responses to good news (K4)",
       "k4Body": "The unit counted is one personal event that is clearly good for the person sharing it, together with the other person’s reply. When no reply is visible the event is recorded as no reply seen and is never grouped with a negative response. The original research sorts replies into four quadrants; that is mentioned here only, and the page does not assign quadrants. These definitions have not been validated for automatic detection on real chats either.",
       "k4Citation": "Gable, S. L., Reis, H. T., Impett, E. A., & Asher, E. R. (2004). What do you do when things go right? The intrapersonal and interpersonal benefits of sharing positive events. Journal of Personality and Social Psychology, 87(2), 228–245.",
+      "k3Title": "Follow-up questions (K3)",
+      "k3Body": "The unit is a pair of messages: something one person mentioned earlier, plus a later message where the other person asks about that same thing. This is an operationalisation built for this product, not a validated scale of how much someone cares. Laurenceau et al. (1998), cited above, is the background for the construct.",
+      "k3CountingBody": "The search goes back 30 days before the question and never earlier than the start of the chat; each row says which day it searched back to. No pair only means no earlier message about that matter was found within that range, not that the matter was never mentioned; such questions are listed but not counted as pairs. Several questions about the same earlier matter count as one matter, so pairs can be more than matters. When the question came is read off the order of messages in the record, and stays \"cannot tell\" when the record does not show it.",
       "limitationTitle": "Limitations",
       "limitationBody": "These event definitions have not yet been validated for automatic detection on real chats, and the model can miss events or mistake them. A count only says how many such events were identified in the selected range. It is not a measure of intimacy and cannot be used to compare two people or two relationships."
     }

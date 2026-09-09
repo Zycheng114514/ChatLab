@@ -47,6 +47,7 @@ const KIND_OPTIONS: Array<{ kind: IntimacyKind; labelKey: string; submitKey: str
     labelKey: 'views.intimacy.k2.title',
     submitKey: 'views.intimacy.candidates.submitSupport',
   },
+  { kind: 'follow_up', labelKey: 'views.intimacy.k3.title', submitKey: 'views.intimacy.candidates.submitFollowUp' },
   {
     kind: 'good_news_response',
     labelKey: 'views.intimacy.k4.title',
@@ -60,17 +61,26 @@ const candidates = ref<IntimacyCandidates | null>(null)
 const searching = ref(false)
 const submitting = ref(false)
 
-/** 选中的核心消息必须来自同一个人、同一条检索结果；回复是另一方在同一条结果里、锚点之后的消息。 */
-const selection = ref<{ group: string; senderId: number; messageIds: number[]; responseMessageIds: number[] } | null>(
-  null
-)
+/**
+ * 选中的核心消息必须来自同一个人、同一条检索结果；回复是另一方在同一条结果里、锚点之后的消息，
+ * 事后追问的先前消息则是另一方在锚点之前的消息。
+ */
+const selection = ref<{
+  group: string
+  senderId: number
+  messageIds: number[]
+  responseMessageIds: number[]
+  priorMessageIds: number[]
+} | null>(null)
 const categories = ref<SharingCategory[]>([])
 const topic = ref<SharingTopic>('daily_life')
 const supportLabels = ref<SupportResponseLabel[]>([])
 const goodNewsLabels = ref<GoodNewsResponseLabel[]>([])
 const positiveForSharer = ref(false)
+const matter = ref('')
 
 const isSharing = computed(() => kind.value === 'sharing')
+const isFollowUp = computed(() => kind.value === 'follow_up')
 const submitKey = computed(() => KIND_OPTIONS.find((option) => option.kind === kind.value)!.submitKey)
 const responseLabelCount = computed(() =>
   kind.value === 'support_response' ? supportLabels.value.length : goodNewsLabels.value.length
@@ -78,10 +88,22 @@ const responseLabelCount = computed(() =>
 const topicOptions = computed(() =>
   SHARING_TOPICS.map((value) => ({ value, label: t(SHARING_TOPIC_LABEL_KEYS[value]) }))
 )
+const selectHintKey = computed(() => {
+  if (isSharing.value) return 'views.intimacy.candidates.selectHint'
+  return isFollowUp.value
+    ? 'views.intimacy.candidates.followUpSelectHint'
+    : 'views.intimacy.candidates.responseSelectHint'
+})
+/** 第二步选中的消息在两种事件里含义不同：回应类是回复，事后追问是更早的先前消息。 */
+const secondaryLabelKey = computed(() =>
+  isFollowUp.value ? 'views.intimacy.k3.priorColumn' : 'views.intimacy.response.replyColumn'
+)
 const canSubmit = computed(() => {
   const current = selection.value
   if (!current || current.messageIds.length === 0) return false
   if (isSharing.value) return categories.value.length > 0
+  // 追问必须配上被问者更早的消息和一句事情描述，否则它不是一个配对。
+  if (isFollowUp.value) return current.priorMessageIds.length > 0 && matter.value.trim() !== ''
   // 后端只接受「有回复且有标签」或「两者都没有」，后者记为未见回复。
   return current.responseMessageIds.length > 0 === responseLabelCount.value > 0
 })
@@ -98,6 +120,7 @@ function resetSelection() {
   supportLabels.value = []
   goodNewsLabels.value = []
   positiveForSharer.value = false
+  matter.value = ''
 }
 
 async function search() {
@@ -123,21 +146,25 @@ function isCoreSelected(group: string, messageId: number): boolean {
   return selection.value?.group === group && selection.value.messageIds.includes(messageId)
 }
 
-function isResponseSelected(group: string, messageId: number): boolean {
-  return selection.value?.group === group && selection.value.responseMessageIds.includes(messageId)
+function isSecondarySelected(group: string, messageId: number): boolean {
+  const current = selection.value
+  if (current?.group !== group) return false
+  return current.responseMessageIds.includes(messageId) || current.priorMessageIds.includes(messageId)
 }
 
-/** 回复必须在倾诉 / 好消息之后，早于锚点的消息不能勾成回复。 */
+/** 回复必须在倾诉 / 好消息之后；追问问的那件事必须在追问之前，所以两种方向刚好相反。 */
 function canPick(group: string, message: IntimacyMessageSnippet): boolean {
   const current = selection.value
   if (isSharing.value || !current || current.group !== group || current.senderId === message.senderId) return true
-  return message.messageId > Math.min(...current.messageIds)
+  return isFollowUp.value
+    ? message.messageId < Math.min(...current.messageIds)
+    : message.messageId > Math.min(...current.messageIds)
 }
 
 function toggleMessage(group: string, message: IntimacyMessageSnippet) {
   const current = selection.value
   if (!current || current.group !== group) {
-    selection.value = { group, senderId: message.senderId, messageIds: [message.messageId], responseMessageIds: [] }
+    selection.value = startSelection(group, message)
     return
   }
   if (current.senderId === message.senderId) {
@@ -146,11 +173,23 @@ function toggleMessage(group: string, message: IntimacyMessageSnippet) {
     return
   }
   if (isSharing.value) {
-    selection.value = { group, senderId: message.senderId, messageIds: [message.messageId], responseMessageIds: [] }
+    selection.value = startSelection(group, message)
     return
   }
   if (!canPick(group, message)) return
-  selection.value = { ...current, responseMessageIds: toggleId(current.responseMessageIds, message.messageId) }
+  selection.value = isFollowUp.value
+    ? { ...current, priorMessageIds: toggleId(current.priorMessageIds, message.messageId) }
+    : { ...current, responseMessageIds: toggleId(current.responseMessageIds, message.messageId) }
+}
+
+function startSelection(group: string, message: IntimacyMessageSnippet): NonNullable<typeof selection.value> {
+  return {
+    group,
+    senderId: message.senderId,
+    messageIds: [message.messageId],
+    responseMessageIds: [],
+    priorMessageIds: [],
+  }
 }
 
 function toggleId(ids: number[], messageId: number): number[] {
@@ -188,6 +227,15 @@ function buildRequest(current: NonNullable<typeof selection.value>): CreateIntim
       ...core,
       responseMessageIds: [...current.responseMessageIds],
       details: { responseLabels: [...supportLabels.value] },
+    }
+  }
+  if (kind.value === 'follow_up') {
+    // K3 的核心消息是追问，所以 subjectMemberId 是追问者；事件主体（被问者）由服务端定。
+    return {
+      kind: 'follow_up',
+      ...core,
+      priorMessageIds: [...current.priorMessageIds],
+      details: { matter: matter.value.trim() },
     }
   }
   if (kind.value === 'good_news_response') {
@@ -280,9 +328,7 @@ function errorMessage(error: unknown): string {
     </p>
 
     <template v-if="candidates">
-      <p class="mt-3 text-[11px] text-gray-400">
-        {{ isSharing ? t('views.intimacy.candidates.selectHint') : t('views.intimacy.candidates.responseSelectHint') }}
-      </p>
+      <p class="mt-3 text-[11px] text-gray-400">{{ t(selectHintKey) }}</p>
       <p v-if="isSharing" class="text-[11px] text-gray-400">
         {{ t('views.intimacy.candidates.sameGroupOnly') }}
       </p>
@@ -304,7 +350,7 @@ function errorMessage(error: unknown): string {
                 :class="[
                   isCoreSelected('keyword', message.messageId)
                     ? 'border-pink-400 bg-pink-50/60 dark:border-pink-700 dark:bg-pink-950/20'
-                    : isResponseSelected('keyword', message.messageId)
+                    : isSecondarySelected('keyword', message.messageId)
                       ? 'border-blue-400 bg-blue-50/60 dark:border-blue-700 dark:bg-blue-950/20'
                       : 'border-gray-200 hover:bg-gray-50 dark:border-gray-700 dark:hover:bg-gray-800/50',
                   canPick('keyword', message) ? '' : 'cursor-not-allowed opacity-50',
@@ -314,8 +360,8 @@ function errorMessage(error: unknown): string {
                 <span class="flex items-center gap-1.5 text-[10px] text-gray-400">
                   <span class="truncate">{{ message.senderName }}</span>
                   <span class="tabular-nums">{{ formatTime(message.timestamp) }}</span>
-                  <span v-if="isResponseSelected('keyword', message.messageId)" class="text-blue-500">
-                    {{ t('views.intimacy.response.replyColumn') }}
+                  <span v-if="isSecondarySelected('keyword', message.messageId)" class="text-blue-500">
+                    {{ t(secondaryLabelKey) }}
                   </span>
                 </span>
                 <span class="mt-0.5 block text-xs leading-relaxed text-gray-700 dark:text-gray-200">
@@ -348,7 +394,7 @@ function errorMessage(error: unknown): string {
                     :class="[
                       isCoreSelected(`semantic:${index}`, message.messageId)
                         ? 'bg-pink-50 dark:bg-pink-950/20'
-                        : isResponseSelected(`semantic:${index}`, message.messageId)
+                        : isSecondarySelected(`semantic:${index}`, message.messageId)
                           ? 'bg-blue-50 dark:bg-blue-950/20'
                           : 'hover:bg-gray-50 dark:hover:bg-gray-800/50',
                       canPick(`semantic:${index}`, message) ? '' : 'cursor-not-allowed opacity-50',
@@ -358,8 +404,8 @@ function errorMessage(error: unknown): string {
                     <span class="flex items-center gap-1.5 text-[10px] text-gray-400">
                       <span class="truncate">{{ message.senderName }}</span>
                       <span class="tabular-nums">{{ formatTime(message.timestamp) }}</span>
-                      <span v-if="isResponseSelected(`semantic:${index}`, message.messageId)" class="text-blue-500">
-                        {{ t('views.intimacy.response.replyColumn') }}
+                      <span v-if="isSecondarySelected(`semantic:${index}`, message.messageId)" class="text-blue-500">
+                        {{ t(secondaryLabelKey) }}
                       </span>
                     </span>
                     <span class="mt-0.5 block text-xs leading-relaxed text-gray-700 dark:text-gray-200">
@@ -377,7 +423,11 @@ function errorMessage(error: unknown): string {
         <div class="flex flex-wrap items-center justify-between gap-2">
           <span class="text-xs text-gray-500 dark:text-gray-400">
             {{ t('views.intimacy.candidates.selected', { count: selection.messageIds.length }) }}
-            <template v-if="!isSharing">
+            <template v-if="isFollowUp">
+              ·
+              {{ t('views.intimacy.candidates.selectedPriors', { count: selection.priorMessageIds.length }) }}
+            </template>
+            <template v-else-if="!isSharing">
               ·
               {{ t('views.intimacy.candidates.selectedResponses', { count: selection.responseMessageIds.length }) }}
             </template>
@@ -402,6 +452,16 @@ function errorMessage(error: unknown): string {
 
           <p class="mt-2 text-[11px] text-gray-400">{{ t('views.intimacy.candidates.topic') }}</p>
           <USelect v-model="topic" :items="topicOptions" value-key="value" size="xs" class="mt-1 w-36" />
+        </template>
+
+        <template v-else-if="isFollowUp">
+          <p class="mt-2 text-[11px] text-gray-400">{{ t('views.intimacy.candidates.matter') }}</p>
+          <UInput
+            v-model="matter"
+            class="mt-1 w-full"
+            size="xs"
+            :placeholder="t('views.intimacy.candidates.matterPlaceholder')"
+          />
         </template>
 
         <template v-else>

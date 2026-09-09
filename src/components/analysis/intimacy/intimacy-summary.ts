@@ -1,5 +1,7 @@
+import dayjs from 'dayjs'
 import type {
   FollowUpDetails,
+  FollowUpInitiation,
   FollowUpSummary,
   GoodNewsResponseDetails,
   GoodNewsResponseLabel,
@@ -77,6 +79,13 @@ export const POSITIVE_FOR_SHARER_LABEL_KEYS: Record<GoodNewsResponseDetails['pos
   uncertain: 'views.intimacy.positiveForSharer.uncertain',
 }
 
+/** 三种说法只描述记录里看得到的先后顺序，都是事实陈述，「无法判断」也一样。 */
+export const FOLLOW_UP_INITIATION_LABEL_KEYS: Record<FollowUpInitiation, string> = {
+  before_subject_reintroduced: 'views.intimacy.initiation.beforeReintroduced',
+  after_subject_reintroduced: 'views.intimacy.initiation.afterReintroduced',
+  uncertain: 'views.intimacy.initiation.uncertain',
+}
+
 export const SHARING_CATEGORIES = Object.keys(SHARING_CATEGORY_LABEL_KEYS) as SharingCategory[]
 export const SHARING_TOPICS = Object.keys(SHARING_TOPIC_LABEL_KEYS) as SharingTopic[]
 export const SUPPORT_RESPONSE_LABELS = Object.keys(SUPPORT_RESPONSE_LABEL_KEYS) as SupportResponseLabel[]
@@ -146,6 +155,47 @@ export function selectResponseSummary(
 export function selectFollowUpSummary(summaries: IntimacyKindSummary[]): IntimacyFollowUpMemberSummary[] {
   const summary = summaries.find((item): item is FollowUpSummary => item.kind === 'follow_up')
   return summary?.members ?? []
+}
+
+export interface IntimacyInitiationCount {
+  initiation: FollowUpInitiation
+  labelKey: string
+  count: number
+}
+
+/**
+ * 三格「问起的时机」：把两位追问者的汇总相加。每个计入的配对恰好属于一种情形，
+ * 所以三格之和等于配对数之和。
+ */
+export function buildFollowUpInitiationCounts(members: IntimacyFollowUpMemberSummary[]): IntimacyInitiationCount[] {
+  const total = (pick: (summary: IntimacyFollowUpMemberSummary) => number) =>
+    members.reduce((sum, summary) => sum + pick(summary), 0)
+  const counts: Array<[FollowUpInitiation, number]> = [
+    ['before_subject_reintroduced', total((summary) => summary.beforeReintroduced)],
+    ['after_subject_reintroduced', total((summary) => summary.afterReintroduced)],
+    ['uncertain', total((summary) => summary.initiationUncertain)],
+  ]
+  return counts.map(([initiation, count]) => ({
+    initiation,
+    labelKey: FOLLOW_UP_INITIATION_LABEL_KEYS[initiation],
+    count,
+  }))
+}
+
+export interface IntimacyGapText {
+  labelKey: string
+  count: number
+}
+
+/**
+ * 间隔只说到「天」这一级：读者要看的是隔了多久才问起，写到秒既没有意义，也会让页面像在计时。
+ * 没有先前消息（`gapSeconds` 为 null）时不显示间隔。
+ */
+export function formatIntimacyGap(gapSeconds: number | null): IntimacyGapText | null {
+  if (gapSeconds === null || gapSeconds < 0) return null
+  const days = dayjs.unix(gapSeconds).diff(dayjs.unix(0), 'day')
+  if (days === 0) return { labelKey: 'views.intimacy.k3.gapWithinDay', count: 0 }
+  return { labelKey: days === 1 ? 'views.intimacy.k3.gapOneDay' : 'views.intimacy.k3.gapDays', count: days }
 }
 
 /** 已排除的事件默认折叠，所以列表按这条界线分成两组。 */

@@ -232,7 +232,7 @@
     },
     "preflight": {
       "title": "分析本範圍",
-      "description": "按時間順序把範圍內的訊息分段送給已設定的模型，逐段辨識個人分享、傾訴後的回應和好消息回應。開始後可以暫停、繼續或取消。",
+      "description": "按時間順序把範圍內的訊息分段送給已設定的模型，逐段辨識個人分享、傾訴後的回應、事後追問和好消息回應。開始後可以暫停、繼續或取消。",
       "range": "{start} 至 {end}",
       "messages": "訊息",
       "windows": "分段",
@@ -272,6 +272,25 @@
       "anchorsLabel": "對方的傾訴",
       "coreColumn": "傾訴",
       "empty": "本範圍內還沒有辨識到傾訴後的回應事件。"
+    },
+    "k3": {
+      "title": "事後追問",
+      "definition": "一方先說到自己的一件事，之後另一方明確問起同一件事。只統計聊天裡看得到的這一對訊息。",
+      "asker": "追問者：{name}",
+      "pairsLabel": "找到的配對",
+      "countBreakdown": "涉及事情 {matters} · 待核對 {uncertain}",
+      "priorColumn": "先前",
+      "questionColumn": "追問",
+      "priorNotFound": "本次回查範圍內沒有找到先前的訊息。",
+      "lookback": "回查到 {date}。",
+      "gapDays": "{count} 天後",
+      "gapOneDay": "1 天後",
+      "gapWithinDay": "不到 1 天後",
+      "pickPrior": "指定先前事件",
+      "pickPriorHint": "從候選裡選出被問的那件事最早出現的訊息；選好後這則追問會記為你確認的配對。",
+      "priorRequired": "至少選擇一則先前訊息",
+      "noCandidates": "本次回查範圍內沒有候選訊息，可以用下面的候選檢索自己指定。",
+      "empty": "本範圍內還沒有辨識到事後追問事件。"
     },
     "k4": {
       "title": "好消息回應",
@@ -314,6 +333,13 @@
     "positiveForSharer": {
       "supported": "對本人是好事",
       "uncertain": "是否好事無法判斷"
+    },
+    "initiation": {
+      "title": "問起的時機",
+      "beforeReintroduced": "在對方再次提起之前問起",
+      "afterReintroduced": "對方先提起後問起",
+      "uncertain": "無法判斷",
+      "note": "三格之和等於上面的配對數；這只描述記錄裡看得到的先後順序。"
     },
     "response": {
       "responder": "回應方：{name}",
@@ -370,7 +396,12 @@
       "selectedResponses": "已選回覆 {count} 則",
       "responseLabels": "回覆方式（可多選）",
       "submitSupport": "確認為傾訴後的回應",
-      "submitGoodNews": "確認為好消息回應"
+      "submitGoodNews": "確認為好消息回應",
+      "followUpSelectHint": "先點追問的那句話，再點另一方在同一筆檢索結果裡、時間更早提到那件事的訊息。",
+      "selectedPriors": "已選先前 {count} 則",
+      "matter": "事情描述",
+      "matterPlaceholder": "問的是哪件事，一句話寫清",
+      "submitFollowUp": "確認為事後追問"
     },
     "methods": {
       "title": "方法與來源",
@@ -390,6 +421,9 @@
       "k4Title": "好消息回應（K4）",
       "k4Body": "統計單位是一件對分享者本人明確是好事的個人事件，加上另一方的回覆。看不到回覆時只記「未見回覆」，不歸入消極回應。原研究把回應分成四個象限，這裡只在方法說明裡提到，頁面不做象限歸類。這些定義同樣沒有在真實聊天上驗證過自動辨識的準確度。",
       "k4Citation": "Gable, S. L., Reis, H. T., Impett, E. A., & Asher, E. R. (2004). What do you do when things go right? The intrapersonal and interpersonal benefits of sharing positive events. Journal of Personality and Social Psychology, 87(2), 228–245.",
+      "k3Title": "事後追問（K3）",
+      "k3Body": "統計單位是一對訊息：被問者更早提到的一件事，加上另一方之後明確問起同一件事。這是本產品的操作化指標，不是衡量關心程度的量表。構念背景同上面的 Laurenceau 等（1998）。",
+      "k3CountingBody": "回查範圍預設是追問之前 30 天，且不早於聊天記錄的開始，每則追問都會寫明實際回查到哪一天。沒有配對只表示在這個範圍內沒有找到被問者更早提到那件事的訊息，不表示那件事沒被提過；這樣的追問會列出來，但不計入配對數。同一件事被問多次按先前事件去重，所以配對數可以大於涉及的事情數。「問起的時機」按記錄裡的先後順序判斷，判斷不出時寫「無法判斷」。",
       "limitationTitle": "侷限",
       "limitationBody": "這裡的事件定義還沒有在真實聊天上驗證過自動識別的準確度，模型可能漏掉或認錯。計數只表示在所選範圍內識別到多少個這樣的事件，不表示親密程度，也不能用來比較兩個人或兩段關係。"
     }

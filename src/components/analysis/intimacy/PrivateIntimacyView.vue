@@ -1,5 +1,5 @@
 <script setup lang="ts">
-// 私聊洞察「亲密关系」子标签：K1 个人分享、K2 倾诉后的回应、K4 好消息回应。
+// 私聊洞察「亲密关系」子标签：K1 个人分享、K2 倾诉后的回应、K4 好消息回应、K3 事后追问。
 // 页面只报告「在所选范围内识别到多少个这样的事件」，不给分数、比例或好坏判断。
 import { computed, onUnmounted, ref, watch } from 'vue'
 import dayjs from 'dayjs'
@@ -30,9 +30,12 @@ import {
   SHARING_TOPIC_LABEL_KEYS,
   SUPPORT_RESPONSE_LABELS,
   SUPPORT_RESPONSE_LABEL_KEYS,
+  buildFollowUpInitiationCounts,
   buildIntimacyTopicFilterOptions,
   filterIntimacyEventsByTopic,
   partitionIntimacyEvents,
+  selectFollowUpEvents,
+  selectFollowUpSummary,
   selectGoodNewsEvents,
   selectResponseSummary,
   selectSharingEvents,
@@ -117,6 +120,13 @@ function buildResponseCard<T extends string>(
     excluded,
   }
 }
+
+/** K3 卡片：追问者的配对数 / 事情数 / 待核对数，加上三种「问起的时机」；事件行仍是同一个组件。 */
+const followUpCard = computed(() => {
+  const { listed, excluded } = partitionIntimacyEvents(selectFollowUpEvents(events.value))
+  const members = selectFollowUpSummary(results.value?.summaries ?? [])
+  return { members, initiations: buildFollowUpInitiationCounts(members), listed, excluded }
+})
 
 const activeRun = computed(() => run.value && ['pending', 'running'].includes(run.value.status))
 const resumableRun = computed(() => run.value && ['paused', 'failed'].includes(run.value.status))
@@ -207,7 +217,7 @@ async function openPreflight() {
 
 function analysisRequest() {
   return {
-    kinds: ['sharing' as const, 'support_response' as const, 'good_news_response' as const],
+    kinds: ['sharing' as const, 'support_response' as const, 'follow_up' as const, 'good_news_response' as const],
     startTs: props.timeFilter?.startTs,
     endTs: props.timeFilter?.endTs,
     locale: locale.value,
@@ -624,6 +634,90 @@ onUnmounted(clearPollTimer)
         </template>
       </SectionCard>
 
+      <!-- K3 事后追问 -->
+      <SectionCard :title="t('views.intimacy.k3.title')" :description="t('views.intimacy.k3.definition')">
+        <div class="px-5 py-4">
+          <div class="grid gap-3 sm:grid-cols-2">
+            <div
+              v-for="summary in followUpCard.members"
+              :key="summary.memberId"
+              class="rounded-xl border border-gray-200 px-4 py-3 dark:border-gray-700"
+            >
+              <p class="truncate text-xs text-gray-500 dark:text-gray-400">
+                {{ t('views.intimacy.k3.asker', { name: memberName(summary.memberId) }) }}
+              </p>
+              <p class="mt-1 font-mono text-2xl font-black tabular-nums text-gray-900 dark:text-white">
+                {{ summary.pairs }}
+              </p>
+              <p class="text-[11px] text-gray-400">{{ t('views.intimacy.k3.pairsLabel') }}</p>
+              <p class="mt-1.5 text-[11px] text-gray-500 dark:text-gray-400">
+                {{
+                  t('views.intimacy.k3.countBreakdown', {
+                    matters: summary.matters,
+                    uncertain: summary.uncertain,
+                  })
+                }}
+              </p>
+            </div>
+          </div>
+
+          <p class="mt-3 text-[11px] text-gray-400">{{ t('views.intimacy.k1.uncertainNote') }}</p>
+
+          <div class="mt-4">
+            <p class="text-xs font-medium text-gray-600 dark:text-gray-300">
+              {{ t('views.intimacy.initiation.title') }}
+            </p>
+            <div class="mt-2 grid grid-cols-3 gap-3">
+              <div
+                v-for="item in followUpCard.initiations"
+                :key="item.initiation"
+                class="rounded-lg bg-gray-50 px-3 py-2 dark:bg-gray-800/50"
+              >
+                <p class="text-[11px] leading-snug text-gray-400">{{ t(item.labelKey) }}</p>
+                <p class="mt-0.5 font-mono text-sm font-bold tabular-nums text-gray-700 dark:text-gray-200">
+                  {{ item.count }}
+                </p>
+              </div>
+            </div>
+            <p class="mt-1.5 text-[11px] text-gray-400">{{ t('views.intimacy.initiation.note') }}</p>
+          </div>
+        </div>
+
+        <EmptyState v-if="followUpCard.listed.length === 0" :text="t('views.intimacy.k3.empty')" />
+        <IntimacyEventList
+          v-else
+          :events="followUpCard.listed"
+          :messages="results?.messages ?? {}"
+          :members="members"
+          :busy="actionLoading"
+          @view="viewMessage"
+          @review="handleReview"
+        />
+
+        <template v-if="followUpCard.excluded.length > 0">
+          <button
+            type="button"
+            class="flex w-full items-center gap-1 border-t border-gray-100 px-5 py-2 text-left text-[11px] text-gray-400 hover:text-gray-600 dark:border-gray-800 dark:hover:text-gray-300"
+            @click="showExcludedResponses.follow_up = !showExcludedResponses.follow_up"
+          >
+            <UIcon
+              :name="showExcludedResponses.follow_up ? 'i-heroicons-chevron-down' : 'i-heroicons-chevron-right'"
+              class="h-3 w-3"
+            />
+            {{ t('views.intimacy.event.excludedGroup', { count: followUpCard.excluded.length }) }}
+          </button>
+          <IntimacyEventList
+            v-if="showExcludedResponses.follow_up"
+            :events="followUpCard.excluded"
+            :messages="results?.messages ?? {}"
+            :members="members"
+            :busy="actionLoading"
+            @view="viewMessage"
+            @review="handleReview"
+          />
+        </template>
+      </SectionCard>
+
       <!-- 候选检索 -->
       <SectionCard :title="t('views.intimacy.candidates.title')" :capturable="false">
         <IntimacyCandidatePanel
@@ -709,6 +803,11 @@ onUnmounted(clearPollTimer)
               <UIcon name="i-heroicons-arrow-top-right-on-square" class="h-3 w-3" />
               {{ t('views.intimacy.methods.sourceLink') }}
             </a>
+          </div>
+          <div>
+            <p class="font-medium text-gray-600 dark:text-gray-300">{{ t('views.intimacy.methods.k3Title') }}</p>
+            <p class="mt-0.5">{{ t('views.intimacy.methods.k3Body') }}</p>
+            <p class="mt-1">{{ t('views.intimacy.methods.k3CountingBody') }}</p>
           </div>
           <div>
             <p class="font-medium text-gray-600 dark:text-gray-300">
