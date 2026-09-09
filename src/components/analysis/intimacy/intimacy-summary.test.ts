@@ -5,27 +5,37 @@ import type {
   IntimacyEventStatus,
   IntimacyFollowUpMemberSummary,
   IntimacyKindSummary,
+  RepairLabel,
+  RepairSummary,
   ResponseObservation,
   SharedPlanStage,
   SharedPlanStageRecord,
   SharedPlanSummary,
   SharingCategory,
   SharingTopic,
+  SubsequentObservation,
   SupportResponseLabel,
 } from '@openchatlab/shared-types'
 import {
   buildFollowUpInitiationCounts,
   buildIntimacyTopicFilterOptions,
+  buildRepairLabelCounts,
+  buildRepairMemberCounts,
   buildSharedPlanMemberCounts,
   buildSharedPlanStageCounts,
+  buildSubsequentCounts,
+  canReadSubsequent,
   filterIntimacyEventsByTopic,
   formatIntimacyGap,
   partitionIntimacyEvents,
   resolveIntimacyStatusBadge,
+  resolveRepairSelection,
   resolveSharedPlanStages,
   selectFollowUpEvents,
   selectFollowUpSummary,
   selectGoodNewsEvents,
+  selectRepairEvents,
+  selectRepairSummary,
   selectResponseSummary,
   selectSharedPlanEvents,
   selectSharedPlanSummary,
@@ -34,9 +44,11 @@ import {
   summarizeIntimacyEvents,
   type IntimacyFollowUpEvent,
   type IntimacyGoodNewsEvent,
+  type IntimacyRepairEvent,
   type IntimacySharedPlanEvent,
   type IntimacySharingEvent,
   type IntimacySupportEvent,
+  type RepairSelectionDraft,
   type SharedPlanStageDraft,
 } from './intimacy-summary'
 
@@ -569,5 +581,263 @@ test('a step the backend would reject is named before the request is sent', () =
 
   for (const [name, drafts, errorKey] of cases) {
     assert.equal(resolve(drafts).errorKey, errorKey, name)
+  }
+})
+/**
+ * K6 的事件主体是修复发起者；同一次分歧的两个尝试共用一个 disagreementGroupId，
+ * 后续证据只在另一方确实说了话时才存在。
+ */
+function repairEvent(
+  id: number,
+  repairerMemberId: number,
+  status: IntimacyEventStatus,
+  repairLabels: RepairLabel[],
+  subsequentObservation: SubsequentObservation,
+  disagreementGroupId: string
+): IntimacyRepairEvent {
+  const otherMemberId = repairerMemberId === 1 ? 2 : 1
+  const cited = subsequentObservation !== 'no_visible_follow_up' && subsequentObservation !== 'uncertain'
+  return {
+    ...event(id, repairerMemberId, status, 'other', ['feeling']),
+    id: `repair_attempt:${id}`,
+    kind: 'repair_attempt',
+    evidence: [
+      { messageId: 80, timestamp: 1_700_000_080, senderId: repairerMemberId, role: 'disagreement' as const },
+      { messageId: 81, timestamp: 1_700_000_081, senderId: otherMemberId, role: 'disagreement' as const },
+      { messageId: id, timestamp: 1_700_000_000 + id, senderId: repairerMemberId, role: 'core' as const },
+      ...(cited
+        ? [
+            {
+              messageId: id + 1,
+              timestamp: 1_700_000_001 + id,
+              senderId: otherMemberId,
+              role: 'subsequent' as const,
+            },
+          ]
+        : []),
+    ],
+    details: { kind: 'repair_attempt', disagreementGroupId, repairLabels, subsequentObservation },
+  }
+}
+
+const repairSummary: RepairSummary = {
+  kind: 'repair_attempt',
+  disagreements: 2,
+  members: [
+    {
+      memberId: 1,
+      attempts: 3,
+      byLabel: { apology: 2, clarification: 2, acknowledges_part: 1, deescalation_or_reconnect: 0 },
+      bySubsequent: {
+        explicit_acceptance_expression: 1,
+        continued_discussion: 1,
+        explicit_rejection_expression: 0,
+        no_visible_follow_up: 1,
+        uncertain: 0,
+      },
+    },
+    {
+      memberId: 2,
+      attempts: 1,
+      byLabel: { apology: 0, clarification: 0, acknowledges_part: 0, deescalation_or_reconnect: 1 },
+      bySubsequent: {
+        explicit_acceptance_expression: 0,
+        continued_discussion: 0,
+        explicit_rejection_expression: 0,
+        no_visible_follow_up: 0,
+        uncertain: 1,
+      },
+    },
+  ],
+}
+
+test('the repair card picks out its own events and its own summary, and shows zeros without them', () => {
+  const mixed = [
+    ...events,
+    repairEvent(90, 1, 'auto', ['apology'], 'explicit_acceptance_expression', 'disagreement:80'),
+    repairEvent(92, 2, 'auto', ['deescalation_or_reconnect'], 'uncertain', 'disagreement:80'),
+  ]
+  const summaries: IntimacyKindSummary[] = [
+    { kind: 'sharing', members: summarizeIntimacyEvents(events, members) },
+    planSummary,
+    repairSummary,
+  ]
+
+  assert.deepEqual(
+    selectRepairEvents(mixed).map((item) => item.id),
+    ['repair_attempt:90', 'repair_attempt:92']
+  )
+  assert.equal(selectSharedPlanEvents(mixed).length, 0)
+  assert.deepEqual(selectRepairSummary(summaries), repairSummary)
+  // 缺这一条 kind 时四格 / 五格都显示 0，而不是崩在 undefined 上。
+  assert.equal(selectRepairSummary([summaries[0]!, planSummary]), null)
+  assert.deepEqual(
+    buildRepairLabelCounts(null).map((cell) => cell.count),
+    [0, 0, 0, 0]
+  )
+  assert.deepEqual(
+    buildSubsequentCounts(null).map((cell) => cell.count),
+    [0, 0, 0, 0, 0]
+  )
+  assert.deepEqual(buildRepairMemberCounts(null, members), [
+    { memberId: 1, attempts: 0 },
+    { memberId: 2, attempts: 0 },
+  ])
+})
+
+test('disagreements and attempts stay separate numbers, split by whoever repaired', () => {
+  assert.deepEqual(buildRepairMemberCounts(repairSummary, members), [
+    { memberId: 1, attempts: 3 },
+    { memberId: 2, attempts: 1 },
+  ])
+  // 同一次分歧里的两次修复是一个分歧、两个尝试，所以分歧数比尝试数小。
+  assert.equal(
+    buildRepairMemberCounts(repairSummary, members).reduce((total, item) => total + item.attempts, 0),
+    4
+  )
+  assert.equal(repairSummary.disagreements, 2)
+  // 汇总里没有这个成员时显示 0。
+  assert.deepEqual(buildRepairMemberCounts(repairSummary, [{ memberId: 3, name: 'C', isOwner: false }]), [
+    { memberId: 3, attempts: 0 },
+  ])
+})
+
+test('the four repair cells are multi-label while the five follow-up cells add up to the attempts', () => {
+  const labels = buildRepairLabelCounts(repairSummary)
+  const subsequent = buildSubsequentCounts(repairSummary)
+  const attempts = repairSummary.members.reduce((total, member) => total + member.attempts, 0)
+
+  assert.deepEqual(
+    labels.map((cell) => cell.label),
+    ['apology', 'clarification', 'acknowledges_part', 'deescalation_or_reconnect']
+  )
+  assert.deepEqual(
+    labels.map((cell) => cell.labelKey),
+    [
+      'views.intimacy.repairLabel.apology',
+      'views.intimacy.repairLabel.clarification',
+      'views.intimacy.repairLabel.acknowledgesPart',
+      'views.intimacy.repairLabel.deescalationOrReconnect',
+    ]
+  )
+  // 一个尝试可以同时贴几种修复方式，所以四格之和大于尝试数。
+  assert.equal(
+    labels.reduce((total, cell) => total + cell.count, 0),
+    6
+  )
+  assert.ok(labels.reduce((total, cell) => total + cell.count, 0) > attempts)
+
+  assert.deepEqual(
+    subsequent.map((cell) => cell.observation),
+    [
+      'explicit_acceptance_expression',
+      'continued_discussion',
+      'explicit_rejection_expression',
+      'no_visible_follow_up',
+      'uncertain',
+    ]
+  )
+  // 每个尝试恰好一种后续，所以五格之和就是尝试数——五格里没有一格是「好」或「坏」的合计。
+  assert.equal(
+    subsequent.reduce((total, cell) => total + cell.count, 0),
+    attempts
+  )
+})
+
+test('a follow-up nobody cited cannot be revised into one that was', () => {
+  const withEvidence: SubsequentObservation[] = [
+    'explicit_acceptance_expression',
+    'continued_discussion',
+    'explicit_rejection_expression',
+    'no_visible_follow_up',
+    'uncertain',
+  ]
+
+  assert.deepEqual(
+    withEvidence.map((observation) => canReadSubsequent(observation, true)),
+    [true, true, true, true, true]
+  )
+  // 没有后续证据时只剩「未见后续」与「无法判断」，其余三种后端会 400。
+  assert.deepEqual(
+    withEvidence.map((observation) => canReadSubsequent(observation, false)),
+    [false, false, false, true, true]
+  )
+})
+
+/**
+ * 三步选出来的消息要和后端 `buildDisagreementEvidence` / `requireSubsequentMessage` 对上：
+ * 拼错时后端只回 400，用户看到的却是「无法确认这个事件」，所以这一遍检查要在点选的当场拦住。
+ */
+const repairSenders = new Map([
+  [20, 1],
+  [21, 2],
+  [22, 1],
+  [23, 2],
+  [24, 1],
+])
+
+function resolveRepair(draft: RepairSelectionDraft) {
+  return resolveRepairSelection(draft, (messageId) => repairSenders.get(messageId))
+}
+
+test('a three-step selection the backend accepts names whoever sent the repairing messages', () => {
+  const resolved = resolveRepair({
+    disagreementMessageIds: [20, 21],
+    repairMessageIds: [22],
+    subsequentMessageIds: [23],
+  })
+
+  assert.deepEqual(resolved, { repairerMemberId: 1, errorKey: null })
+  // 后续消息是可选的：没点后续时服务端记为「未见后续」，前端不该因此拦住提交。
+  assert.deepEqual(
+    resolveRepair({ disagreementMessageIds: [20, 21], repairMessageIds: [22], subsequentMessageIds: [] }),
+    {
+      repairerMemberId: 1,
+      errorKey: null,
+    }
+  )
+})
+
+test('a selection the backend would reject is named before the request is sent', () => {
+  const cases: Array<[string, RepairSelectionDraft, string]> = [
+    [
+      'a disagreement only one of them showed',
+      { disagreementMessageIds: [20], repairMessageIds: [22], subsequentMessageIds: [] },
+      'views.intimacy.k6.disagreementNeedsBoth',
+    ],
+    [
+      'a message that is not in the search results',
+      { disagreementMessageIds: [20, 99], repairMessageIds: [22], subsequentMessageIds: [] },
+      'views.intimacy.k6.disagreementNeedsBoth',
+    ],
+    [
+      'no repairing message at all',
+      { disagreementMessageIds: [20, 21], repairMessageIds: [], subsequentMessageIds: [] },
+      'views.intimacy.k6.repairNeedsMessage',
+    ],
+    [
+      'repairing messages from both of them',
+      { disagreementMessageIds: [20, 21], repairMessageIds: [22, 23], subsequentMessageIds: [] },
+      'views.intimacy.k6.repairNeedsOneSender',
+    ],
+    [
+      'a disagreement that comes after the repair',
+      { disagreementMessageIds: [21, 24], repairMessageIds: [22], subsequentMessageIds: [] },
+      'views.intimacy.k6.disagreementBeforeRepair',
+    ],
+    [
+      'a follow-up from the person who repaired',
+      { disagreementMessageIds: [20, 21], repairMessageIds: [22], subsequentMessageIds: [24] },
+      'views.intimacy.k6.subsequentFromOther',
+    ],
+    [
+      'a follow-up that comes before the repair',
+      { disagreementMessageIds: [20, 21], repairMessageIds: [24], subsequentMessageIds: [23] },
+      'views.intimacy.k6.subsequentAfterRepair',
+    ],
+  ]
+
+  for (const [name, draft, errorKey] of cases) {
+    assert.equal(resolveRepair(draft).errorKey, errorKey, name)
   }
 })
