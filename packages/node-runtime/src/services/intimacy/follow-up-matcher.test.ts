@@ -240,6 +240,20 @@ test('who raised the matter in between is read from the chat, and stays unknown 
   })
   assert.equal(continued, 'after_subject_reintroduced', 'the coded event itself shows her returning to it')
 
+  // The second sentence of the same disclosure, a minute later, is still the first mention, not a return to it.
+  const sameMention = resolveFollowUpInitiation({
+    db,
+    askedMemberId: 1,
+    prior: { messageId: ALICE_CHECKUP, timestamp: baseTs - 10 * DAY },
+    followUp: question,
+    matterKeywords: ['报告'],
+    priorEventEvidence: [
+      { messageId: ALICE_CHECKUP, timestamp: baseTs - 10 * DAY, senderId: 1, role: 'core' },
+      { messageId: ALICE_CHECKUP + 1, timestamp: baseTs - 10 * DAY + 60, senderId: 1, role: 'core' },
+    ],
+  })
+  assert.equal(sameMention, 'before_subject_reintroduced', 'her next sentence about it is the same mention')
+
   assert.equal(
     resolveFollowUpInitiation({
       db,

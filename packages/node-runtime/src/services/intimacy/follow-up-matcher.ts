@@ -29,6 +29,11 @@ const INTIMACY_FOLLOW_UP_SEMANTIC_CANDIDATES = 5
 const INTIMACY_FOLLOW_UP_SEMANTIC_BLOCK_MESSAGES = 40
 /** How many of the asked participant's messages are read when looking for a re-introduction in between. */
 const INTIMACY_FOLLOW_UP_INITIATION_SCAN = 50
+/**
+ * Messages this soon after the earlier mention are still that mention (the second sentence of the same
+ * disclosure), not the participant raising the matter again later.
+ */
+const INTIMACY_FOLLOW_UP_REINTRODUCTION_GAP_SECONDS = 10 * 60
 
 const MATCH_VALUES: readonly FollowUpMatchConfidence[] = ['supported', 'uncertain']
 
@@ -222,19 +227,25 @@ export interface FollowUpInitiationInput {
 export function resolveFollowUpInitiation(input: FollowUpInitiationInput): FollowUpInitiation {
   const prior = input.prior
   if (!prior) return 'uncertain'
-  const inBetween = (messageId: number) => messageId > prior.messageId && messageId < input.followUp.messageId
+  const reintroductionStartTs = prior.timestamp + INTIMACY_FOLLOW_UP_REINTRODUCTION_GAP_SECONDS
+  const inBetween = (message: { messageId: number; timestamp: number }) =>
+    message.messageId > prior.messageId &&
+    message.messageId < input.followUp.messageId &&
+    message.timestamp >= reintroductionStartTs
   const reintroducedInEvent = input.priorEventEvidence.some(
-    (evidence) => evidence.senderId === input.askedMemberId && inBetween(evidence.messageId)
+    (evidence) => evidence.senderId === input.askedMemberId && inBetween(evidence)
   )
   if (reintroducedInEvent) return 'after_subject_reintroduced'
   if (input.matterKeywords.length === 0) return 'uncertain'
   const reintroduced = searchMessagesByKeywords(input.db, input.matterKeywords, {
     senderIds: [input.askedMemberId],
-    startTs: prior.timestamp,
+    startTs: reintroductionStartTs,
     endTs: input.followUp.timestamp,
     limit: INTIMACY_FOLLOW_UP_INITIATION_SCAN,
     sort: 'asc',
-  }).messages.some((message) => message.type === 0 && inBetween(message.id))
+  }).messages.some(
+    (message) => message.type === 0 && inBetween({ messageId: message.id, timestamp: message.timestamp })
+  )
   return reintroduced ? 'after_subject_reintroduced' : 'before_subject_reintroduced'
 }
 
