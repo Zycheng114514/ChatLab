@@ -305,7 +305,7 @@ export function buildSharedPlanDetails(
 function sortSharedPlanStages(stages: SharedPlanStageRecord[]): SharedPlanStageRecord[] {
   const byKey = new Map<string, SharedPlanStageRecord>()
   for (const stage of stages) {
-    const key = `${stage.stage} ${stage.actorMemberId} ${stage.messageIds.join(',')}`
+    const key = `${stage.stage}\u0000${stage.actorMemberId}\u0000${stage.messageIds.join(',')}`
     if (!byKey.has(key)) byKey.set(key, stage)
   }
   return [...byKey.values()].sort(
