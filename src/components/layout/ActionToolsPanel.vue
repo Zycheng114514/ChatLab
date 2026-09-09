@@ -93,22 +93,9 @@ const allTools = [
 
 const tools = allTools.filter((tool) => tool.event !== 'openTranscription' || canTranscribe)
 
-const headerTools = [
-  {
-    event: 'openSemanticIndex' as const,
-    icon: 'i-heroicons-circle-stack',
-    hoverColor: 'group-hover:text-indigo-500',
-    miniHoverBg: 'hover:text-indigo-500',
-    labelKey: 'analysis.tooltip.semanticIndex',
-  },
-  {
-    event: 'openMessageExport' as const,
-    icon: 'i-heroicons-document-arrow-down',
-    hoverColor: 'group-hover:text-green-500',
-    miniHoverBg: 'hover:text-green-500',
-    labelKey: 'analysis.messageExport.title',
-  },
-]
+/** header 精简模式只放常用项；转写按平台能力出现在这里，否则普通用户（恒为 header 模式）没有入口。 */
+const HEADER_TOOL_EVENTS: ToolEvent[] = ['openSemanticIndex', 'openTranscription', 'openMessageExport']
+const headerTools = HEADER_TOOL_EVENTS.flatMap((event) => tools.filter((tool) => tool.event === event))
 
 const visibleTools = computed(() => (isHeaderMode.value ? headerTools : tools))
 
