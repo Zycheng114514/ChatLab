@@ -90,7 +90,7 @@ test('a window commit stores events with their evidence and merges a sharing con
       createEvent({ id: 'sharing:30', anchorMessageId: 30, anchorTs: 1_786_206_000, evidence: [] }),
     ])
 
-    const events = store.listEvents('session-1', 'sharing', 'run-1')
+    const events = store.listEvents('session-1', 'run-1')
     assert.deepEqual(
       events.map((event) => event.id),
       ['sharing:10', 'sharing:30']
@@ -122,10 +122,10 @@ test('a runtime that lost the execution lease cannot append events to the run it
       () => store.insertWindowEvents('session-1', 'run-1', [createEvent()], { ownerId: 'runtime-a', now }),
       (error: unknown) => (error as { code?: string }).code === 'INTIMACY_EXECUTION_LEASE_LOST'
     )
-    assert.deepEqual(store.listEvents('session-1', 'sharing', 'run-1'), [])
+    assert.deepEqual(store.listEvents('session-1', 'run-1'), [])
 
     store.insertWindowEvents('session-1', 'run-1', [createEvent()], { ownerId: 'runtime-b', now })
-    assert.equal(store.listEvents('session-1', 'sharing', 'run-1').length, 1)
+    assert.equal(store.listEvents('session-1', 'run-1').length, 1)
   } finally {
     store.close()
   }
@@ -188,11 +188,11 @@ test('a rerun keeps user reviews while superseded runs and their events are prun
     assert.equal(store.getLatestRun('session-1')?.id, 'run-2')
     assert.equal(store.getLatestRunWithResults('session-1')?.id, 'run-2')
     assert.deepEqual(
-      store.listEvents('session-1', 'sharing', 'run-2').map((event) => event.id),
+      store.listEvents('session-1', 'run-2').map((event) => event.id),
       ['sharing:10']
     )
     assert.deepEqual(
-      store.listEvents('session-1', 'sharing', '').map((event) => event.id),
+      store.listEvents('session-1', '').map((event) => event.id),
       ['sharing:80']
     )
     assert.deepEqual(
@@ -223,9 +223,9 @@ test('clearing results can keep user reviews, and deleting a session removes eve
     // Clearing generated results keeps every decision the user made: the review and the event they confirmed.
     assert.equal(store.deleteSessionResults('session-1', { includeReviews: false }), true)
     assert.equal(store.getLatestRun('session-1'), null)
-    assert.deepEqual(store.listEvents('session-1', 'sharing', 'run-1'), [])
+    assert.deepEqual(store.listEvents('session-1', 'run-1'), [])
     assert.deepEqual(
-      store.listEvents('session-1', 'sharing', INTIMACY_USER_RUN_ID).map((event) => event.id),
+      store.listEvents('session-1', INTIMACY_USER_RUN_ID).map((event) => event.id),
       ['sharing:40']
     )
     assert.equal(store.listReviews('session-1').length, 2)
@@ -240,7 +240,7 @@ test('clearing results can keep user reviews, and deleting a session removes eve
     assert.equal(reopened.listReviews('session-1').length, 0)
     assert.equal(reopened.getRun('run-9')?.sessionId, 'session-2')
     assert.deepEqual(
-      reopened.listEvents('session-2', 'sharing', 'run-9').map((event) => event.id),
+      reopened.listEvents('session-2', 'run-9').map((event) => event.id),
       ['sharing:10']
     )
   } finally {

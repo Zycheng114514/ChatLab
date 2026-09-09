@@ -416,14 +416,15 @@ export class IntimacyStore {
     })
   }
 
-  listEvents(sessionId: string, kind: IntimacyKind, runId: string): StoredIntimacyEvent[] {
+  /** Every kind of one generation; one window call codes all of them, so callers filter what they display. */
+  listEvents(sessionId: string, runId: string): StoredIntimacyEvent[] {
     const rows = this.db
       .prepare(
         `SELECT ${EVENT_COLUMNS} FROM intimacy_event
-         WHERE session_id = ? AND run_id = ? AND kind = ?
+         WHERE session_id = ? AND run_id = ?
          ORDER BY anchor_ts ASC, anchor_message_id ASC`
       )
-      .all(sessionId, runId, kind) as unknown as IntimacyEventRow[]
+      .all(sessionId, runId) as unknown as IntimacyEventRow[]
     if (rows.length === 0) return []
     const evidenceRows = this.db
       .prepare(

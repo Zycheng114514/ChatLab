@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict'
 import test from 'node:test'
 import type { IntimacyEvent, IntimacyEventReview, IntimacyMember } from '@openchatlab/shared-types'
-import { applyReviewDetails, buildSharingEvents, resolveEventStatus, summarizeSharing } from './events'
+import { applyReviewDetails, buildIntimacyEvents, resolveEventStatus, summarizeSharing } from './events'
 import type { ParsedSharingEvent } from './model-protocol'
 import type { IntimacySourceMessage, IntimacyWindow } from './source'
 import type { IntimacyEventRecord } from './store'
@@ -25,7 +25,9 @@ const window: IntimacyWindow = {
 
 function parsedEvent(overrides: Partial<ParsedSharingEvent> = {}): ParsedSharingEvent {
   return {
+    kind: 'sharing',
     discloser: 'A',
+    responses: null,
     coreMessageIds: [3],
     relatedMessageIds: [],
     categories: ['experience_or_update'],
@@ -82,7 +84,7 @@ function storedEvent(overrides: Partial<IntimacyEvent> = {}): IntimacyEvent {
 }
 
 test('one window turns into one event per matter, with evidence read back from the window', () => {
-  const events = buildSharingEvents(
+  const events = buildIntimacyEvents(
     [parsedEvent({ coreMessageIds: [3, 5], relatedMessageIds: [4] })],
     window,
     members,
@@ -110,7 +112,7 @@ test('one window turns into one event per matter, with evidence read back from t
 })
 
 test('one matter is never counted twice inside a window', () => {
-  const duplicateAnchor = buildSharingEvents(
+  const duplicateAnchor = buildIntimacyEvents(
     [parsedEvent({ coreMessageIds: [3, 5] }), parsedEvent({ coreMessageIds: [3] })],
     window,
     members,
@@ -122,7 +124,7 @@ test('one matter is never counted twice inside a window', () => {
     ['sharing:3']
   )
 
-  const sharedCoreId = buildSharingEvents(
+  const sharedCoreId = buildIntimacyEvents(
     [parsedEvent({ coreMessageIds: [3] }), parsedEvent({ coreMessageIds: [3, 5] })],
     window,
     members,
@@ -139,7 +141,7 @@ test('one matter is never counted twice inside a window', () => {
 })
 
 test('a sharing continued from the previous window keeps one event instead of starting a second', () => {
-  const events = buildSharingEvents(
+  const events = buildIntimacyEvents(
     [
       parsedEvent({
         coreMessageIds: [3],
@@ -155,8 +157,7 @@ test('a sharing continued from the previous window keeps one event instead of st
     123
   )
 
-  assert.equal(events.length, 1)
-  const merged = events[0]!
+  const merged = events.find((event) => event.kind === 'sharing')!
   assert.equal(merged.id, 'sharing:1')
   assert.equal(merged.anchorMessageId, 1)
   assert.deepEqual(
@@ -169,7 +170,7 @@ test('a sharing continued from the previous window keeps one event instead of st
 })
 
 test('a continuation without a matching previous event becomes its own event', () => {
-  const otherSpeaker = buildSharingEvents(
+  const otherSpeaker = buildIntimacyEvents(
     [parsedEvent({ continuesContextEvent: true })],
     window,
     members,
@@ -181,7 +182,7 @@ test('a continuation without a matching previous event becomes its own event', (
     ['sharing:3']
   )
 
-  const outsideContext = buildSharingEvents(
+  const outsideContext = buildIntimacyEvents(
     [parsedEvent({ continuesContextEvent: true })],
     window,
     members,

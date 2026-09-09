@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict'
 import test from 'node:test'
 import type { IntimacyMember } from '@openchatlab/shared-types'
-import { buildSharingWindowPrompt, parseSharingResponse } from './model-protocol'
+import { buildIntimacyWindowPrompt, parseIntimacyResponse } from './model-protocol'
 import type { IntimacySourceMessage, IntimacyWindow } from './source'
 
 const members: [IntimacyMember, IntimacyMember] = [
@@ -32,6 +32,7 @@ function response(event: Record<string, unknown>): string {
 }
 
 const validEvent = {
+  kind: 'sharing',
   discloser: 'A',
   coreMessageIds: [3, 6],
   relatedMessageIds: [4],
@@ -45,7 +46,7 @@ const validEvent = {
 }
 
 test('a valid window response is accepted, deduplicated and readable from a fenced reply', () => {
-  const parsed = parseSharingResponse(
+  const parsed = parseIntimacyResponse(
     '```json\n' + response({ ...validEvent, coreMessageIds: [3, 6, 3], relatedMessageIds: [4, 3] }) + '\n```',
     window,
     members
@@ -59,8 +60,9 @@ test('a valid window response is accepted, deduplicated and readable from a fenc
 })
 
 test('optional label fields fall back to their neutral value and a long reason is bounded', () => {
-  const parsed = parseSharingResponse(
+  const parsed = parseIntimacyResponse(
     response({
+      kind: 'sharing',
       discloser: 'B',
       coreMessageIds: [4],
       categories: ['worry_or_need'],
@@ -119,7 +121,7 @@ const rejections: Array<{ name: string; payload: string }> = [
 
 for (const rejection of rejections) {
   test(`window responses are rejected: ${rejection.name}`, () => {
-    assert.throws(() => parseSharingResponse(rejection.payload, window, members))
+    assert.throws(() => parseIntimacyResponse(rejection.payload, window, members))
   })
 }
 
@@ -127,7 +129,7 @@ test('a window prompt lists one compact line per message under its date and keep
   // 14:30 UTC is 22:30 in Shanghai; 16:05 UTC is already 00:05 the next day there.
   const at = (hour: number, minute: number) => Date.UTC(2026, 3, 30, hour, minute) / 1000
   const prompt = (contextCount: number) =>
-    buildSharingWindowPrompt({
+    buildIntimacyWindowPrompt({
       window: {
         index: 1,
         contextCount,

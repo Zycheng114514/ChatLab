@@ -37,7 +37,7 @@ import { assertValidTimezone } from '../topics/time'
 import { chatTopicWorkCoordinator } from '../topics/work-coordinator'
 import {
   applyReviewDetails,
-  buildSharingEvents,
+  buildIntimacyEvents,
   resolveEventStatus,
   summarizeResponses,
   summarizeSharing,
@@ -47,8 +47,8 @@ import {
   INTIMACY_PROMPT_VERSION,
   SHARING_CATEGORIES,
   SHARING_TOPICS,
-  buildSharingWindowPrompt,
-  parseSharingResponse,
+  buildIntimacyWindowPrompt,
+  parseIntimacyResponse,
   resolveIntimacyPreprocess,
 } from './model-protocol'
 import { getIntimacyDbPath } from './paths'
@@ -300,11 +300,11 @@ export function createIntimacyService(deps: IntimacyServiceDeps): IntimacyServic
     const latestRun = store.getLatestRun(sessionId)
     const resultRun = store.getLatestRunWithResults(sessionId)
     const reviews = new Map(store.listReviews(sessionId).map((review) => [review.eventId, toReview(review)]))
-    const runEvents = resultRun ? store.listEvents(sessionId, kind, resultRun.id) : []
+    const runEvents = resultRun ? store.listEvents(sessionId, resultRun.id).filter((event) => event.kind === kind) : []
     const runEventIds = new Set(runEvents.map((event) => event.id))
     const userEvents = store
-      .listEvents(sessionId, kind, INTIMACY_USER_RUN_ID)
-      .filter((event) => !runEventIds.has(event.id))
+      .listEvents(sessionId, INTIMACY_USER_RUN_ID)
+      .filter((event) => event.kind === kind && !runEventIds.has(event.id))
 
     const stored = [...runEvents, ...userEvents]
     const messages = loadEvidenceSnippets(db, stored)
@@ -432,9 +432,9 @@ export function createIntimacyService(deps: IntimacyServiceDeps): IntimacyServic
     // of a second event for the same matter.
     const existing = store.getLatestRunWithResults(sessionId)
     const currentEvents = [
-      ...(existing ? store.listEvents(sessionId, 'sharing', existing.id) : []),
-      ...store.listEvents(sessionId, 'sharing', INTIMACY_USER_RUN_ID),
-    ]
+      ...(existing ? store.listEvents(sessionId, existing.id) : []),
+      ...store.listEvents(sessionId, INTIMACY_USER_RUN_ID),
+    ].filter((event) => event.kind === 'sharing')
     const overlapping = currentEvents.find(
       (event) => event.id === eventId || event.evidence.some((evidence) => coreMessageIds.includes(evidence.messageId))
     )
@@ -588,15 +588,14 @@ export function createIntimacyService(deps: IntimacyServiceDeps): IntimacyServic
       }
       const preprocess = store.getRunPreprocess(run.id) ?? undefined
       const startWindow = Math.min(run.completedWindows, source.windows.length)
-      let previousWindowEvents: IntimacyEventRecord[] =
-        startWindow === 0 ? [] : store.listEvents(run.sessionId, 'sharing', run.id)
+      let previousWindowEvents: IntimacyEventRecord[] = startWindow === 0 ? [] : store.listEvents(run.sessionId, run.id)
       const failedWindowIndexes = [...run.failedWindowIndexes]
 
       for (let index = startWindow; index < source.windows.length; index += 1) {
         execution.controller.signal.throwIfAborted()
         const window = source.windows[index]!
         run = updateRun(run, { currentWindowIndex: index })
-        const prompts = buildSharingWindowPrompt({
+        const prompts = buildIntimacyWindowPrompt({
           window,
           members: source.members,
           totalWindows: source.windows.length,
@@ -612,8 +611,8 @@ export function createIntimacyService(deps: IntimacyServiceDeps): IntimacyServic
             prompts,
             execution.controller.signal,
             (text) =>
-              buildSharingEvents(
-                parseSharingResponse(text, window, source.members),
+              buildIntimacyEvents(
+                parseIntimacyResponse(text, window, source.members),
                 window,
                 source.members,
                 previousWindowEvents,

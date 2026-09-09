@@ -166,6 +166,7 @@ function sharingResponse(event: Record<string, unknown>): string {
   return JSON.stringify({
     events: [
       {
+        kind: 'sharing',
         relatedMessageIds: [],
         categories: ['experience_or_update'],
         topic: 'work_study',

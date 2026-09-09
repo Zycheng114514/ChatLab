@@ -22,11 +22,23 @@ export type { IntimacySource, IntimacySourceEstimate, IntimacySourceMessage, Int
 export {
   INTIMACY_ALGORITHM_VERSION,
   INTIMACY_PROMPT_VERSION,
-  buildSharingWindowPrompt,
-  parseSharingResponse,
+  buildIntimacyWindowPrompt,
+  parseIntimacyResponse,
   resolveIntimacyPreprocess,
 } from './model-protocol'
-export type { IntimacyPreprocessOptions, ParsedSharingEvent } from './model-protocol'
-export { applyReviewDetails, buildSharingEvents, resolveEventStatus, summarizeSharing } from './events'
+export type {
+  IntimacyPreprocessOptions,
+  ParsedGoodNewsEvent,
+  ParsedIntimacyEvent,
+  ParsedResponseGroup,
+  ParsedSharingEvent,
+} from './model-protocol'
+export {
+  applyReviewDetails,
+  buildIntimacyEvents,
+  resolveEventStatus,
+  summarizeResponses,
+  summarizeSharing,
+} from './events'
 export { createIntimacyService } from './service'
 export type { IntimacyResultRange, IntimacyService, IntimacyServiceDeps } from './service'

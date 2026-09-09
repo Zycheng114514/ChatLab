@@ -14,79 +14,215 @@ import type {
   SharingCategory,
   SharingDetails,
   SupportResponseDetails,
+  SupportResponseLabel,
 } from '@openchatlab/shared-types'
-import type { ParsedSharingEvent } from './model-protocol'
+import type {
+  ModelEventKind,
+  ParsedGoodNewsEvent,
+  ParsedIntimacyEvent,
+  ParsedResponseGroup,
+  ParsedSharingEvent,
+} from './model-protocol'
 import { GOOD_NEWS_RESPONSE_LABELS, SHARING_CATEGORIES, SUPPORT_RESPONSE_LABELS } from './model-protocol'
 import type { IntimacySourceMessage, IntimacyWindow } from './source'
 import type { IntimacyEventRecord } from './store'
 
-/** A stored K1 event, narrowed so the sharing labels can be read without re-checking the kind. */
+/** Stored events narrowed by kind, so the labels of one kind can be read without re-checking it. */
 type SharingEventRecord = IntimacyEventRecord & { details: SharingDetails }
+type SupportEventRecord = IntimacyEventRecord & { details: SupportResponseDetails }
+type GoodNewsEventRecord = IntimacyEventRecord & { details: GoodNewsResponseDetails }
+
+interface WindowBuildContext {
+  windowMessages: Map<number, IntimacySourceMessage>
+  contextIds: Set<number>
+  previousWindowEvents: IntimacyEventRecord[]
+  /** Event ids already written in this window, so one matter is never split over two events. */
+  usedAnchors: Set<string>
+  createdAt: number
+}
 
 /**
  * Turn one validated window response into storable events. Timestamps and senders are read back from the
- * window instead of the model response, and a sharing that continues from the previous window is merged into
- * the event that already covers it so one matter is never counted twice.
+ * window instead of the model response, an event continued from the previous window is merged into the one that
+ * already covers it, and a distress disclosure or a piece of good news additionally produces the response event
+ * that records how the other participant answered it.
  */
-export function buildSharingEvents(
-  parsed: ParsedSharingEvent[],
+export function buildIntimacyEvents(
+  parsed: ParsedIntimacyEvent[],
   window: IntimacyWindow,
   members: [IntimacyMember, IntimacyMember],
   previousWindowEvents: IntimacyEventRecord[],
   createdAt: number
 ): IntimacyEventRecord[] {
-  const windowMessages = new Map(window.messages.map((message) => [message.id, message]))
-  const contextIds = new Set(window.messages.slice(0, window.contextCount).map((message) => message.id))
+  const context: WindowBuildContext = {
+    windowMessages: new Map(window.messages.map((message) => [message.id, message])),
+    contextIds: new Set(window.messages.slice(0, window.contextCount).map((message) => message.id)),
+    previousWindowEvents,
+    usedAnchors: new Set<string>(),
+    createdAt,
+  }
   const events: IntimacyEventRecord[] = []
-  const usedAnchors = new Set<string>()
-  const usedCoreIds = new Set<number>()
+  // Within one kind a core message supports a single event; a sharing and a piece of good news may share them.
+  const usedCoreIds: Record<ModelEventKind, Set<number>> = { sharing: new Set(), good_news: new Set() }
 
   for (const item of parsed) {
-    const coreMessageIds = item.coreMessageIds.filter((messageId) => !usedCoreIds.has(messageId))
-    if (coreMessageIds.length === 0) continue
+    const coreMessageIds = item.coreMessageIds.filter((messageId) => !usedCoreIds[item.kind].has(messageId))
+    if (coreMessageIds.length === 0 && !item.continuesContextEvent) continue
     const subjectMemberId = members[item.discloser === 'A' ? 0 : 1].memberId
     const otherMemberId = members[item.discloser === 'A' ? 1 : 0].memberId
-    const evidence = buildEvidence(coreMessageIds, item.relatedMessageIds, windowMessages)
-    const details: SharingDetails = {
-      kind: 'sharing',
+    const built =
+      item.kind === 'sharing'
+        ? codeSharing(item, coreMessageIds, subjectMemberId, otherMemberId, context)
+        : codeGoodNews(item, coreMessageIds, subjectMemberId, otherMemberId, context)
+    if (built.length === 0) continue
+    events.push(...built)
+    for (const messageId of coreMessageIds) usedCoreIds[item.kind].add(messageId)
+  }
+  return events
+}
+
+/** A sharing event, plus the support response event when the sharing states a difficulty, worry or need. */
+function codeSharing(
+  item: ParsedSharingEvent,
+  coreMessageIds: number[],
+  subjectMemberId: number,
+  otherMemberId: number,
+  context: WindowBuildContext
+): IntimacyEventRecord[] {
+  const continued = item.continuesContextEvent
+    ? findContinuedEvent(context.previousWindowEvents, isSharingRecord, subjectMemberId, context.contextIds)
+    : null
+  const target = continued && !context.usedAnchors.has(continued.id) ? continued : null
+  const addition = {
+    evidence: buildEvidence(coreMessageIds, item.relatedMessageIds, context.windowMessages),
+    details: {
+      kind: 'sharing' as const,
       categories: normalizeCategories(item.categories),
       topic: item.topic,
       isDistressDisclosure: item.distress,
-    }
-    const modelDecision: IntimacyModelDecision = item.confidence === 'clear' ? 'included' : 'uncertain'
-    const continued = item.continuesContextEvent
-      ? findContinuedEvent(previousWindowEvents, subjectMemberId, contextIds)
-      : null
+    },
+    modelDecision: (item.confidence === 'clear' ? 'included' : 'uncertain') as IntimacyModelDecision,
+    observation: item.observation,
+  }
 
-    if (continued && !usedAnchors.has(continued.id)) {
-      events.push(mergeContinuedEvent(continued, { evidence, details, modelDecision, observation: item.observation }))
-      usedAnchors.add(continued.id)
-      for (const messageId of coreMessageIds) usedCoreIds.add(messageId)
-      continue
-    }
-
+  let sharing: SharingEventRecord
+  if (target) {
+    sharing = mergeContinuedSharing(target, addition)
+  } else {
+    if (coreMessageIds.length === 0) return []
     const anchorMessageId = Math.min(...coreMessageIds)
     const id = `sharing:${anchorMessageId}`
-    if (usedAnchors.has(id)) continue
-    usedAnchors.add(id)
-    for (const messageId of coreMessageIds) usedCoreIds.add(messageId)
-    events.push({
+    if (context.usedAnchors.has(id)) return []
+    sharing = {
       id,
       kind: 'sharing',
       subjectMemberId,
       otherMemberId,
       anchorMessageId,
-      anchorTs: windowMessages.get(anchorMessageId)!.timestamp,
-      evidence,
-      observation: item.observation,
+      anchorTs: context.windowMessages.get(anchorMessageId)!.timestamp,
+      evidence: addition.evidence,
+      observation: addition.observation,
       origin: 'model',
-      modelDecision,
+      modelDecision: addition.modelDecision,
       modelReason: item.reason,
-      details,
-      createdAt,
-    })
+      details: addition.details,
+      createdAt: context.createdAt,
+    }
   }
-  return events
+  context.usedAnchors.add(sharing.id)
+  const support = codeSupportResponse(sharing, item.responses, context)
+  return support ? [sharing, support] : [sharing]
+}
+
+/**
+ * The support response event lives alongside the disclosure it answers. It is created for a disclosure the model
+ * marked as distress, and kept updated once it exists, so a reply arriving in a later window joins the same event.
+ */
+function codeSupportResponse(
+  sharing: SharingEventRecord,
+  responses: ParsedResponseGroup<SupportResponseLabel> | null,
+  context: WindowBuildContext
+): SupportEventRecord | null {
+  const id = `support_response:${sharing.anchorMessageId}`
+  const previous =
+    context.previousWindowEvents.find(
+      (event): event is SupportEventRecord => event.id === id && isSupportRecord(event)
+    ) ?? null
+  if (sharing.details.isDistressDisclosure !== 'yes' && !previous) return null
+  const merged = mergeResponseDetails(previous?.details ?? null, responses, SUPPORT_RESPONSE_LABELS)
+  return {
+    id,
+    kind: 'support_response',
+    subjectMemberId: sharing.subjectMemberId,
+    otherMemberId: sharing.otherMemberId,
+    anchorMessageId: sharing.anchorMessageId,
+    anchorTs: sharing.anchorTs,
+    evidence: mergeEvidence([
+      ...sharing.evidence.filter((evidence) => evidence.role === 'core'),
+      ...(previous?.evidence.filter((evidence) => evidence.role === 'response') ?? []),
+      ...buildResponseEvidence(responses, sharing.anchorMessageId, sharing.otherMemberId, context.windowMessages),
+    ]),
+    observation: sharing.observation,
+    origin: 'model',
+    modelDecision: sharing.modelDecision,
+    modelReason: sharing.modelReason,
+    details: {
+      kind: 'support_response',
+      disclosureEventId: sharing.id,
+      responseLabels: merged.labels,
+      responseObservation: merged.observation,
+    },
+    createdAt: previous?.createdAt ?? context.createdAt,
+  }
+}
+
+function codeGoodNews(
+  item: ParsedGoodNewsEvent,
+  coreMessageIds: number[],
+  subjectMemberId: number,
+  otherMemberId: number,
+  context: WindowBuildContext
+): IntimacyEventRecord[] {
+  const continued = item.continuesContextEvent
+    ? findContinuedEvent(context.previousWindowEvents, isGoodNewsRecord, subjectMemberId, context.contextIds)
+    : null
+  const target = continued && !context.usedAnchors.has(continued.id) ? continued : null
+  if (!target && coreMessageIds.length === 0) return []
+  const anchorMessageId = target ? target.anchorMessageId : Math.min(...coreMessageIds)
+  const id = `good_news_response:${anchorMessageId}`
+  if (!target && context.usedAnchors.has(id)) return []
+  const merged = mergeResponseDetails(target?.details ?? null, item.responses, GOOD_NEWS_RESPONSE_LABELS)
+  const positiveForSharer = target?.details.positiveForSharer ?? item.positiveForSharer
+  // Good news the sharer may not read as good is never counted as a clear case.
+  const modelDecision: IntimacyModelDecision =
+    item.confidence === 'clear' && positiveForSharer === 'explicit_or_context_supported' ? 'included' : 'uncertain'
+  context.usedAnchors.add(id)
+  return [
+    {
+      id,
+      kind: 'good_news_response',
+      subjectMemberId,
+      otherMemberId,
+      anchorMessageId,
+      anchorTs: target?.anchorTs ?? context.windowMessages.get(anchorMessageId)!.timestamp,
+      evidence: mergeEvidence([
+        ...(target?.evidence ?? []),
+        ...buildEvidence(coreMessageIds, item.relatedMessageIds, context.windowMessages),
+        ...buildResponseEvidence(item.responses, anchorMessageId, otherMemberId, context.windowMessages),
+      ]),
+      observation: target && target.observation !== 'sufficient' ? target.observation : item.observation,
+      origin: 'model',
+      modelDecision: target?.modelDecision === 'uncertain' ? 'uncertain' : modelDecision,
+      modelReason: target?.modelReason ?? item.reason,
+      details: {
+        kind: 'good_news_response',
+        positiveForSharer,
+        responseLabels: merged.labels,
+        responseObservation: merged.observation,
+      },
+      createdAt: target?.createdAt ?? context.createdAt,
+    },
+  ]
 }
 
 export function resolveEventStatus(
@@ -205,14 +341,15 @@ function reviseResponseLabels<T extends string>(
   return order.filter((label) => unique.has(label))
 }
 
-function findContinuedEvent(
+function findContinuedEvent<T extends IntimacyEventRecord>(
   previousWindowEvents: IntimacyEventRecord[],
+  isKind: (event: IntimacyEventRecord) => event is T,
   subjectMemberId: number,
   contextIds: Set<number>
-): SharingEventRecord | null {
+): T | null {
   const candidates = previousWindowEvents.filter(
-    (event): event is SharingEventRecord =>
-      event.details.kind === 'sharing' &&
+    (event): event is T =>
+      isKind(event) &&
       event.subjectMemberId === subjectMemberId &&
       event.evidence.some((evidence) => contextIds.has(evidence.messageId))
   )
@@ -225,7 +362,19 @@ function findContinuedEvent(
   )
 }
 
-function mergeContinuedEvent(
+function isSharingRecord(event: IntimacyEventRecord): event is SharingEventRecord {
+  return event.details.kind === 'sharing'
+}
+
+function isSupportRecord(event: IntimacyEventRecord): event is SupportEventRecord {
+  return event.details.kind === 'support_response'
+}
+
+function isGoodNewsRecord(event: IntimacyEventRecord): event is GoodNewsEventRecord {
+  return event.details.kind === 'good_news_response'
+}
+
+function mergeContinuedSharing(
   previous: SharingEventRecord,
   addition: {
     evidence: IntimacyEvidence[]
@@ -234,16 +383,9 @@ function mergeContinuedEvent(
     observation: IntimacyObservation
   }
 ): SharingEventRecord {
-  const evidence = [...previous.evidence]
-  const seen = new Set(evidence.map((item) => item.messageId))
-  for (const item of addition.evidence) {
-    if (seen.has(item.messageId)) continue
-    seen.add(item.messageId)
-    evidence.push(item)
-  }
   return {
     ...previous,
-    evidence: evidence.sort((left, right) => left.messageId - right.messageId),
+    evidence: mergeEvidence([...previous.evidence, ...addition.evidence]),
     // A limited observation from either window survives the merge; only one of the two can be more informative.
     observation: previous.observation === 'sufficient' ? addition.observation : previous.observation,
     modelDecision:
@@ -257,25 +399,80 @@ function mergeContinuedEvent(
   }
 }
 
+/**
+ * A reply seen in either window keeps the event marked as answered and the labels are unioned; a window that saw
+ * no reply never overwrites one that did, and a missing reply keeps its own observation with no labels at all.
+ */
+function mergeResponseDetails<Label extends string>(
+  previous: { responseObservation: ResponseObservation; responseLabels: Label[] } | null,
+  responses: ParsedResponseGroup<Label> | null,
+  order: readonly Label[]
+): { observation: ResponseObservation; labels: Label[] } {
+  if (!previous) {
+    return responses
+      ? { observation: responses.observation, labels: responses.labels }
+      : { observation: 'no_visible_response', labels: [] }
+  }
+  if (!responses) return { observation: previous.responseObservation, labels: previous.responseLabels }
+  const seen = new Set<Label>([...previous.responseLabels, ...responses.labels])
+  return {
+    observation:
+      previous.responseObservation === 'visible_response' || responses.observation === 'visible_response'
+        ? 'visible_response'
+        : responses.observation,
+    labels: order.filter((label) => seen.has(label)),
+  }
+}
+
 function buildEvidence(
   coreMessageIds: number[],
   relatedMessageIds: number[],
   windowMessages: Map<number, IntimacySourceMessage>
 ): IntimacyEvidence[] {
   const evidence: IntimacyEvidence[] = []
-  const seen = new Set<number>()
   for (const [messageIds, role] of [
     [coreMessageIds, 'core'],
     [relatedMessageIds, 'related'],
   ] as const) {
     for (const messageId of messageIds) {
       const message = windowMessages.get(messageId)
-      if (!message || seen.has(messageId)) continue
-      seen.add(messageId)
+      if (!message) continue
       evidence.push({ messageId, timestamp: message.timestamp, senderId: message.senderId, role })
     }
   }
-  return evidence.sort((left, right) => left.messageId - right.messageId)
+  return mergeEvidence(evidence)
+}
+
+/**
+ * The reply evidence is re-checked against the window here because a continued event anchors in the previous one:
+ * the model response alone cannot show that the reply came after the message it answers.
+ */
+function buildResponseEvidence(
+  responses: ParsedResponseGroup<string> | null,
+  anchorMessageId: number,
+  otherMemberId: number,
+  windowMessages: Map<number, IntimacySourceMessage>
+): IntimacyEvidence[] {
+  return (responses?.messageIds ?? []).map((messageId) => {
+    const message = windowMessages.get(messageId)
+    if (!message) throw new Error(`Response message ${messageId} is not part of this window`)
+    if (message.senderId !== otherMemberId) {
+      throw new Error(`Response message ${messageId} was not sent by the other participant`)
+    }
+    if (messageId <= anchorMessageId) {
+      throw new Error(`Response message ${messageId} does not follow the message it answers`)
+    }
+    return { messageId, timestamp: message.timestamp, senderId: message.senderId, role: 'response' as const }
+  })
+}
+
+/** First citation wins, so core evidence never turns into related or response evidence on a later window. */
+function mergeEvidence(evidence: IntimacyEvidence[]): IntimacyEvidence[] {
+  const byMessage = new Map<number, IntimacyEvidence>()
+  for (const item of evidence) {
+    if (!byMessage.has(item.messageId)) byMessage.set(item.messageId, item)
+  }
+  return [...byMessage.values()].sort((left, right) => left.messageId - right.messageId)
 }
 
 function normalizeCategories(categories: SharingCategory[]): SharingCategory[] {
