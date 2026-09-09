@@ -292,6 +292,7 @@
       "observationBoundaryLimited": "この出来事は区間の境目にあるため、前後の文脈が欠けている可能性があります。",
       "observationMediaMissing": "根拠にテキスト以外のメッセージが含まれ、モデルは中身を読めていません。",
       "exclude": "除外",
+      "confirm": "確認",
       "restore": "戻す",
       "editLabels": "カテゴリとトピックを直す",
       "categoriesRequired": "カテゴリを 1 つ以上選んでください",

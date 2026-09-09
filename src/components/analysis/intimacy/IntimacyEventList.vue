@@ -204,7 +204,7 @@ function submitEdit(event: IntimacyEvent) {
           :disabled="busy"
           @click="emit('review', { event, decision: 'included' })"
         >
-          {{ t('common.confirm') }}
+          {{ t('views.intimacy.event.confirm') }}
         </UButton>
         <UButton
           v-if="event.status !== 'excluded'"

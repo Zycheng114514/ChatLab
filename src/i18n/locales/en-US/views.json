@@ -292,6 +292,7 @@
       "observationBoundaryLimited": "This event sits on a segment boundary, so its context may be incomplete.",
       "observationMediaMissing": "The evidence includes a non-text message whose content the model could not read.",
       "exclude": "Exclude",
+      "confirm": "Confirm",
       "restore": "Restore",
       "editLabels": "Change category and topic",
       "categoriesRequired": "Pick at least one category",

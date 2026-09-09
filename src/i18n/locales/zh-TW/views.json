@@ -292,6 +292,7 @@
       "observationBoundaryLimited": "這個事件落在分段邊界上，上下文可能不完整。",
       "observationMediaMissing": "證據裡有非文字訊息，模型讀不到裡面的內容。",
       "exclude": "排除",
+      "confirm": "確認",
       "restore": "恢復",
       "editLabels": "改類別與話題",
       "categoriesRequired": "至少選擇一個類別",
