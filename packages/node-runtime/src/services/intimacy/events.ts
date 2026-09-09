@@ -9,6 +9,7 @@ import type {
   IntimacyEventReview,
   IntimacyEventStatus,
   IntimacyEvidence,
+  IntimacyEvidenceRole,
   IntimacyFollowUpMemberSummary,
   IntimacyMember,
   IntimacyMemberSummary,
@@ -36,6 +37,7 @@ import type {
   ParsedFollowUpEvent,
   ParsedGoodNewsEvent,
   ParsedIntimacyEvent,
+  ParsedRepairAttemptEvent,
   ParsedResponseGroup,
   ParsedSharedPlanEvent,
   ParsedSharedPlanStage,
@@ -99,12 +101,22 @@ export function buildIntimacyEvents(
     good_news: new Set(),
     follow_up: new Set(),
     shared_plan: new Set(),
+    repair_attempt: new Set(),
   }
   // Questions about the same matter in one conversation are one event; a later conversation is a new one.
   const followUpConversations = new Map<string, number>()
+  const disagreementGroupIds = collectDisagreementGroups(parsed)
 
   for (const item of parsed) {
     const coreMessageIds = item.coreMessageIds.filter((messageId) => !usedCoreIds[item.kind].has(messageId))
+    if (item.kind === 'repair_attempt') {
+      const built = codeRepairAttempt(item, coreMessageIds, members, disagreementGroupIds, context)
+      if (!built) continue
+      events.push(built)
+      context.usedAnchors.add(built.id)
+      for (const messageId of coreMessageIds) usedCoreIds.repair_attempt.add(messageId)
+      continue
+    }
     if (item.kind === 'shared_plan') {
       const built = codeSharedPlan(item, coreMessageIds, members, context)
       if (!built) continue
@@ -218,6 +230,69 @@ function codeFollowUp(
     candidateMessageIds: [],
     lookbackStartTs: anchorTs - INTIMACY_FOLLOW_UP_LOOKBACK_SECONDS,
   })
+}
+
+/**
+ * Which disagreement each repair answers. The model keys the repairs that answer one disagreement together; the
+ * group is then named after the earliest message any of them cites for it, so two repairs after one argument are
+ * counted as two attempts of one disagreement rather than two disagreements.
+ */
+function collectDisagreementGroups(parsed: ParsedIntimacyEvent[]): Map<string, string> {
+  const earliest = new Map<string, number>()
+  for (const item of parsed) {
+    if (item.kind !== 'repair_attempt') continue
+    const anchor = Math.min(...item.disagreementMessageIds)
+    const known = earliest.get(item.disagreementGroupKey)
+    if (known === undefined || anchor < known) earliest.set(item.disagreementGroupKey, anchor)
+  }
+  return new Map([...earliest].map(([key, messageId]) => [key, `disagreement:${messageId}`]))
+}
+
+/**
+ * One repair attempt with the disagreement it answers and what the other participant said afterwards. It is only
+ * a clear case when the model was sure of both halves: a repair after a disagreement nobody is certain of is left
+ * for the user to check rather than counted.
+ */
+function codeRepairAttempt(
+  item: ParsedRepairAttemptEvent,
+  coreMessageIds: number[],
+  members: [IntimacyMember, IntimacyMember],
+  disagreementGroupIds: Map<string, string>,
+  context: WindowBuildContext
+): IntimacyEventRecord | null {
+  if (coreMessageIds.length === 0) return null
+  const anchorMessageId = Math.min(...coreMessageIds)
+  const anchor = context.windowMessages.get(anchorMessageId)
+  const disagreementGroupId = disagreementGroupIds.get(item.disagreementGroupKey)
+  const id = `repair_attempt:${anchorMessageId}`
+  if (!anchor || !disagreementGroupId || context.usedAnchors.has(id)) return null
+  const repairer = members[item.repairer === 'A' ? 0 : 1]
+  const other = members[item.repairer === 'A' ? 1 : 0]
+  return {
+    id,
+    kind: 'repair_attempt',
+    subjectMemberId: repairer.memberId,
+    otherMemberId: other.memberId,
+    anchorMessageId,
+    anchorTs: anchor.timestamp,
+    evidence: mergeEvidence([
+      ...buildEvidence(coreMessageIds, [], context.windowMessages),
+      ...buildRoleEvidence(item.disagreementMessageIds, 'disagreement', context.windowMessages),
+      ...buildRoleEvidence(item.subsequentMessageIds, 'subsequent', context.windowMessages),
+    ]),
+    observation: item.observation,
+    origin: 'model',
+    modelDecision:
+      item.disagreementConfidence === 'clear' && item.repairConfidence === 'clear' ? 'included' : 'uncertain',
+    modelReason: item.reason,
+    details: {
+      kind: 'repair_attempt',
+      disagreementGroupId,
+      repairLabels: item.repairLabels,
+      subsequentObservation: item.subsequentObservation,
+    },
+    createdAt: context.createdAt,
+  }
 }
 
 /**
@@ -346,14 +421,19 @@ function buildStageEvidence(
   stages: SharedPlanStageRecord[],
   windowMessages: Map<number, IntimacySourceMessage>
 ): IntimacyEvidence[] {
-  return stages.flatMap((stage) =>
-    stage.messageIds.flatMap((messageId) => {
-      const message = windowMessages.get(messageId)
-      return message
-        ? [{ messageId, timestamp: message.timestamp, senderId: message.senderId, role: 'stage' as const }]
-        : []
-    })
-  )
+  return stages.flatMap((stage) => buildRoleEvidence(stage.messageIds, 'stage', windowMessages))
+}
+
+/** Cited messages in one role, read back from the window so senders and times never come from the model. */
+function buildRoleEvidence(
+  messageIds: number[],
+  role: IntimacyEvidenceRole,
+  windowMessages: Map<number, IntimacySourceMessage>
+): IntimacyEvidence[] {
+  return messageIds.flatMap((messageId) => {
+    const message = windowMessages.get(messageId)
+    return message ? [{ messageId, timestamp: message.timestamp, senderId: message.senderId, role }] : []
+  })
 }
 
 /** The arrangement the context tail already shows: the same activity if it is named again, otherwise the same proposer. */
