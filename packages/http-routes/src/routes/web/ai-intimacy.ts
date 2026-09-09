@@ -76,9 +76,13 @@ export function registerAiIntimacyRoutes(server: FastifyInstance, ctx: IntimacyR
     )
   }
 
-  server.get<{ Params: { id: string }; Querystring: { kind?: string } }>(
+  server.get<{ Params: { id: string }; Querystring: { kind?: string; startTs?: string; endTs?: string } }>(
     '/_web/sessions/:id/intimacy/results',
-    async (request) => getService().getResults(request.params.id, requireKind(request.query.kind))
+    async (request) =>
+      getService().getResults(request.params.id, requireKind(request.query.kind), {
+        startTs: optionalTimestamp(request.query.startTs, 'startTs'),
+        endTs: optionalTimestamp(request.query.endTs, 'endTs'),
+      })
   )
 
   server.post<{ Params: { id: string }; Body: IntimacyCandidateRequest }>(
@@ -188,10 +192,14 @@ function requireObject<T>(value: T | undefined, field: string): T {
   return value
 }
 
+/** Query strings arrive as text, request bodies as JSON numbers; both mean seconds. */
 function optionalTimestamp(value: unknown, field: string): number | undefined {
-  if (value === undefined || value === null) return undefined
-  if (!Number.isFinite(value)) throw Object.assign(new Error(`Invalid ${field}`), { statusCode: 400 })
-  return Number(value)
+  if (value === undefined || value === null || value === '') return undefined
+  const timestamp = typeof value === 'string' ? Number(value) : value
+  if (typeof timestamp !== 'number' || !Number.isFinite(timestamp)) {
+    throw Object.assign(new Error(`Invalid ${field}`), { statusCode: 400 })
+  }
+  return timestamp
 }
 
 function requirePreprocessConfig(value: unknown): Record<string, unknown> | undefined {

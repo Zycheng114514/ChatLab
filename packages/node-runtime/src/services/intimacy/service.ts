@@ -296,12 +296,14 @@ export function createIntimacyService(deps: IntimacyServiceDeps): IntimacyServic
       .listEvents(sessionId, kind, INTIMACY_USER_RUN_ID)
       .filter((event) => !runEventIds.has(event.id))
 
-    const messages = loadEvidenceSnippets(db, [...runEvents, ...userEvents])
-    const events = [...runEvents, ...userEvents]
+    const stored = [...runEvents, ...userEvents]
+    const messages = loadEvidenceSnippets(db, stored)
+    // A decision on an event outside the requested range still has an event behind it, so it is not orphaned.
+    const storedIds = new Set(stored.map((event) => event.id))
+    const events = stored
       .map((event) => toIntimacyEvent(event, reviews.get(event.id) ?? null, messages))
       .filter((event) => withinRange(event.anchorTs, range))
       .sort((left, right) => left.anchorTs - right.anchorTs || left.anchorMessageId - right.anchorMessageId)
-    const eventIds = new Set(events.map((event) => event.id))
 
     const coverageRun = resultRun ?? latestRun
     return {
@@ -321,7 +323,7 @@ export function createIntimacyService(deps: IntimacyServiceDeps): IntimacyServic
       summary: {
         kind,
         members: summarizeSharing(events, members),
-        orphanReviews: [...reviews.keys()].filter((eventId) => !eventIds.has(eventId)).length,
+        orphanReviews: [...reviews.keys()].filter((eventId) => !storedIds.has(eventId)).length,
       },
       semanticSearchAvailable: await canSearchSemantically(sessionId),
       modelId: deps.getModelClient()?.modelId ?? null,

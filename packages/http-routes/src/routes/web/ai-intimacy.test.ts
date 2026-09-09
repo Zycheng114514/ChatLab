@@ -159,6 +159,18 @@ test('confirmed events and reviews stay inside one session and refuse a stale re
   assert.equal(created.json().events[0].status, 'confirmed')
   assert.equal(created.json().summary.members[0].counted, 1)
 
+  const outsideRange = await app.inject({
+    method: 'GET',
+    url: `/_web/sessions/private/intimacy/results?kind=sharing&startTs=${baseTs + 600}`,
+  })
+  assert.equal(outsideRange.statusCode, 200)
+  assert.deepEqual(outsideRange.json().events, [])
+  assert.equal(
+    outsideRange.json().summary.orphanReviews,
+    0,
+    'a decision on an event outside the requested range is not a review to re-check'
+  )
+
   const otherSession = await app.inject({ method: 'GET', url: '/_web/sessions/other/intimacy/results?kind=sharing' })
   assert.equal(otherSession.statusCode, 200)
   assert.deepEqual(otherSession.json().events, [])
