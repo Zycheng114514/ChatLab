@@ -420,12 +420,27 @@ export function createIntimacyService(deps: IntimacyServiceDeps): IntimacyServic
     const anchorMessageId = Math.min(...coreMessageIds)
     const eventId = `sharing:${anchorMessageId}`
     const timestamp = now()
+    // A message can support only one event. When the confirmed messages already belong to an event in the
+    // current results (generated or user-confirmed), the confirmation becomes a decision on that event instead
+    // of a second event for the same matter.
     const existing = store.getLatestRunWithResults(sessionId)
-    const alreadyGenerated =
-      existing && store.listEvents(sessionId, 'sharing', existing.id).some((event) => event.id === eventId)
-    if (alreadyGenerated) {
-      const current = store.listReviews(sessionId).find((review) => review.eventId === eventId)
-      store.upsertReview(sessionId, eventId, 'included', null, current?.revision ?? 0, timestamp)
+    const currentEvents = [
+      ...(existing ? store.listEvents(sessionId, 'sharing', existing.id) : []),
+      ...store.listEvents(sessionId, 'sharing', INTIMACY_USER_RUN_ID),
+    ]
+    const overlapping = currentEvents.find(
+      (event) => event.id === eventId || event.evidence.some((evidence) => coreMessageIds.includes(evidence.messageId))
+    )
+    if (overlapping) {
+      const current = store.listReviews(sessionId).find((review) => review.eventId === overlapping.id)
+      store.upsertReview(
+        sessionId,
+        overlapping.id,
+        'included',
+        JSON.stringify(requirePartialSharingDetails(details)),
+        current?.revision ?? 0,
+        timestamp
+      )
     } else {
       store.createUserEvent(sessionId, {
         id: eventId,

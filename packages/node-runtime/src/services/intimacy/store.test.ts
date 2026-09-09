@@ -6,7 +6,7 @@ import test from 'node:test'
 import Database from 'better-sqlite3'
 import type { IntimacyRun } from '@openchatlab/shared-types'
 import { getIntimacyDbPath } from './paths'
-import { IntimacyStore, deleteSessionIntimacy, type IntimacyEventRecord } from './store'
+import { IntimacyStore, deleteSessionIntimacy, type IntimacyEventRecord, INTIMACY_USER_RUN_ID } from './store'
 
 const nativeBinding = path.resolve('apps/cli/native/better_sqlite3.node')
 
@@ -216,13 +216,19 @@ test('clearing results can keep user reviews, and deleting a session removes eve
     store.createRun(createRun({ status: 'completed', completedWindows: 2 }), null)
     store.insertWindowEvents('session-1', 'run-1', [createEvent()])
     store.upsertReview('session-1', 'sharing:10', 'excluded', null, 0, 1_786_205_300_000)
+    store.createUserEvent('session-1', createEvent({ id: 'sharing:40', anchorMessageId: 40, origin: 'user' }))
     store.createRun(createRun({ id: 'run-9', sessionId: 'session-2', status: 'completed', completedWindows: 1 }), null)
     store.insertWindowEvents('session-2', 'run-9', [createEvent()])
 
+    // Clearing generated results keeps every decision the user made: the review and the event they confirmed.
     assert.equal(store.deleteSessionResults('session-1', { includeReviews: false }), true)
     assert.equal(store.getLatestRun('session-1'), null)
     assert.deepEqual(store.listEvents('session-1', 'sharing', 'run-1'), [])
-    assert.equal(store.listReviews('session-1').length, 1)
+    assert.deepEqual(
+      store.listEvents('session-1', 'sharing', INTIMACY_USER_RUN_ID).map((event) => event.id),
+      ['sharing:40']
+    )
+    assert.equal(store.listReviews('session-1').length, 2)
   } finally {
     store.close()
   }

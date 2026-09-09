@@ -547,6 +547,18 @@ test('a confirmed candidate is counted without a run and rejects messages the pa
     assert.equal(results.summary.members[1]?.counted, 1)
     assert.equal(results.summary.members[0]?.counted, 0)
 
+    // Confirming the same message again relabels the existing event instead of counting the matter twice.
+    const relabelled = await service.createUserEvent('private', {
+      kind: 'sharing',
+      subjectMemberId: 2,
+      coreMessageIds: [BOB_OWN_SHARING],
+      details: { categories: ['feeling', 'worry_or_need'], topic: 'health', isDistressDisclosure: 'yes' },
+    })
+    assert.equal(relabelled.events.length, 1)
+    assert.deepEqual(relabelled.events[0]?.details.categories, ['feeling', 'worry_or_need'])
+    assert.equal(relabelled.events[0]?.review?.revision, 2)
+    assert.equal(relabelled.summary.members[1]?.counted, 1)
+
     await assert.rejects(
       () =>
         service.createUserEvent('private', {

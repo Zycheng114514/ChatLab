@@ -504,10 +504,15 @@ export class IntimacyStore {
     })
   }
 
-  /** Remove generated results. User reviews survive unless the caller asks for a full reset. */
+  /**
+   * Remove generated results. The user's decisions survive unless the caller asks for a full reset: reviews stay
+   * attached to their event ids, and events the user confirmed from candidates are decisions too, so they stay.
+   */
   deleteSessionResults(sessionId: string, options: { includeReviews: boolean }): boolean {
     return this.db.transaction(() => {
-      const events = this.db.prepare('DELETE FROM intimacy_event WHERE session_id = ?').run(sessionId).changes
+      const events = options.includeReviews
+        ? this.db.prepare('DELETE FROM intimacy_event WHERE session_id = ?').run(sessionId).changes
+        : this.db.prepare("DELETE FROM intimacy_event WHERE session_id = ? AND run_id != ''").run(sessionId).changes
       const runs = this.db.prepare('DELETE FROM intimacy_run WHERE session_id = ?').run(sessionId).changes
       const reviews = options.includeReviews
         ? this.db.prepare('DELETE FROM intimacy_event_review WHERE session_id = ?').run(sessionId).changes
