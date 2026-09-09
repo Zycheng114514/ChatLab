@@ -6,6 +6,7 @@ import {
   parseIntimacyResponse,
   type ParsedFollowUpEvent,
   type ParsedIntimacyEvent,
+  type ParsedSharedPlanEvent,
   type ParsedSharingEvent,
 } from './model-protocol'
 import type { IntimacySourceMessage, IntimacyWindow } from './source'
@@ -43,6 +44,12 @@ function firstSharing(parsed: ParsedIntimacyEvent[]): ParsedSharingEvent {
 function firstFollowUp(parsed: ParsedIntimacyEvent[]): ParsedFollowUpEvent {
   const event = parsed[0]
   assert.ok(event?.kind === 'follow_up')
+  return event
+}
+
+function firstSharedPlan(parsed: ParsedIntimacyEvent[]): ParsedSharedPlanEvent {
+  const event = parsed[0]
+  assert.ok(event?.kind === 'shared_plan')
   return event
 }
 
@@ -193,6 +200,67 @@ test('a follow-up question whose earlier message is not in this window is left f
   const parsed = parseIntimacyResponse(response({ ...followUpQuestion, priorMessageIds: undefined }), window, members)
 
   assert.deepEqual(firstFollowUp(parsed).priorMessageIds, [])
+})
+
+/** Alice proposes an outing, Bob asks about it, and the two of them settle it inside this window. */
+const sharedPlan = {
+  kind: 'shared_plan',
+  proposer: 'A',
+  coreMessageIds: [3],
+  activitySummary: '周六下午看展',
+  stages: [
+    { stage: 'proposed', actor: 'A', messageIds: [3] },
+    { stage: 'discussed', actor: 'B', messageIds: [4] },
+    { stage: 'mutually_confirmed', actor: 'B', messageIds: [7, 6] },
+  ],
+  continuesContextEvent: false,
+  confidence: 'clear',
+  observation: 'sufficient',
+  reason: 'Alice proposes the outing and Bob agrees to it.',
+}
+
+test('an arrangement is read back as one timeline with the proposal it starts from', () => {
+  const parsed = parseIntimacyResponse(response(sharedPlan), window, members)
+
+  assert.equal(parsed.length, 1)
+  const event = firstSharedPlan(parsed)
+  assert.equal(event.proposer, 'A')
+  assert.deepEqual(event.coreMessageIds, [3])
+  assert.equal(event.activitySummary, '周六下午看展')
+  assert.deepEqual(event.stages, [
+    { stage: 'proposed', actor: 'A', messageIds: [3] },
+    { stage: 'discussed', actor: 'B', messageIds: [4] },
+    { stage: 'mutually_confirmed', actor: 'B', messageIds: [6, 7] },
+  ])
+  assert.equal(event.continuesContextEvent, false)
+  assert.equal(event.confidence, 'clear')
+})
+
+test('an arrangement whose proposal is not in this window is never attributed to anyone', () => {
+  const parsed = parseIntimacyResponse(
+    response({
+      ...sharedPlan,
+      proposer: 'C',
+      coreMessageIds: undefined,
+      stages: [{ stage: 'retrospective_mentioned', actor: 'B', messageIds: [7] }],
+    }),
+    window,
+    members
+  )
+
+  const event = firstSharedPlan(parsed)
+  assert.equal(event.proposer, null, 'a proposer nobody in this window proposed is not read at all')
+  assert.deepEqual(event.coreMessageIds, [])
+})
+
+test('the activity an arrangement is named by is trimmed and bounded', () => {
+  const parsed = parseIntimacyResponse(
+    response({ ...sharedPlan, activitySummary: `  ${'展'.repeat(60)}  ` }),
+    window,
+    members
+  )
+
+  assert.equal(firstSharedPlan(parsed).activitySummary.length, 40)
 })
 
 const rejections: Array<{ name: string; payload: string }> = [
@@ -350,6 +418,88 @@ const rejections: Array<{ name: string; payload: string }> = [
   {
     name: 'a follow-up question with no confidence',
     payload: response({ ...followUpQuestion, confidence: undefined }),
+  },
+  {
+    name: 'a proposal the other participant sent',
+    payload: response({ ...sharedPlan, proposer: 'B' }),
+  },
+  {
+    name: 'a proposal that only appears as context of this window',
+    payload: response({ ...sharedPlan, coreMessageIds: [1] }),
+  },
+  {
+    name: 'a proposal with no readable text',
+    payload: response({ ...sharedPlan, coreMessageIds: [5] }),
+  },
+  {
+    name: 'a proposal that is not one of the stages',
+    payload: response({ ...sharedPlan, stages: [{ stage: 'discussed', actor: 'B', messageIds: [4] }] }),
+  },
+  {
+    name: 'a mutual confirmation carrying only one side',
+    payload: response({
+      ...sharedPlan,
+      stages: [
+        { stage: 'proposed', actor: 'A', messageIds: [3] },
+        { stage: 'mutually_confirmed', actor: 'B', messageIds: [7] },
+      ],
+    }),
+  },
+  {
+    name: 'a mutual confirmation whose agreement comes before what it agrees to',
+    payload: response({
+      ...sharedPlan,
+      stages: [
+        { stage: 'proposed', actor: 'A', messageIds: [3] },
+        { stage: 'mutually_confirmed', actor: 'A', messageIds: [6, 7] },
+      ],
+    }),
+  },
+  {
+    name: 'a stage citing a message the other participant sent',
+    payload: response({
+      ...sharedPlan,
+      stages: [
+        { stage: 'proposed', actor: 'A', messageIds: [3] },
+        { stage: 'discussed', actor: 'B', messageIds: [6] },
+      ],
+    }),
+  },
+  {
+    name: 'a stage from outside this window',
+    payload: response({
+      ...sharedPlan,
+      stages: [
+        { stage: 'proposed', actor: 'A', messageIds: [3] },
+        { stage: 'discussed', actor: 'B', messageIds: [99] },
+      ],
+    }),
+  },
+  {
+    name: 'stages that do not follow the order of the messages',
+    payload: response({
+      ...sharedPlan,
+      stages: [
+        { stage: 'discussed', actor: 'B', messageIds: [4] },
+        { stage: 'proposed', actor: 'A', messageIds: [3] },
+      ],
+    }),
+  },
+  {
+    name: 'an arrangement with no stage at all',
+    payload: response({ ...sharedPlan, stages: [] }),
+  },
+  {
+    name: 'a stage with no message to show it',
+    payload: response({ ...sharedPlan, stages: [{ stage: 'proposed', actor: 'A', messageIds: [] }] }),
+  },
+  {
+    name: 'an unknown stage of an arrangement',
+    payload: response({ ...sharedPlan, stages: [{ stage: 'agreed', actor: 'A', messageIds: [3] }] }),
+  },
+  {
+    name: 'an arrangement with no activity to name it by',
+    payload: response({ ...sharedPlan, activitySummary: '  ' }),
   },
 ]
 

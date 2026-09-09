@@ -5,14 +5,18 @@ import type {
   IntimacyEventDetails,
   IntimacyEventReview,
   IntimacyMember,
+  SharedPlanDetails,
   SharingDetails,
 } from '@openchatlab/shared-types'
 import {
   applyReviewDetails,
   buildIntimacyEvents,
+  clampSharedPlanDetails,
+  mergeSharedPlanEvents,
   resolveEventStatus,
   summarizeFollowUps,
   summarizeResponses,
+  summarizeSharedPlans,
   summarizeSharing,
 } from './events'
 import type { ParsedFollowUpEvent, ParsedGoodNewsEvent, ParsedSharingEvent } from './model-protocol'
@@ -715,4 +719,255 @@ test('summaries count each confirmed or automatic event once and each of its lab
     uncertainCount: 0,
     byCategory: { experience_or_update: 1, feeling: 0, worry_or_need: 0 },
   })
+})
+
+/** One arrangement as a record, so the merge and the counting can be exercised without a whole run. */
+function planRecord(overrides: Partial<IntimacyEventRecord> = {}): IntimacyEventRecord {
+  return {
+    id: 'shared_plan:3',
+    kind: 'shared_plan',
+    subjectMemberId: 1,
+    otherMemberId: 2,
+    anchorMessageId: 3,
+    anchorTs: baseTs + 3,
+    evidence: [{ messageId: 3, timestamp: baseTs + 3, senderId: 1, role: 'core' }],
+    observation: 'sufficient',
+    origin: 'model',
+    modelDecision: 'included',
+    modelReason: 'Alice proposes the outing.',
+    details: {
+      kind: 'shared_plan',
+      proposerMemberId: 1,
+      activitySummary: '周六下午看展',
+      stages: [{ stage: 'proposed', actorMemberId: 1, messageIds: [3], at: baseTs + 3 }],
+      lastObservedStage: 'proposed',
+      priorCoverage: 'covered',
+    },
+    createdAt: baseTs * 1000,
+    ...overrides,
+  }
+}
+
+/** The stages a later window adds to an arrangement that was proposed earlier. */
+function planStages(overrides: Partial<IntimacyEventRecord> = {}): IntimacyEventRecord {
+  return planRecord({
+    id: 'shared_plan:6',
+    subjectMemberId: 2,
+    otherMemberId: 1,
+    anchorMessageId: 6,
+    anchorTs: baseTs + 6,
+    evidence: [{ messageId: 6, timestamp: baseTs + 6, senderId: 2, role: 'stage' }],
+    details: {
+      kind: 'shared_plan',
+      proposerMemberId: null,
+      activitySummary: '看展',
+      stages: [{ stage: 'retrospective_mentioned', actorMemberId: 2, messageIds: [6], at: baseTs + 6 }],
+      lastObservedStage: 'retrospective_mentioned',
+      priorCoverage: 'not_covered',
+    },
+    ...overrides,
+  })
+}
+
+function planDetails(event: IntimacyEventRecord): SharedPlanDetails {
+  assert.ok(event.details.kind === 'shared_plan')
+  return event.details
+}
+
+test('an arrangement that takes the stages of a later window stays one timeline under its own identity', () => {
+  const merged = mergeSharedPlanEvents(planRecord(), planStages())
+
+  assert.equal(merged.id, 'shared_plan:3', 'the arrangement keeps the identity it was proposed under')
+  assert.equal(merged.anchorMessageId, 3)
+  assert.equal(merged.subjectMemberId, 1)
+  assert.deepEqual(planDetails(merged).stages, [
+    { stage: 'proposed', actorMemberId: 1, messageIds: [3], at: baseTs + 3 },
+    { stage: 'retrospective_mentioned', actorMemberId: 2, messageIds: [6], at: baseTs + 6 },
+  ])
+  assert.equal(planDetails(merged).lastObservedStage, 'retrospective_mentioned')
+  assert.equal(planDetails(merged).activitySummary, '周六下午看展', 'the words the arrangement was named by stay')
+  assert.equal(planDetails(merged).proposerMemberId, 1)
+  assert.equal(planDetails(merged).priorCoverage, 'covered')
+  assert.deepEqual(
+    merged.evidence.map((evidence) => [evidence.messageId, evidence.role]),
+    [
+      [3, 'core'],
+      [6, 'stage'],
+    ]
+  )
+})
+
+test('merging an arrangement orders its stages by time, drops the ones reported twice and keeps every doubt', () => {
+  const late = planStages({
+    details: {
+      kind: 'shared_plan',
+      proposerMemberId: null,
+      activitySummary: '看展',
+      stages: [
+        { stage: 'retrospective_mentioned', actorMemberId: 2, messageIds: [6], at: baseTs + 6 },
+        { stage: 'proposed', actorMemberId: 1, messageIds: [3], at: baseTs + 3 },
+        { stage: 'cancelled', actorMemberId: 2, messageIds: [4], at: baseTs + 4 },
+      ],
+      lastObservedStage: 'cancelled',
+      priorCoverage: 'not_covered',
+    },
+    observation: 'boundary_limited',
+    modelDecision: 'uncertain',
+  })
+
+  const merged = mergeSharedPlanEvents(planRecord(), late)
+
+  assert.deepEqual(
+    planDetails(merged).stages.map((stage) => stage.stage),
+    ['proposed', 'cancelled', 'retrospective_mentioned'],
+    'the proposal both windows report is one stage, and the timeline follows the messages'
+  )
+  assert.equal(merged.observation, 'boundary_limited', 'a limited view from either window survives the merge')
+  assert.equal(merged.modelDecision, 'uncertain')
+})
+
+test('an arrangement whose proposal is only found later stops being an uncovered one', () => {
+  const merged = mergeSharedPlanEvents(planStages(), planRecord())
+
+  assert.equal(planDetails(merged).proposerMemberId, 1)
+  assert.equal(planDetails(merged).priorCoverage, 'covered')
+  assert.equal(planDetails(merged).lastObservedStage, 'retrospective_mentioned')
+})
+
+test('a view that ends early shows where an arrangement stood then, not where it stands now', () => {
+  const details = planDetails(
+    mergeSharedPlanEvents(
+      planRecord(),
+      planStages({
+        details: {
+          kind: 'shared_plan',
+          proposerMemberId: null,
+          activitySummary: '看展',
+          stages: [
+            { stage: 'cancelled', actorMemberId: 2, messageIds: [4], at: baseTs + 4 },
+            { stage: 'mutually_confirmed', actorMemberId: 2, messageIds: [5, 6], at: baseTs + 5 },
+          ],
+          lastObservedStage: 'mutually_confirmed',
+          priorCoverage: 'not_covered',
+        },
+      })
+    )
+  )
+
+  const clamped = clampSharedPlanDetails(details, baseTs + 4)
+  assert.deepEqual(
+    clamped.stages.map((stage) => stage.stage),
+    ['proposed', 'cancelled']
+  )
+  assert.equal(clamped.lastObservedStage, 'cancelled')
+
+  assert.equal(clampSharedPlanDetails(details, baseTs + 10), details, 'a range that reaches everything changes nothing')
+  assert.equal(clampSharedPlanDetails(details), details, 'an open range changes nothing')
+  assert.equal(
+    clampSharedPlanDetails(details, baseTs).stages.length,
+    details.stages.length,
+    'a range that reaches no stage at all leaves the arrangement as it is rather than emptying it'
+  )
+})
+
+function planEvent(overrides: Partial<IntimacyEvent> = {}): IntimacyEvent {
+  return {
+    ...storedEvent(),
+    id: 'shared_plan:3',
+    kind: 'shared_plan',
+    anchorMessageId: 3,
+    anchorTs: baseTs + 3,
+    details: planDetails(planRecord()),
+    ...overrides,
+  }
+}
+
+test('shared plan summaries count an arrangement once, by where it stood and who moved it', () => {
+  const events: IntimacyEvent[] = [
+    // Proposed and settled inside the range.
+    planEvent({
+      details: {
+        kind: 'shared_plan',
+        proposerMemberId: 1,
+        activitySummary: '周六下午看展',
+        stages: [
+          { stage: 'proposed', actorMemberId: 1, messageIds: [3], at: baseTs + 3 },
+          { stage: 'rescheduled', actorMemberId: 2, messageIds: [4], at: baseTs + 4 },
+          { stage: 'mutually_confirmed', actorMemberId: 2, messageIds: [4, 5], at: baseTs + 5 },
+        ],
+        lastObservedStage: 'mutually_confirmed',
+        priorCoverage: 'covered',
+      },
+    }),
+    // Proposed before the range and only moved inside it: an update, not a new proposal.
+    planEvent({
+      id: 'shared_plan:1',
+      status: 'confirmed',
+      anchorMessageId: 1,
+      anchorTs: baseTs - 100,
+      details: {
+        kind: 'shared_plan',
+        proposerMemberId: 2,
+        activitySummary: '一起吃火锅',
+        stages: [
+          { stage: 'proposed', actorMemberId: 2, messageIds: [1], at: baseTs - 100 },
+          { stage: 'mutually_confirmed', actorMemberId: 1, messageIds: [1, 6], at: baseTs + 6 },
+        ],
+        lastObservedStage: 'mutually_confirmed',
+        priorCoverage: 'covered',
+      },
+    }),
+    // A stage whose proposal this analysis never saw: nobody is counted as having proposed it.
+    planEvent({
+      id: 'shared_plan:7',
+      anchorMessageId: 7,
+      anchorTs: baseTs + 7,
+      details: {
+        kind: 'shared_plan',
+        proposerMemberId: null,
+        activitySummary: '打羽毛球',
+        stages: [{ stage: 'retrospective_mentioned', actorMemberId: 1, messageIds: [7], at: baseTs + 7 }],
+        lastObservedStage: 'retrospective_mentioned',
+        priorCoverage: 'not_covered',
+      },
+    }),
+    // Outside the range, and one the user threw out: neither is part of this picture.
+    planEvent({
+      id: 'shared_plan:9',
+      anchorMessageId: 9,
+      anchorTs: baseTs + 900,
+      details: {
+        kind: 'shared_plan',
+        proposerMemberId: 1,
+        activitySummary: '周日爬山',
+        stages: [{ stage: 'proposed', actorMemberId: 1, messageIds: [9], at: baseTs + 900 }],
+        lastObservedStage: 'proposed',
+        priorCoverage: 'covered',
+      },
+    }),
+    planEvent({ id: 'shared_plan:11', status: 'excluded' }),
+  ]
+
+  const summary = summarizeSharedPlans(events, members, { startTs: baseTs, endTs: baseTs + 100 })
+
+  assert.deepEqual(summary, {
+    kind: 'shared_plan',
+    newlyProposed: 1,
+    updatedInRange: 3,
+    byLastStage: {
+      proposed: 0,
+      discussed: 0,
+      mutually_confirmed: 2,
+      rescheduled: 0,
+      cancelled: 0,
+      retrospective_mentioned: 1,
+    },
+    proposedBy: { 1: 1, 2: 1 },
+    confirmedBy: { 1: 1, 2: 1 },
+  })
+  assert.equal(
+    Object.values(summary.byLastStage).reduce((sum, count) => sum + count, 0),
+    summary.updatedInRange,
+    'every arrangement the range shows stands somewhere, and stands there once'
+  )
 })
