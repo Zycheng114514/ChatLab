@@ -150,6 +150,10 @@ function requireCreateEventRequest(value: CreateIntimacyEventRequest | undefined
         : requireMessageIds(value.responseMessageIds, 'responseMessageIds'),
     priorMessageIds:
       value?.priorMessageIds === undefined ? undefined : requireMessageIds(value.priorMessageIds, 'priorMessageIds'),
+    disagreementMessageIds:
+      value?.disagreementMessageIds === undefined
+        ? undefined
+        : requireMessageIds(value.disagreementMessageIds, 'disagreementMessageIds'),
     details: requireObject(value?.details, 'details'),
   }
 }

@@ -16,6 +16,7 @@ import {
   type IntimacyCandidates,
   type CreateFollowUpDetails,
   type CreateIntimacyEventDetails,
+  type CreateRepairAttemptDetails,
   type FollowUpMatchConfidence,
   type FollowUpReviewDetails,
   type GoodNewsResponseDetails,
@@ -33,6 +34,8 @@ import {
   type IntimacyRun,
   type CreateSharedPlanDetails,
   type CreateSharedPlanStage,
+  type RepairLabel,
+  type RepairReviewDetails,
   type ResponseObservation,
   type ReviewIntimacyEventRequest,
   type SharedPlanDetails,
@@ -40,6 +43,7 @@ import {
   type SharedPlanStageRecord,
   type SharingDetails,
   type StartIntimacyRunRequest,
+  type SubsequentObservation,
   type SupportResponseDetails,
 } from '@openchatlab/shared-types'
 import { isRuntimeVersionAtLeast, raiseDataDirMinRuntimeVersion, type RuntimeIdentity } from '../../data-dir-compat'
@@ -78,9 +82,11 @@ import {
   INTIMACY_ALGORITHM_VERSION,
   INTIMACY_PROMPT_VERSION,
   POSITIVE_FOR_SHARER_VALUES,
+  REPAIR_LABELS,
   SHARED_PLAN_STAGES,
   SHARING_CATEGORIES,
   SHARING_TOPICS,
+  SUBSEQUENT_OBSERVATIONS,
   SUPPORT_RESPONSE_LABELS,
   buildIntimacyWindowPrompt,
   checkSharedPlanStageSenders,
@@ -441,10 +447,14 @@ export function createIntimacyService(deps: IntimacyServiceDeps): IntimacyServic
     const relatedMessageIds = [...new Set(request.relatedMessageIds ?? [])].filter(
       (messageId) => !coreMessageIds.includes(messageId)
     )
-    // A sharing event has no reply of its own, and only a follow-up question points at an earlier message.
+    // A sharing event has no reply of its own, and only a follow-up question points at an earlier message. A repair
+    // attempt reuses the reply field for what the other participant said after it.
     const responseMessageIds =
-      kind === 'support_response' || kind === 'good_news_response' ? [...new Set(request.responseMessageIds ?? [])] : []
+      kind === 'support_response' || kind === 'good_news_response' || kind === 'repair_attempt'
+        ? [...new Set(request.responseMessageIds ?? [])]
+        : []
     const priorMessageIds = kind === 'follow_up' ? [...new Set(request.priorMessageIds ?? [])] : []
+    const disagreementMessageIds = kind === 'repair_attempt' ? [...new Set(request.disagreementMessageIds ?? [])] : []
     // A shared plan states its own stages, so the messages they cite are read from the chat along with the rest.
     const planStages = kind === 'shared_plan' ? requireSharedPlanStageInput(request.details) : []
     const stageMessageIds = [...new Set(planStages.flatMap((stage) => stage.messageIds))]
@@ -454,6 +464,7 @@ export function createIntimacyService(deps: IntimacyServiceDeps): IntimacyServic
         ...relatedMessageIds,
         ...responseMessageIds,
         ...priorMessageIds,
+        ...disagreementMessageIds,
         ...stageMessageIds,
       ]).map((m) => [m.id, m])
     )
@@ -603,8 +614,48 @@ export function createIntimacyService(deps: IntimacyServiceDeps): IntimacyServic
       return getResults(sessionId)
     }
 
+    // A confirmed repair attempt cites the disagreement it answers rather than assuming one, and reports what the
+    // other participant said afterwards only when the user picked the messages it can be read from.
     if (kind === 'repair_attempt') {
-      throw Object.assign(new Error('Repair attempts are not implemented yet'), { statusCode: 400 })
+      const anchor = coreEvidence[0]!
+      const lastRepairMessageId = coreEvidence[coreEvidence.length - 1]!.messageId
+      const disagreementEvidence = buildDisagreementEvidence(disagreementMessageIds, found, {
+        repairerMemberId: subject.memberId,
+        otherMemberId: other.memberId,
+        anchorMessageId: anchor.messageId,
+      })
+      const subsequentEvidence = responseMessageIds.map((messageId) =>
+        requireSubsequentMessage(found.get(messageId), messageId, other.memberId, lastRepairMessageId)
+      )
+      const record: IntimacyEventRecord = {
+        id: `repair_attempt:${anchor.messageId}`,
+        kind: 'repair_attempt',
+        subjectMemberId: subject.memberId,
+        otherMemberId: other.memberId,
+        anchorMessageId: anchor.messageId,
+        anchorTs: anchor.timestamp,
+        evidence: [
+          ...coreEvidence,
+          ...relatedMessageIds.map((messageId) => toEvidence(found.get(messageId)!, 'related')),
+          ...disagreementEvidence,
+          ...subsequentEvidence,
+        ]
+          .filter((evidence, index, all) => all.findIndex((item) => item.messageId === evidence.messageId) === index)
+          .sort((left, right) => left.messageId - right.messageId),
+        observation: 'sufficient',
+        origin: 'user',
+        modelDecision: null,
+        modelReason: null,
+        details: {
+          kind: 'repair_attempt',
+          disagreementGroupId: `disagreement:${Math.min(...disagreementEvidence.map((item) => item.messageId))}`,
+          repairLabels: requireRepairLabels(request.details),
+          subsequentObservation: resolveConfirmedSubsequent(request.details, subsequentEvidence.length),
+        },
+        createdAt: timestamp,
+      }
+      confirmEvent(sessionId, record, { currentEvents, coreMessageIds, timestamp })
+      return getResults(sessionId)
     }
 
     // K2 counts a reply to a disclosure, so the disclosure has to exist as a K1 event of its own.
@@ -1784,6 +1835,113 @@ function requireSharedPlanReviewDetails(details: IntimacyReviewDetails): SharedP
   return { lastObservedStage: revised.lastObservedStage }
 }
 
+/**
+ * The disagreement a confirmed repair answers: each participant's own words, all of them before the repair. A
+ * request that names messages from one side only is refused, so a repair is never counted after a disagreement
+ * only one of them showed.
+ */
+function buildDisagreementEvidence(
+  messageIds: number[],
+  found: Map<number, MappedMessage>,
+  scope: { repairerMemberId: number; otherMemberId: number; anchorMessageId: number }
+): IntimacyEvidence[] {
+  const evidence = messageIds.map((messageId) => {
+    const message = found.get(messageId)
+    if (!message) {
+      throw Object.assign(new Error(`Message ${messageId} is not part of this chat`), { statusCode: 400 })
+    }
+    if (messageId >= scope.anchorMessageId) {
+      throw Object.assign(new Error(`Message ${messageId} does not come before the repair`), { statusCode: 400 })
+    }
+    if (message.type !== 0 || message.content === '') {
+      throw Object.assign(new Error(`Message ${messageId} has no readable text`), { statusCode: 400 })
+    }
+    return toEvidence(message, 'disagreement')
+  })
+  const disagreeing = new Set(evidence.map((item) => item.senderId))
+  if (!disagreeing.has(scope.repairerMemberId) || !disagreeing.has(scope.otherMemberId)) {
+    throw Object.assign(new Error('A disagreement needs messages from both participants'), { statusCode: 400 })
+  }
+  return evidence
+}
+
+/** What the other participant said after a repair: their own words, after the last repairing message. */
+function requireSubsequentMessage(
+  message: MappedMessage | undefined,
+  messageId: number,
+  otherMemberId: number,
+  lastRepairMessageId: number
+): IntimacyEvidence {
+  if (!message) {
+    throw Object.assign(new Error(`Message ${messageId} is not part of this chat`), { statusCode: 400 })
+  }
+  if (message.senderId !== otherMemberId) {
+    throw Object.assign(new Error(`Message ${messageId} was not sent by the other participant`), { statusCode: 400 })
+  }
+  if (messageId <= lastRepairMessageId) {
+    throw Object.assign(new Error(`Message ${messageId} does not follow the repair`), { statusCode: 400 })
+  }
+  if (message.type !== 0 || message.content === '') {
+    throw Object.assign(new Error(`Message ${messageId} has no readable text`), { statusCode: 400 })
+  }
+  return toEvidence(message, 'subsequent')
+}
+
+function requireRepairLabels(details: CreateIntimacyEventDetails): RepairLabel[] {
+  const labels = (details as CreateRepairAttemptDetails).repairLabels
+  if (!Array.isArray(labels) || labels.length === 0) {
+    throw Object.assign(new Error('A confirmed repair attempt needs how the repair was made'), { statusCode: 400 })
+  }
+  return requireLabels(labels, REPAIR_LABELS, 'repair labels')
+}
+
+/**
+ * What followed a confirmed repair. Picking no message at all means the chat shows no follow-up, whatever the
+ * request says about it; a follow-up the user did pick has to be read as one of the four things it can show.
+ */
+function resolveConfirmedSubsequent(
+  details: CreateIntimacyEventDetails,
+  subsequentCount: number
+): SubsequentObservation {
+  if (subsequentCount === 0) return 'no_visible_follow_up'
+  const observation = (details as CreateRepairAttemptDetails).subsequentObservation
+  if (
+    observation === undefined ||
+    observation === 'no_visible_follow_up' ||
+    !SUBSEQUENT_OBSERVATIONS.includes(observation)
+  ) {
+    throw Object.assign(new Error('A confirmed follow-up needs to say what it showed'), { statusCode: 400 })
+  }
+  return observation
+}
+
+/**
+ * A revision may correct how a repair was made and what followed it, but only within what the event cites: an
+ * event with no follow-up evidence cannot be told that the other participant accepted, argued on, or refused.
+ */
+function requireRepairReviewDetails(event: IntimacyEvent, details: IntimacyReviewDetails): RepairReviewDetails {
+  const revised = details as RepairReviewDetails
+  const result: RepairReviewDetails = {}
+  if (revised.repairLabels !== undefined) {
+    result.repairLabels = requireLabels(revised.repairLabels, REPAIR_LABELS, 'repair labels')
+  }
+  if (revised.subsequentObservation !== undefined) {
+    if (!SUBSEQUENT_OBSERVATIONS.includes(revised.subsequentObservation)) {
+      throw Object.assign(new Error(`Invalid follow-up observation: ${String(revised.subsequentObservation)}`), {
+        statusCode: 400,
+      })
+    }
+    const cited = event.evidence.some((evidence) => evidence.role === 'subsequent')
+    const readsAFollowUp =
+      revised.subsequentObservation !== 'no_visible_follow_up' && revised.subsequentObservation !== 'uncertain'
+    if (!cited && readsAFollowUp) {
+      throw Object.assign(new Error('A follow-up nobody cited cannot be read as one'), { statusCode: 400 })
+    }
+    result.subsequentObservation = revised.subsequentObservation
+  }
+  return result
+}
+
 function requireFollowUpMatter(details: CreateIntimacyEventDetails): string {
   const matter = (details as CreateFollowUpDetails).matter
   if (typeof matter !== 'string' || matter.trim() === '') {
@@ -1849,9 +2007,7 @@ function toReviewDetails(record: IntimacyEventRecord): IntimacyReviewDetails {
 function requireRevisableDetails(event: IntimacyEvent, details: IntimacyReviewDetails): IntimacyReviewDetails {
   if (event.details.kind === 'sharing') return requirePartialSharingDetails(details)
   if (event.details.kind === 'shared_plan') return requireSharedPlanReviewDetails(details)
-  if (event.details.kind === 'repair_attempt') {
-    throw Object.assign(new Error('Repair attempts are not implemented yet'), { statusCode: 400 })
-  }
+  if (event.details.kind === 'repair_attempt') return requireRepairReviewDetails(event, details)
   if (event.details.kind === 'follow_up') {
     throw Object.assign(new Error('A follow-up revision needs the earlier messages it asks about'), {
       statusCode: 400,
