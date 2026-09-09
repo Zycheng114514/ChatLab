@@ -23,6 +23,7 @@
     "@openchatlab/parser": "workspace:*",
     "@openchatlab/shared-types": "workspace:*",
     "better-sqlite3": "^12.4.6",
+    "chinese-conv": "^4.0.0",
     "gray-matter": "^4.0.3",
     "js-tiktoken": "^1.0.21",
     "onnxruntime-common": "1.24.3",

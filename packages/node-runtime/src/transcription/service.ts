@@ -23,6 +23,7 @@ import {
   type TranscriptionLanguage,
 } from '@openchatlab/core'
 import { appLogger } from '../logging/app-logger'
+import { normalizeChineseScript, resolveChineseScript, type ChineseScriptSetting } from './chinese-script'
 import { resolveAttachmentFile } from '../services/attachment-service'
 import {
   configureTransformersEnv,
@@ -206,6 +207,8 @@ export interface TranscribeSessionAttachmentsOptions {
   sessionId: string
   attachmentIds?: readonly number[]
   language?: TranscriptionLanguage
+  /** Which script Chinese transcripts are stored in; `auto` reads it off the session. */
+  chineseScript?: ChineseScriptSetting
   onProgress?: (progress: TranscriptionProgress) => void
 }
 
@@ -258,6 +261,9 @@ export async function transcribeSessionAttachments(
   // Resolve `auto` once per run: the answer is the same for every attachment in
   // the session, and Whisper must never be handed `auto`.
   const language = resolveTranscriptionLanguage(db, options.language ?? 'auto')
+  // Only Chinese output has a script to pick, and it is the same for the whole
+  // session, so resolve it once next to the language.
+  const chineseScript = language === 'zh' ? resolveChineseScript(db, options.chineseScript ?? 'auto') : null
   const { pending, skipped } = planSessionTranscription(db, options.attachmentIds)
   const failed: TranscriptionFailure[] = []
   let transcribed = 0
@@ -266,6 +272,7 @@ export async function transcribeSessionAttachments(
     sessionId,
     model: transcriber.modelId,
     language,
+    chineseScript,
     pending: pending.length,
     skipped: skipped.length,
   })
@@ -279,7 +286,7 @@ export async function transcribeSessionAttachments(
       const { text } = await transcriber.transcribePcm(pcm, { language })
       applyTranscript(db, {
         attachmentId: candidate.attachmentId,
-        text,
+        text: chineseScript ? normalizeChineseScript(text, chineseScript) : text,
         model: transcriber.modelId,
         now: Date.now(),
       })
@@ -340,6 +347,8 @@ export interface TranscribeAttachmentPcmOptions {
   /** Mono 16 kHz samples; the browser runtimes decode with Web Audio. */
   pcm16k: Float32Array
   language?: TranscriptionLanguage
+  /** Which script a Chinese transcript is stored in; `auto` reads it off the session. */
+  chineseScript?: ChineseScriptSetting
 }
 
 export interface TranscribeAttachmentPcmResult {
@@ -382,7 +391,11 @@ export async function transcribeAttachmentPcm(
   }
 
   const language = resolveTranscriptionLanguage(db, options.language ?? 'auto')
-  const { text } = await transcriber.transcribePcm(pcm16k, { language })
+  const raw = await transcriber.transcribePcm(pcm16k, { language })
+  const text =
+    language === 'zh'
+      ? normalizeChineseScript(raw.text, resolveChineseScript(db, options.chineseScript ?? 'auto'))
+      : raw.text
   const { contentUpdated } = applyTranscript(db, {
     attachmentId,
     text,

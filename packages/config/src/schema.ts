@@ -56,6 +56,12 @@ export const transcriptionConfigSchema = z.object({
   model: z.enum(['tiny', 'base', 'small']).default('base'),
   /** `auto` picks zh or en from the session's own messages. */
   language: z.enum(['auto', 'zh', 'en']).default('auto'),
+  /**
+   * Which Chinese script transcripts are stored in; `auto` follows the script
+   * the session is already written in (Whisper's Chinese output is traditional
+   * regardless of what the chat uses).
+   */
+  chinese_script: z.enum(['auto', 'simplified', 'traditional']).default('auto'),
 })
 
 export const configSchema = z.object({

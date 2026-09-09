@@ -413,6 +413,9 @@ importers:
       better-sqlite3:
         specifier: ^12.4.6
         version: 12.6.2
+      chinese-conv:
+        specifier: ^4.0.0
+        version: 4.0.0
       gray-matter:
         specifier: ^4.0.3
         version: 4.0.3
@@ -3830,6 +3833,10 @@ packages:
 
   chardet@2.2.0:
     resolution: {integrity: sha512-rddelWYNPRrXq6PtNEN2S3f6t9ILzvqaN5pVgi4kqt9jHQaXIial9PznB5iSPVlQSLNaaH22ItWz3EJtQ10+OA==}
+
+  chinese-conv@4.0.0:
+    resolution: {integrity: sha512-PVBMzvv6CtX1cubaDXfxYscIdbOAHPuY/E2vnfJIzOACX+xIW4NRKRlNsZVI2p5KxGsXyUp7tVHfvQlqZ4yx/w==}
+    engines: {node: ^20.19.0 || >=22.12.0}
 
   chokidar@4.0.3:
     resolution: {integrity: sha512-Qgzu8kfBvo+cA4962jnP1KkS6Dop5NS6g7R5LFYJr4b8Ub94PPQXUksCw9PvXoeXPRRddRNC5C1JQUR2SMGtnA==}
@@ -10610,6 +10617,8 @@ snapshots:
   character-entities-legacy@3.0.0: {}
 
   chardet@2.2.0: {}
+
+  chinese-conv@4.0.0: {}
 
   chokidar@4.0.3:
     dependencies:

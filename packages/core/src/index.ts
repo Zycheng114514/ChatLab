@@ -153,6 +153,7 @@ export {
   listPendingAudioAttachments,
   detectSessionLanguage,
   resolveTranscriptionLanguage,
+  sampleRecentTextMessages,
 } from './query'
 
 // 查询类型

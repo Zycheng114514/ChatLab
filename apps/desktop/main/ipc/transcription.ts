@@ -96,7 +96,7 @@ function toAttachmentId(attachmentId: number): number {
 export function registerTranscriptionHandlers(): void {
   ipcMain.handle('transcription:getConfig', () => getTranscriptionSettings())
 
-  ipcMain.handle('transcription:setConfig', (_, patch: { model?: string; language?: string }) =>
+  ipcMain.handle('transcription:setConfig', (_, patch: { model?: string; language?: string; chineseScript?: string }) =>
     updateTranscriptionSettings(patch ?? {})
   )
 

@@ -15,9 +15,11 @@ import {
   createLocalEmbeddingRuntimeManager,
   createTranscriber,
   planSessionTranscription,
+  resolveChineseScript,
   resolveTranscriptionModelCacheDir,
   transcribeSessionAttachments,
   TRANSCRIPTION_PROFILE_IDS,
+  type ChineseScriptSetting,
   type TranscriptionLanguage,
   type TranscriptionProfileId,
   type TranscriptionSkip,
@@ -27,6 +29,7 @@ import { initRuntime } from '../runtime'
 import { resolveCliLocalEmbeddingRuntimeConfig } from '../semantic-index/local-runtime'
 
 const LANGUAGES: TranscriptionLanguage[] = ['auto', 'zh', 'en']
+const CHINESE_SCRIPTS: ChineseScriptSetting[] = ['auto', 'simplified', 'traditional']
 
 const SKIP_REASON_TEXT: Record<TranscriptionSkip['reason'], string> = {
   'unreadable-path': 'file is remote or outside the imported directory',
@@ -37,6 +40,7 @@ interface TranscribeCommandOptions {
   session: string
   model?: string
   language?: string
+  chineseScript?: string
   attachment?: string[]
   dryRun?: boolean
 }
@@ -50,6 +54,10 @@ export function registerTranscribeCommand(program: Command): void {
     .option(
       `--language <${LANGUAGES.join('|')}>`,
       'Spoken language; auto reads it off the session (default: [transcription] language)'
+    )
+    .option(
+      `--chinese-script <${CHINESE_SCRIPTS.join('|')}>`,
+      'Script for Chinese transcripts; auto reads it off the session (default: [transcription] chinese_script)'
     )
     .option('--attachment <id...>', 'Restrict the run to these attachment IDs')
     .option('--dry-run', 'List what would be transcribed and why the rest is skipped')
@@ -68,6 +76,7 @@ async function runTranscribe(options: TranscribeCommandOptions): Promise<void> {
   const configured = loadConfig().transcription
   const profile = parseProfile(options.model ?? configured.model)
   const language = parseLanguage(options.language ?? configured.language)
+  const chineseScript = parseChineseScript(options.chineseScript ?? configured.chinese_script)
   const attachmentIds = parseAttachmentIds(options.attachment)
 
   const { pathProvider, dbManager } = initRuntime()
@@ -76,8 +85,10 @@ async function runTranscribe(options: TranscribeCommandOptions): Promise<void> {
     const db = dbManager.openWritable(options.session)
     if (!db) throw new Error(`Session ${options.session} not found`)
 
-    // Resolve `auto` here so the summary line names the language Whisper is told.
+    // Resolve `auto` here so the summary line names the language Whisper is told
+    // and the script the transcripts are stored in.
     const resolvedLanguage = resolveTranscriptionLanguage(db, language)
+    const resolvedScript = resolvedLanguage === 'zh' ? resolveChineseScript(db, chineseScript) : null
     const plan = planSessionTranscription(db, attachmentIds)
     printSkipped(plan.skipped)
 
@@ -104,7 +115,10 @@ async function runTranscribe(options: TranscribeCommandOptions): Promise<void> {
       profile,
     })
 
-    console.log(`Transcribing ${plan.pending.length} attachment(s) with ${transcriber.modelId} (${resolvedLanguage})`)
+    const scriptNote = resolvedScript ? `, ${resolvedScript}` : ''
+    console.log(
+      `Transcribing ${plan.pending.length} attachment(s) with ${transcriber.modelId} (${resolvedLanguage}${scriptNote})`
+    )
     try {
       const result = await transcribeSessionAttachments({
         db,
@@ -112,6 +126,7 @@ async function runTranscribe(options: TranscribeCommandOptions): Promise<void> {
         sessionId: options.session,
         attachmentIds,
         language: resolvedLanguage,
+        chineseScript,
         // stderr: stdout stays a clean summary for agent/script consumers.
         onProgress: (progress) =>
           console.error(`  [${progress.completed}/${progress.total}] #${progress.attachmentId} ${progress.status}`),
@@ -136,16 +151,22 @@ function printSkipped(skipped: TranscriptionSkip[]): void {
   }
 }
 
-function parseProfile(value: string): TranscriptionProfileId {
+export function parseProfile(value: string): TranscriptionProfileId {
   const profile = TRANSCRIPTION_PROFILE_IDS.find((id) => id === value)
   if (!profile) throw new Error(`Unknown model: ${value}. Use one of ${TRANSCRIPTION_PROFILE_IDS.join(', ')}.`)
   return profile
 }
 
-function parseLanguage(value: string): TranscriptionLanguage {
+export function parseLanguage(value: string): TranscriptionLanguage {
   const language = LANGUAGES.find((id) => id === value)
   if (!language) throw new Error(`Unknown language: ${value}. Use one of ${LANGUAGES.join(', ')}.`)
   return language
+}
+
+export function parseChineseScript(value: string): ChineseScriptSetting {
+  const script = CHINESE_SCRIPTS.find((id) => id === value)
+  if (!script) throw new Error(`Unknown Chinese script: ${value}. Use one of ${CHINESE_SCRIPTS.join(', ')}.`)
+  return script
 }
 
 function parseAttachmentIds(values?: string[]): number[] | undefined {

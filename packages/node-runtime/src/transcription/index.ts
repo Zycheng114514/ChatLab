@@ -10,6 +10,8 @@ export type { DecodedAudio, UnsupportedAudioFormatCode } from './wav'
 export { findAudioDecoder, registerAudioDecoder, wavDecoder } from './decoders'
 export type { AudioDecoder, AudioDecoderInput } from './decoders'
 export { resampleToMono16k, WHISPER_SAMPLE_RATE } from './resample'
+export { detectSessionChineseScript, normalizeChineseScript, resolveChineseScript } from './chinese-script'
+export type { ChineseScript, ChineseScriptSetting } from './chinese-script'
 export {
   DEFAULT_TRANSCRIPTION_PROFILE_ID,
   getTranscriptionProfile,
