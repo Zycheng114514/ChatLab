@@ -133,6 +133,11 @@ async function start() {
       modelLoaded.value = true
       item.state = 'done'
     } catch (error) {
+      if (activeRun !== token) {
+        // 这一轮被取消，正在解码的这条退回待处理，下次「继续转写」再做。
+        item.state = 'pending'
+        break
+      }
       if (error instanceof UnsupportedAudioError) item.state = 'unsupported'
       else if (error instanceof AudioTooLongError) item.state = 'tooLong'
       else {
@@ -156,17 +161,16 @@ function stopRun() {
   controller = null
 }
 
-function close() {
-  stopRun()
-  if (doneCount.value > 0) emit('transcribed')
-  open.value = false
-}
-
 watch(
   () => props.modelValue,
   (visible) => {
-    if (visible) load()
-    else stopRun()
+    if (visible) {
+      load()
+      return
+    }
+    stopRun()
+    // Esc、遮罩、右上角关闭和「关闭」按钮走的是同一条路径，任何一种关法都要刷新会话。
+    if (doneCount.value > 0) emit('transcribed')
   }
 )
 
@@ -192,7 +196,7 @@ onUnmounted(stopRun)
         <template v-else-if="queue.length === 0">
           <p class="text-sm text-gray-600 dark:text-gray-400">{{ t(`${k}.empty`) }}</p>
           <div class="flex justify-end">
-            <UButton variant="ghost" @click="close">{{ t('common.close') }}</UButton>
+            <UButton variant="ghost" @click="open = false">{{ t('common.close') }}</UButton>
           </div>
         </template>
 
@@ -265,7 +269,7 @@ onUnmounted(stopRun)
               {{ t('common.cancel') }}
             </UButton>
             <template v-else>
-              <UButton variant="ghost" @click="close">{{ t('common.close') }}</UButton>
+              <UButton variant="ghost" @click="open = false">{{ t('common.close') }}</UButton>
               <UButton color="primary" :disabled="finishedCount >= queue.length" @click="start">
                 {{ hasResults ? t(`${k}.startRemaining`) : t(`${k}.start`) }}
               </UButton>

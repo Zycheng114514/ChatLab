@@ -5,7 +5,7 @@
  * 只有两项：Whisper 档位与默认语言。两项都是转写时的默认值，会话页的弹窗里
  * 还能临时换语言。转写只在桌面 / CLI Web 上有后端，Web WASM 不渲染这个区块。
  */
-import { onMounted, ref } from 'vue'
+import { computed, onMounted, ref } from 'vue'
 import { useI18n } from 'vue-i18n'
 import UITabs from '@/components/UI/Tabs.vue'
 import { useTranscriptionService } from '@/services'
@@ -21,10 +21,9 @@ const saving = ref(false)
 const error = ref<string | null>(null)
 
 const modelItems = (['tiny', 'base', 'small'] as const).map((value) => ({ value, label: value }))
-const languageItems = (['auto', 'zh', 'en'] as const).map((value) => ({
-  value,
-  label: t(`common.transcriptionLanguage.${value}`),
-}))
+const languageItems = computed(() =>
+  (['auto', 'zh', 'en'] as const).map((value) => ({ value, label: t(`common.transcriptionLanguage.${value}`) }))
+)
 
 async function save(patch: Partial<TranscriptionSettings>) {
   if (!service) return
