@@ -411,6 +411,8 @@
       "empty": "没有检索到候选消息。",
       "selectHint": "先点一条要计入的消息，再勾选同一个人在这条检索结果里的其他消息。",
       "sameGroupOnly": "只能选同一个人、同一条检索结果里的消息。",
+      "showNearby": "展开附近消息",
+      "hideNearby": "收起附近消息",
       "selected": "已选 {count} 条",
       "clearSelection": "清除选择",
       "categories": "类别（可多选）",

@@ -411,6 +411,8 @@
       "empty": "No candidate messages found.",
       "selectHint": "Pick the message to count first, then tick the other messages from the same person in that result.",
       "sameGroupOnly": "You can only pick messages from the same person within the same result.",
+      "showNearby": "Show nearby messages",
+      "hideNearby": "Hide nearby messages",
       "selected": "{count} selected",
       "clearSelection": "Clear selection",
       "categories": "Categories (pick one or more)",

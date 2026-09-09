@@ -8,11 +8,13 @@ import { useToast } from '@/composables/useToast'
 import { getMessageTypeName } from '@/types/base'
 import {
   useIntimacyService,
+  useMessageService,
   type CreateIntimacyEventRequest,
   type GoodNewsResponseLabel,
   type IntimacyCandidates,
   type IntimacyKind,
   type IntimacyMessageSnippet,
+  type MessageRecord,
   type SharedPlanStage,
   type SharingCategory,
   type SharingTopic,
@@ -66,6 +68,13 @@ const query = ref('')
 const candidates = ref<IntimacyCandidates | null>(null)
 const searching = ref(false)
 const submitting = ref(false)
+/**
+ * 关键词命中周围的消息，按命中消息的 id 存。回复、先前的提及和安排的后续阶段往往不含关键词，
+ * 展开后它们和命中那条同属一条检索结果，才能被选进同一个事件。
+ */
+const NEARBY_MESSAGE_COUNT = 8
+const nearby = ref(new Map<number, IntimacyMessageSnippet[]>())
+const nearbyLoading = ref<number | null>(null)
 
 /**
  * 选中的核心消息必须来自同一个人、同一条检索结果；回复是另一方在同一条结果里、锚点之后的消息，
@@ -107,6 +116,9 @@ const snippetById = computed(() => {
   for (const message of candidates.value?.keyword ?? []) map.set(message.messageId, message)
   for (const chunk of candidates.value?.semantic ?? []) {
     for (const message of chunk.messages) map.set(message.messageId, message)
+  }
+  for (const rows of nearby.value.values()) {
+    for (const message of rows) map.set(message.messageId, message)
   }
   return map
 })
@@ -165,11 +177,54 @@ async function search() {
       startTs: props.timeFilter?.startTs,
       endTs: props.timeFilter?.endTs,
     })
+    nearby.value = new Map()
     resetSelection()
   } catch (error) {
     toast.fail(t('views.intimacy.candidates.searchFailed'), { description: errorMessage(error) })
   } finally {
     searching.value = false
+  }
+}
+
+/** A keyword hit on its own, or the hit inside the messages around it once they have been loaded. */
+function keywordRows(message: IntimacyMessageSnippet): IntimacyMessageSnippet[] {
+  const rows = nearby.value.get(message.messageId)
+  if (!rows) return [message]
+  return [...rows, message].sort((left, right) => left.messageId - right.messageId)
+}
+
+async function toggleNearby(message: IntimacyMessageSnippet) {
+  if (nearby.value.has(message.messageId)) {
+    const next = new Map(nearby.value)
+    next.delete(message.messageId)
+    nearby.value = next
+    return
+  }
+  nearbyLoading.value = message.messageId
+  try {
+    const records = await useMessageService().getMessageContext(
+      props.sessionId,
+      message.messageId,
+      NEARBY_MESSAGE_COUNT
+    )
+    const next = new Map(nearby.value)
+    next.set(message.messageId, records.filter((record) => record.id !== message.messageId).map(toSnippet))
+    nearby.value = next
+  } catch (error) {
+    toast.fail(t('views.intimacy.candidates.searchFailed'), { description: errorMessage(error) })
+  } finally {
+    nearbyLoading.value = null
+  }
+}
+
+function toSnippet(record: MessageRecord): IntimacyMessageSnippet {
+  return {
+    messageId: record.id,
+    senderId: record.senderId,
+    senderName: record.senderName,
+    timestamp: record.timestamp,
+    type: record.type,
+    content: record.type === 0 ? record.content : '',
   }
 }
 
@@ -434,32 +489,58 @@ function errorMessage(error: unknown): string {
             {{ t('views.intimacy.candidates.empty') }}
           </p>
           <ul v-else class="space-y-1">
-            <li v-for="message in candidates.keyword" :key="message.messageId">
-              <button
-                type="button"
-                class="w-full rounded-lg border px-2.5 py-1.5 text-left transition-colors"
-                :disabled="!canPick('keyword', message)"
-                :class="[
-                  isCoreSelected('keyword', message.messageId)
-                    ? 'border-pink-400 bg-pink-50/60 dark:border-pink-700 dark:bg-pink-950/20'
-                    : isSecondarySelected('keyword', message.messageId)
-                      ? 'border-blue-400 bg-blue-50/60 dark:border-blue-700 dark:bg-blue-950/20'
-                      : 'border-gray-200 hover:bg-gray-50 dark:border-gray-700 dark:hover:bg-gray-800/50',
-                  canPick('keyword', message) ? '' : 'cursor-not-allowed opacity-50',
-                ]"
-                @click="toggleMessage('keyword', message)"
+            <li
+              v-for="message in candidates.keyword"
+              :key="message.messageId"
+              :class="
+                nearby.has(message.messageId) ? 'rounded-lg border border-gray-200 p-1.5 dark:border-gray-700' : ''
+              "
+            >
+              <ul class="space-y-1">
+                <li v-for="row in keywordRows(message)" :key="row.messageId">
+                  <button
+                    type="button"
+                    class="w-full rounded-lg border px-2.5 py-1.5 text-left transition-colors"
+                    :disabled="!canPick('keyword', row)"
+                    :class="[
+                      isCoreSelected('keyword', row.messageId)
+                        ? 'border-pink-400 bg-pink-50/60 dark:border-pink-700 dark:bg-pink-950/20'
+                        : isSecondarySelected('keyword', row.messageId)
+                          ? 'border-blue-400 bg-blue-50/60 dark:border-blue-700 dark:bg-blue-950/20'
+                          : 'border-gray-200 hover:bg-gray-50 dark:border-gray-700 dark:hover:bg-gray-800/50',
+                      canPick('keyword', row) ? '' : 'cursor-not-allowed opacity-50',
+                    ]"
+                    @click="toggleMessage('keyword', row)"
+                  >
+                    <span class="flex items-center gap-1.5 text-[10px] text-gray-400">
+                      <span class="truncate">{{ row.senderName }}</span>
+                      <span class="tabular-nums">{{ formatTime(row.timestamp) }}</span>
+                      <span v-if="isSecondarySelected('keyword', row.messageId)" class="text-blue-500">
+                        {{ secondaryTag(row.messageId) }}
+                      </span>
+                    </span>
+                    <span class="mt-0.5 block text-xs leading-relaxed text-gray-700 dark:text-gray-200">
+                      {{ messageText(row) }}
+                    </span>
+                  </button>
+                </li>
+              </ul>
+              <UButton
+                size="xs"
+                color="neutral"
+                variant="ghost"
+                class="mt-0.5"
+                :loading="nearbyLoading === message.messageId"
+                @click="toggleNearby(message)"
               >
-                <span class="flex items-center gap-1.5 text-[10px] text-gray-400">
-                  <span class="truncate">{{ message.senderName }}</span>
-                  <span class="tabular-nums">{{ formatTime(message.timestamp) }}</span>
-                  <span v-if="isSecondarySelected('keyword', message.messageId)" class="text-blue-500">
-                    {{ secondaryTag(message.messageId) }}
-                  </span>
-                </span>
-                <span class="mt-0.5 block text-xs leading-relaxed text-gray-700 dark:text-gray-200">
-                  {{ messageText(message) }}
-                </span>
-              </button>
+                {{
+                  t(
+                    nearby.has(message.messageId)
+                      ? 'views.intimacy.candidates.hideNearby'
+                      : 'views.intimacy.candidates.showNearby'
+                  )
+                }}
+              </UButton>
             </li>
           </ul>
         </section>

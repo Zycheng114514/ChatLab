@@ -411,6 +411,8 @@
       "empty": "沒有檢索到候選訊息。",
       "selectHint": "先點一則要計入的訊息，再勾選同一個人在這筆檢索結果裡的其他訊息。",
       "sameGroupOnly": "只能選同一個人、同一筆檢索結果裡的訊息。",
+      "showNearby": "展開附近訊息",
+      "hideNearby": "收起附近訊息",
       "selected": "已選 {count} 則",
       "clearSelection": "清除選擇",
       "categories": "類別（可多選）",
