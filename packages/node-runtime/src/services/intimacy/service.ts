@@ -33,6 +33,7 @@ import {
   type IntimacyRun,
   type ResponseObservation,
   type ReviewIntimacyEventRequest,
+  type SharedPlanDetails,
   type SharingDetails,
   type StartIntimacyRunRequest,
   type SupportResponseDetails,
@@ -51,6 +52,7 @@ import {
   applyReviewDetails,
   buildIntimacyEvents,
   findSharingEventCovering,
+  mergeSharedPlanEvents,
   resolveEventStatus,
   summarizeFollowUps,
   summarizeResponses,
@@ -62,9 +64,8 @@ import {
   collectFollowUpCandidates,
   parseFollowUpMatch,
   resolveFollowUpInitiation,
-  type FollowUpMatch,
-  type FollowUpMatchPromptInput,
 } from './follow-up-matcher'
+import { buildSharedPlanMatchPrompt, collectSharedPlanCandidates, parseSharedPlanMatch } from './shared-plan-matcher'
 import {
   GOOD_NEWS_RESPONSE_LABELS,
   INTIMACY_ALGORITHM_VERSION,
@@ -142,8 +143,8 @@ const INTIMACY_SEMANTIC_CANDIDATE_LIMIT = 10
 const INTIMACY_SEMANTIC_BLOCK_MESSAGE_LIMIT = 40
 /** The matter of a confirmed follow-up question is a list title, like the one the model writes. */
 const INTIMACY_FOLLOW_UP_MATTER_CHARS = 60
-/** How many follow-up questions of one window may be paired by a model call; the rest wait for the user. */
-const INTIMACY_FOLLOW_UP_MATCH_CALLS_PER_WINDOW = 10
+/** How many events of one window may be placed across windows by a model call; the rest stay on their own. */
+const INTIMACY_ASSOCIATION_CALLS_PER_WINDOW = 10
 const INTIMACY_WINDOW_INVALID = 'INTIMACY_WINDOW_INVALID'
 const INTIMACY_EXECUTION_LEASE_LOST = 'INTIMACY_EXECUTION_LEASE_LOST'
 // Version to publish this store with. The release workflow bumps package metadata later, so the guard below keeps
@@ -879,9 +880,13 @@ export function createIntimacyService(deps: IntimacyServiceDeps): IntimacyServic
       const startWindow = Math.min(run.completedWindows, source.windows.length)
       const committedEvents: IntimacyEventRecord[] = startWindow === 0 ? [] : store.listEvents(run.sessionId, run.id)
       let previousWindowEvents: IntimacyEventRecord[] = committedEvents
-      // The matter a follow-up asks about is looked for among the sharings this run has already coded.
+      // The matter a follow-up asks about, and the arrangement a later stage belongs to, are looked for among
+      // the events this run has already coded.
       const codedSharings = new Map<string, IntimacyEventRecord>(
         committedEvents.filter((event) => event.kind === 'sharing').map((event) => [event.id, event])
+      )
+      const codedPlans = new Map<string, IntimacyEventRecord>(
+        committedEvents.filter((event) => event.kind === 'shared_plan').map((event) => [event.id, event])
       )
       const chatStartTs = getSessionOverview(deps.runtime.ensureReadonly(run.sessionId)).firstMessageTs ?? 0
       const semanticAvailable = await canSearchSemantically(run.sessionId)
@@ -932,7 +937,9 @@ export function createIntimacyService(deps: IntimacyServiceDeps): IntimacyServic
           previousWindowEvents = []
           continue
         }
-        // Stage B runs before the window is committed, so a question and the pairing it got are stored together.
+        // The association calls run before the window is committed, so an event and the place it was given are
+        // stored together, and one window may only spend so many of them whichever kind asks for them.
+        const budget = { calls: 0 }
         const paired = await resolveFollowUpPairings(execution, modelClient, run, events, {
           window,
           members: source.members,
@@ -941,12 +948,23 @@ export function createIntimacyService(deps: IntimacyServiceDeps): IntimacyServic
           semanticAvailable,
           timezone: run.timezone,
           preprocess,
+          budget,
         })
-        run = paired.run
-        store.insertWindowEvents(run.sessionId, run.id, paired.events, executionLeaseGuard())
-        previousWindowEvents = paired.events
-        for (const event of paired.events) {
+        const associated = await resolveSharedPlanAssociations(execution, modelClient, paired.run, paired.events, {
+          window,
+          members: source.members,
+          codedPlans: [...codedPlans.values()],
+          chatStartTs,
+          timezone: run.timezone,
+          preprocess,
+          budget,
+        })
+        run = associated.run
+        store.insertWindowEvents(run.sessionId, run.id, associated.events, executionLeaseGuard())
+        previousWindowEvents = associated.events
+        for (const event of associated.events) {
           if (event.kind === 'sharing') codedSharings.set(event.id, event)
+          if (event.kind === 'shared_plan') codedPlans.set(event.id, event)
         }
         run = updateRun(run, { completedWindows: index + 1, currentWindowIndex: null })
       }
@@ -993,6 +1011,8 @@ export function createIntimacyService(deps: IntimacyServiceDeps): IntimacyServic
       semanticAvailable: boolean
       timezone: string
       preprocess?: IntimacyPreprocessOptions
+      /** Association calls this window has already spent, shared with the other kinds that make them. */
+      budget: { calls: number }
     }
   ): Promise<{ run: IntimacyRun; events: IntimacyEventRecord[] }> {
     let run = initialRun
@@ -1001,7 +1021,6 @@ export function createIntimacyService(deps: IntimacyServiceDeps): IntimacyServic
     const knownEvents = [...context.codedSharings, ...events]
     const windowMessages = new Map(context.window.messages.map((message) => [message.id, message]))
     const resolved: IntimacyEventRecord[] = []
-    let matchCalls = 0
 
     for (const event of events) {
       if (event.kind !== 'follow_up' || event.details.kind !== 'follow_up') {
@@ -1015,7 +1034,7 @@ export function createIntimacyService(deps: IntimacyServiceDeps): IntimacyServic
       let matchConfidence: FollowUpMatchConfidence = prior.length > 0 ? 'supported' : 'uncertain'
       let candidateMessageIds: number[] = []
 
-      if (prior.length === 0 && matchCalls < INTIMACY_FOLLOW_UP_MATCH_CALLS_PER_WINDOW) {
+      if (prior.length === 0 && context.budget.calls < INTIMACY_ASSOCIATION_CALLS_PER_WINDOW) {
         const collected = await collectFollowUpCandidates({
           db,
           sessionId: run.sessionId,
@@ -1033,15 +1052,17 @@ export function createIntimacyService(deps: IntimacyServiceDeps): IntimacyServic
         })
         candidateMessageIds = collected.candidates.map((candidate) => candidate.id)
         if (collected.candidates.length > 0) {
-          matchCalls += 1
+          context.budget.calls += 1
           const question = event.evidence
             .filter((evidence) => evidence.role === 'core')
             .flatMap((evidence) => {
               const message = windowMessages.get(evidence.messageId)
               return message ? [message] : []
             })
-          const matched = await matchFollowUp(run, modelClient, execution, {
-            prompt: {
+          const matched = await runAssociationCall(run, modelClient, execution, {
+            kind: 'follow-up',
+            anchorMessageId: event.anchorMessageId,
+            prompts: buildFollowUpMatchPrompt({
               members: context.members,
               question,
               matter: details.matter,
@@ -1049,8 +1070,13 @@ export function createIntimacyService(deps: IntimacyServiceDeps): IntimacyServic
               askedMemberId,
               timezone: context.timezone,
               preprocess: context.preprocess,
-            },
-            anchorMessageId: event.anchorMessageId,
+            }),
+            validate: (text) =>
+              parseFollowUpMatch(text, {
+                candidates: collected.candidates,
+                askedMemberId,
+                anchorMessageId: event.anchorMessageId,
+              }),
           })
           run = matched.run
           if (matched.value && matched.value.priorMessageIds.length > 0) {
@@ -1091,33 +1117,115 @@ export function createIntimacyService(deps: IntimacyServiceDeps): IntimacyServic
     return { run, events: resolved }
   }
 
-  /** One matching call. An unreadable answer costs the pairing, never the window it belongs to. */
-  async function matchFollowUp(
+  /**
+   * Stage B of the shared plan coding. A window that shows a stage of an arrangement without its proposal — a
+   * rescheduling, a cancellation, a look back at it — is offered the arrangements this run coded within the
+   * lookback, and one model call may place it in one of them. A stage that finds none stays an arrangement of its
+   * own, marked as not covering its earlier proposal, instead of being guessed onto a plan or dropped.
+   */
+  async function resolveSharedPlanAssociations(
+    execution: ActiveExecution,
+    modelClient: ChatTopicModelClient,
+    initialRun: IntimacyRun,
+    events: IntimacyEventRecord[],
+    context: {
+      window: IntimacyWindow
+      members: [IntimacyMember, IntimacyMember]
+      codedPlans: IntimacyEventRecord[]
+      chatStartTs: number
+      timezone: string
+      preprocess?: IntimacyPreprocessOptions
+      budget: { calls: number }
+    }
+  ): Promise<{ run: IntimacyRun; events: IntimacyEventRecord[] }> {
+    let run = initialRun
+    const open = events.filter(isPlanWithoutProposal)
+    if (open.length === 0) return { run, events }
+    const db = deps.runtime.ensureReadonly(run.sessionId)
+    const windowMessages = new Map(context.window.messages.map((message) => [message.id, message]))
+    // A plan that took someone else's stages is the version everything after it works from.
+    const merged = new Map<string, IntimacyEventRecord>()
+    const placed = new Set<string>()
+    const currentPlan = (plan: IntimacyEventRecord) => merged.get(plan.id) ?? plan
+
+    for (const event of open) {
+      execution.controller.signal.throwIfAborted()
+      if (placed.has(event.id)) continue
+      const known = new Map<string, IntimacyEventRecord>()
+      for (const plan of [...context.codedPlans, ...events.filter((item) => item.kind === 'shared_plan')]) {
+        if (plan.id === event.id || placed.has(plan.id)) continue
+        known.set(plan.id, currentPlan(plan))
+      }
+      const collected = collectSharedPlanCandidates({
+        db,
+        plans: [...known.values()],
+        stage: { messageId: event.anchorMessageId, timestamp: event.anchorTs },
+        chatStartTs: context.chatStartTs,
+      })
+      if (collected.candidates.length === 0 || context.budget.calls >= INTIMACY_ASSOCIATION_CALLS_PER_WINDOW) continue
+      context.budget.calls += 1
+      const stageMessages = event.evidence.flatMap((evidence) => {
+        const message = windowMessages.get(evidence.messageId)
+        return message ? [message] : []
+      })
+      const matched = await runAssociationCall(run, modelClient, execution, {
+        kind: 'shared-plan',
+        anchorMessageId: event.anchorMessageId,
+        prompts: buildSharedPlanMatchPrompt({
+          members: context.members,
+          activitySummary: event.details.activitySummary,
+          stageMessages,
+          candidates: collected.candidates,
+          timezone: context.timezone,
+          preprocess: context.preprocess,
+        }),
+        validate: (text) => parseSharedPlanMatch(text, collected.candidates),
+      })
+      run = matched.run
+      const planEventId = matched.value?.planEventId ?? null
+      const target = planEventId === null ? undefined : known.get(planEventId)
+      if (!target) continue
+      merged.set(target.id, mergeSharedPlanEvents(target, currentPlan(event)))
+      placed.add(event.id)
+    }
+
+    if (placed.size === 0) return { run, events }
+    const windowEvents = events.filter((event) => !placed.has(event.id)).map(currentPlan)
+    // A plan of an earlier window that took new stages is written again, so the store holds one timeline.
+    const earlier = context.codedPlans
+      .filter((plan) => merged.has(plan.id) && !events.some((event) => event.id === plan.id))
+      .map(currentPlan)
+    return { run, events: [...windowEvents, ...earlier] }
+  }
+
+  /** One association call. An unreadable answer costs the association, never the window it belongs to. */
+  async function runAssociationCall<T>(
     run: IntimacyRun,
     modelClient: ChatTopicModelClient,
     execution: ActiveExecution,
-    input: { prompt: FollowUpMatchPromptInput; anchorMessageId: number }
-  ): Promise<{ run: IntimacyRun; value: FollowUpMatch | null }> {
+    input: {
+      kind: 'follow-up' | 'shared-plan'
+      anchorMessageId: number
+      prompts: { systemPrompt: string; userPrompt: string }
+      validate: (text: string) => T
+    }
+  ): Promise<{ run: IntimacyRun; value: T | null }> {
     try {
       const result = await completeValidated(
         run,
         modelClient,
-        buildFollowUpMatchPrompt(input.prompt),
+        input.prompts,
         execution.controller.signal,
-        (text) =>
-          parseFollowUpMatch(text, {
-            candidates: input.prompt.candidates,
-            askedMemberId: input.prompt.askedMemberId,
-            anchorMessageId: input.anchorMessageId,
-          }),
-        `intimacy:${run.sessionId}:follow-up:${input.anchorMessageId}`
+        input.validate,
+        `intimacy:${run.sessionId}:${input.kind}:${input.anchorMessageId}`
       )
       return { run: result.run, value: result.value }
     } catch (error) {
       if ((error as { code?: string } | null)?.code !== INTIMACY_WINDOW_INVALID) throw error
-      appLogger.warn('intimacy', 'intimacy analysis could not pair a follow-up question', {
+      appLogger.warn('intimacy', 'intimacy analysis could not associate an event across windows', {
         runId: run.id,
         sessionId: run.sessionId,
+        kind: input.kind,
         anchorMessageId: input.anchorMessageId,
       })
       return { run: (error as { run?: IntimacyRun }).run ?? run, value: null }
@@ -1449,6 +1557,16 @@ function requireImplementedKinds(kinds: IntimacyKind[] | undefined): IntimacyKin
     }
   }
   return [...new Set(kinds)]
+}
+
+/**
+ * An arrangement whose proposal this analysis has not seen: the window showed a rescheduling, a cancellation or a
+ * look back at it. It is the only kind of plan the association step has anything to place.
+ */
+function isPlanWithoutProposal(
+  event: IntimacyEventRecord
+): event is IntimacyEventRecord & { details: SharedPlanDetails } {
+  return event.details.kind === 'shared_plan' && event.details.proposerMemberId === null
 }
 
 /** An event of the same kind already built on these messages; the same matter is never counted twice. */

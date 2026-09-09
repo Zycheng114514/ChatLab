@@ -68,5 +68,20 @@ export type {
   FollowUpMatchPromptInput,
   FollowUpMatchScope,
 } from './follow-up-matcher'
+export { buildAssociationPrompt, parseAssociationMatch, toIntimacySourceMessages } from './association'
+export type { AssociationPromptInput } from './association'
+export {
+  INTIMACY_SHARED_PLAN_LOOKBACK_SECONDS,
+  INTIMACY_SHARED_PLAN_MAX_CANDIDATES,
+  buildSharedPlanMatchPrompt,
+  collectSharedPlanCandidates,
+  parseSharedPlanMatch,
+} from './shared-plan-matcher'
+export type {
+  SharedPlanCandidate,
+  SharedPlanCandidateInput,
+  SharedPlanMatch,
+  SharedPlanMatchPromptInput,
+} from './shared-plan-matcher'
 export { createIntimacyService } from './service'
 export type { IntimacyResultRange, IntimacyService, IntimacyServiceDeps } from './service'

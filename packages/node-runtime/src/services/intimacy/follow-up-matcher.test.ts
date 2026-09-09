@@ -199,7 +199,7 @@ test('a match may only cite the earlier messages the server offered', () => {
       }),
     /does not come before the follow-up question/
   )
-  assert.throws(() => parseFollowUpMatch('{"priorMessageIds":[2]}', scope), /Invalid follow-up match/)
+  assert.throws(() => parseFollowUpMatch('{"priorMessageIds":[2]}', scope), /Invalid association match/)
 })
 
 test('who raised the matter in between is read from the chat, and stays unknown when it cannot be', (t) => {
