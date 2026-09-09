@@ -22,7 +22,9 @@ export type { IntimacySource, IntimacySourceEstimate, IntimacySourceMessage, Int
 export {
   INTIMACY_ALGORITHM_VERSION,
   INTIMACY_PROMPT_VERSION,
+  SHARED_PLAN_STAGES,
   buildIntimacyWindowPrompt,
+  checkSharedPlanStageSenders,
   parseIntimacyResponse,
   resolveIntimacyPreprocess,
 } from './model-protocol'
@@ -32,6 +34,8 @@ export type {
   ParsedGoodNewsEvent,
   ParsedIntimacyEvent,
   ParsedResponseGroup,
+  ParsedSharedPlanEvent,
+  ParsedSharedPlanStage,
   ParsedSharingEvent,
 } from './model-protocol'
 export {
@@ -41,12 +45,14 @@ export {
   applyReviewDetails,
   buildIntimacyEvents,
   findSharingEventCovering,
+  mergeSharedPlanEvents,
   resolveEventStatus,
   summarizeFollowUps,
   summarizeResponses,
+  summarizeSharedPlans,
   summarizeSharing,
 } from './events'
-export type { FollowUpPairing } from './events'
+export type { FollowUpPairing, SharedPlanRange } from './events'
 export {
   INTIMACY_FOLLOW_UP_MAX_CANDIDATES,
   buildFollowUpMatchPrompt,

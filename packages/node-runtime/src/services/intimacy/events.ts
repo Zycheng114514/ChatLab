@@ -19,6 +19,7 @@ import type {
   SharedPlanDetails,
   SharedPlanReviewDetails,
   SharedPlanStage,
+  SharedPlanStageRecord,
   SharedPlanSummary,
   SharingCategory,
   SharingDetails,
@@ -31,6 +32,8 @@ import type {
   ParsedGoodNewsEvent,
   ParsedIntimacyEvent,
   ParsedResponseGroup,
+  ParsedSharedPlanEvent,
+  ParsedSharedPlanStage,
   ParsedSharingEvent,
 } from './model-protocol'
 import {
@@ -51,6 +54,7 @@ export const INTIMACY_FOLLOW_UP_MERGE_GAP_SECONDS = 30 * 60
 type SharingEventRecord = IntimacyEventRecord & { details: SharingDetails }
 type SupportEventRecord = IntimacyEventRecord & { details: SupportResponseDetails }
 type GoodNewsEventRecord = IntimacyEventRecord & { details: GoodNewsResponseDetails }
+type SharedPlanEventRecord = IntimacyEventRecord & { details: SharedPlanDetails }
 
 interface WindowBuildContext {
   windowMessages: Map<number, IntimacySourceMessage>
@@ -87,12 +91,21 @@ export function buildIntimacyEvents(
     sharing: new Set(),
     good_news: new Set(),
     follow_up: new Set(),
+    shared_plan: new Set(),
   }
   // Questions about the same matter in one conversation are one event; a later conversation is a new one.
   const followUpConversations = new Map<string, number>()
 
   for (const item of parsed) {
     const coreMessageIds = item.coreMessageIds.filter((messageId) => !usedCoreIds[item.kind].has(messageId))
+    if (item.kind === 'shared_plan') {
+      const built = codeSharedPlan(item, coreMessageIds, members, context)
+      if (!built) continue
+      events.push(built)
+      context.usedAnchors.add(built.id)
+      for (const messageId of coreMessageIds) usedCoreIds.shared_plan.add(messageId)
+      continue
+    }
     if (item.kind === 'follow_up') {
       if (coreMessageIds.length === 0) continue
       const asker = members[item.asker === 'A' ? 0 : 1]
@@ -198,6 +211,171 @@ function codeFollowUp(
     candidateMessageIds: [],
     lookbackStartTs: anchorTs - INTIMACY_FOLLOW_UP_LOOKBACK_SECONDS,
   })
+}
+
+/**
+ * One arrangement as this window shows it. The proposal anchors it; a window that only shows a later stage still
+ * produces an event, anchored on that stage and with no proposer, so the association step can look for the plan it
+ * belongs to instead of the arrangement being lost or attributed to a guess.
+ */
+function codeSharedPlan(
+  item: ParsedSharedPlanEvent,
+  coreMessageIds: number[],
+  members: [IntimacyMember, IntimacyMember],
+  context: WindowBuildContext
+): IntimacyEventRecord | null {
+  const stages = buildStageRecords(item.stages, members, context.windowMessages)
+  if (stages.length === 0) return null
+  const proposerMemberId = coreMessageIds.length === 0 ? null : members[item.proposer === 'A' ? 0 : 1].memberId
+  const anchorMessageId =
+    coreMessageIds.length > 0 ? Math.min(...coreMessageIds) : Math.min(...stages.flatMap((stage) => stage.messageIds))
+  const anchor = context.windowMessages.get(anchorMessageId)
+  if (!anchor) return null
+  const subjectMemberId = proposerMemberId ?? stages[0]!.actorMemberId
+  const built: IntimacyEventRecord = {
+    id: `shared_plan:${anchorMessageId}`,
+    kind: 'shared_plan',
+    subjectMemberId,
+    otherMemberId: members.find((member) => member.memberId !== subjectMemberId)!.memberId,
+    anchorMessageId,
+    anchorTs: anchor.timestamp,
+    evidence: mergeEvidence([
+      ...buildEvidence(coreMessageIds, [], context.windowMessages),
+      ...buildStageEvidence(stages, context.windowMessages),
+    ]),
+    observation: item.observation,
+    origin: 'model',
+    modelDecision: item.confidence === 'clear' ? 'included' : 'uncertain',
+    modelReason: item.reason,
+    details: buildSharedPlanDetails(proposerMemberId, item.activitySummary, stages),
+    createdAt: context.createdAt,
+  }
+  const continued = item.continuesContextEvent
+    ? findContinuedPlan(context, proposerMemberId, item.activitySummary)
+    : null
+  if (!continued || context.usedAnchors.has(continued.id)) {
+    return context.usedAnchors.has(built.id) ? null : built
+  }
+  return mergeSharedPlanEvents(continued, built)
+}
+
+/**
+ * Fold a later view of one arrangement into the event that already holds it, whether it came from the next window
+ * or from the association step. The stages become one timeline and the evidence is unioned, while the identity —
+ * event id, anchor, proposer and activity — stays with the event that started it, so one arrangement counts once.
+ */
+export function mergeSharedPlanEvents(target: IntimacyEventRecord, addition: IntimacyEventRecord): IntimacyEventRecord {
+  if (target.details.kind !== 'shared_plan' || addition.details.kind !== 'shared_plan') return target
+  const proposerMemberId = target.details.proposerMemberId ?? addition.details.proposerMemberId
+  return {
+    ...target,
+    evidence: mergeEvidence([...target.evidence, ...addition.evidence]),
+    // A limited observation from either window survives the merge; only one of the two can be more informative.
+    observation: target.observation === 'sufficient' ? addition.observation : target.observation,
+    modelDecision:
+      target.modelDecision === 'uncertain' || addition.modelDecision === 'uncertain'
+        ? 'uncertain'
+        : target.modelDecision,
+    details: buildSharedPlanDetails(proposerMemberId, target.details.activitySummary, [
+      ...target.details.stages,
+      ...addition.details.stages,
+    ]),
+  }
+}
+
+/** The plan as the stages describe it: one ordered timeline, where it stands now, and whether its start is here. */
+function buildSharedPlanDetails(
+  proposerMemberId: number | null,
+  activitySummary: string,
+  stages: SharedPlanStageRecord[]
+): SharedPlanDetails {
+  const timeline = sortSharedPlanStages(stages)
+  return {
+    kind: 'shared_plan',
+    proposerMemberId,
+    activitySummary,
+    stages: timeline,
+    lastObservedStage: timeline[timeline.length - 1]!.stage,
+    // Without a proposal the arrangement is real but its beginning is not covered by this analysis.
+    priorCoverage: proposerMemberId === null ? 'not_covered' : 'covered',
+  }
+}
+
+/** One timeline in message order; the same stage reported twice stays one entry. */
+function sortSharedPlanStages(stages: SharedPlanStageRecord[]): SharedPlanStageRecord[] {
+  const byKey = new Map<string, SharedPlanStageRecord>()
+  for (const stage of stages) {
+    const key = `${stage.stage} ${stage.actorMemberId} ${stage.messageIds.join(',')}`
+    if (!byKey.has(key)) byKey.set(key, stage)
+  }
+  return [...byKey.values()].sort(
+    (left, right) => left.at - right.at || Math.min(...left.messageIds) - Math.min(...right.messageIds)
+  )
+}
+
+function buildStageRecords(
+  stages: ParsedSharedPlanStage[],
+  members: [IntimacyMember, IntimacyMember],
+  windowMessages: Map<number, IntimacySourceMessage>
+): SharedPlanStageRecord[] {
+  return stages.flatMap((stage) => {
+    const messages = stage.messageIds.flatMap((messageId) => {
+      const message = windowMessages.get(messageId)
+      return message ? [message] : []
+    })
+    if (messages.length === 0) return []
+    return [
+      {
+        stage: stage.stage,
+        actorMemberId: members[stage.actor === 'A' ? 0 : 1].memberId,
+        messageIds: messages.map((message) => message.id),
+        at: Math.min(...messages.map((message) => message.timestamp)),
+      },
+    ]
+  })
+}
+
+function buildStageEvidence(
+  stages: SharedPlanStageRecord[],
+  windowMessages: Map<number, IntimacySourceMessage>
+): IntimacyEvidence[] {
+  return stages.flatMap((stage) =>
+    stage.messageIds.flatMap((messageId) => {
+      const message = windowMessages.get(messageId)
+      return message
+        ? [{ messageId, timestamp: message.timestamp, senderId: message.senderId, role: 'stage' as const }]
+        : []
+    })
+  )
+}
+
+/** The arrangement the context tail already shows: the same activity if it is named again, otherwise the same proposer. */
+function findContinuedPlan(
+  context: WindowBuildContext,
+  proposerMemberId: number | null,
+  activitySummary: string
+): SharedPlanEventRecord | null {
+  const visible = context.previousWindowEvents.filter(
+    (event): event is SharedPlanEventRecord =>
+      isSharedPlanRecord(event) && event.evidence.some((evidence) => context.contextIds.has(evidence.messageId))
+  )
+  const summary = normalizeActivitySummary(activitySummary)
+  const named = visible.filter((event) => normalizeActivitySummary(event.details.activitySummary) === summary)
+  const candidates =
+    named.length > 0
+      ? named
+      : visible.filter((event) => proposerMemberId !== null && event.details.proposerMemberId === proposerMemberId)
+  if (candidates.length === 0) return null
+  return candidates.reduce((latest, event) =>
+    event.anchorTs > latest.anchorTs ||
+    (event.anchorTs === latest.anchorTs && event.anchorMessageId > latest.anchorMessageId)
+      ? event
+      : latest
+  )
+}
+
+function normalizeActivitySummary(activitySummary: string): string {
+  return activitySummary.trim().toLowerCase()
 }
 
 /** A sharing event, plus the support response event when the sharing states a difficulty, worry or need. */
@@ -656,6 +834,10 @@ function isSupportRecord(event: IntimacyEventRecord): event is SupportEventRecor
 
 function isGoodNewsRecord(event: IntimacyEventRecord): event is GoodNewsEventRecord {
   return event.details.kind === 'good_news_response'
+}
+
+function isSharedPlanRecord(event: IntimacyEventRecord): event is SharedPlanEventRecord {
+  return event.details.kind === 'shared_plan'
 }
 
 function mergeContinuedSharing(
