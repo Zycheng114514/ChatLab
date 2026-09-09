@@ -192,7 +192,7 @@ export interface IntimacyGapText {
  * 没有先前消息（`gapSeconds` 为 null）时不显示间隔。
  */
 export function formatIntimacyGap(gapSeconds: number | null): IntimacyGapText | null {
-  if (gapSeconds === null || gapSeconds < 0) return null
+  if (gapSeconds === null) return null
   const days = dayjs.unix(gapSeconds).diff(dayjs.unix(0), 'day')
   if (days === 0) return { labelKey: 'views.intimacy.k3.gapWithinDay', count: 0 }
   return { labelKey: days === 1 ? 'views.intimacy.k3.gapOneDay' : 'views.intimacy.k3.gapDays', count: days }

@@ -3,6 +3,7 @@ import test from 'node:test'
 import type {
   GoodNewsResponseLabel,
   IntimacyEventStatus,
+  IntimacyFollowUpMemberSummary,
   IntimacyKindSummary,
   ResponseObservation,
   SharingCategory,
@@ -10,15 +11,20 @@ import type {
   SupportResponseLabel,
 } from '@openchatlab/shared-types'
 import {
+  buildFollowUpInitiationCounts,
   buildIntimacyTopicFilterOptions,
   filterIntimacyEventsByTopic,
+  formatIntimacyGap,
   partitionIntimacyEvents,
   resolveIntimacyStatusBadge,
+  selectFollowUpEvents,
+  selectFollowUpSummary,
   selectGoodNewsEvents,
   selectResponseSummary,
   selectSharingEvents,
   selectSupportEvents,
   summarizeIntimacyEvents,
+  type IntimacyFollowUpEvent,
   type IntimacyGoodNewsEvent,
   type IntimacySharingEvent,
   type IntimacySupportEvent,
@@ -207,12 +213,51 @@ function goodNewsEvent(
   }
 }
 
-// 一次结果里混着三种 kind，K1 的分享事件与 K4 的好消息事件可以共用同一条核心消息。
+/**
+ * K3 的角色是反过来的：事件主体是被问的那一方，追问者记在 otherMemberId 上。
+ * 没有先前消息（`prior` 为 null）的追问就是待核对的那一类。
+ */
+function followUpEvent(
+  id: number,
+  askerMemberId: number,
+  status: IntimacyEventStatus,
+  prior: number | null
+): IntimacyFollowUpEvent {
+  const askedMemberId = askerMemberId === 1 ? 2 : 1
+  return {
+    ...event(id, askedMemberId, status, 'other', ['experience_or_update']),
+    id: `follow_up:${id}`,
+    kind: 'follow_up',
+    subjectMemberId: askedMemberId,
+    otherMemberId: askerMemberId,
+    evidence: [
+      ...(prior === null
+        ? []
+        : [{ messageId: prior, timestamp: 1_700_000_000 + prior, senderId: askedMemberId, role: 'prior' as const }]),
+      { messageId: id, timestamp: 1_700_000_000 + id, senderId: askerMemberId, role: 'core' as const },
+    ],
+    details: {
+      kind: 'follow_up',
+      priorEventId: prior === null ? null : `sharing:${prior}`,
+      matter: 'the check-up result',
+      matterKeywords: ['check-up'],
+      matchConfidence: prior === null ? 'uncertain' : 'supported',
+      initiationInObservedRecord: prior === null ? 'uncertain' : 'before_subject_reintroduced',
+      gapSeconds: prior === null ? null : id - prior,
+      lookbackStartTs: 1_699_000_000,
+      candidateMessageIds: prior === null ? [11, 12] : [],
+    },
+  }
+}
+
+// 一次结果里混着四种 kind，K1 的分享事件与 K4 的好消息事件可以共用同一条核心消息。
 const mixedEvents = [
   ...events,
   supportEvent(2, 1, 'auto', 'visible_response', ['acknowledges_feeling']),
   supportEvent(3, 1, 'uncertain', 'no_visible_response', []),
   goodNewsEvent(5, 2, 'auto', 'visible_response', ['congratulates_or_affirms']),
+  followUpEvent(9, 2, 'auto', 1),
+  followUpEvent(10, 2, 'uncertain', null),
 ]
 
 test('each card only sees its own kind, so a response event is never counted as personal sharing', () => {
@@ -227,6 +272,10 @@ test('each card only sees its own kind, so a response event is never counted as 
   assert.deepEqual(
     selectGoodNewsEvents(mixedEvents).map((item) => item.id),
     ['good_news_response:5']
+  )
+  assert.deepEqual(
+    selectFollowUpEvents(mixedEvents).map((item) => item.id),
+    ['follow_up:9', 'follow_up:10']
   )
 
   const [a, b] = summarizeIntimacyEvents(selectSharingEvents(mixedEvents), members)
@@ -244,7 +293,28 @@ test('the topic filter only ever works on sharing events', () => {
   )
 })
 
-test('a response card reads the summary of its own kind, and shows nothing when that kind is missing', () => {
+const followUpMembers: IntimacyFollowUpMemberSummary[] = [
+  {
+    memberId: 1,
+    pairs: 3,
+    matters: 2,
+    uncertain: 1,
+    beforeReintroduced: 2,
+    afterReintroduced: 1,
+    initiationUncertain: 0,
+  },
+  {
+    memberId: 2,
+    pairs: 2,
+    matters: 2,
+    uncertain: 0,
+    beforeReintroduced: 0,
+    afterReintroduced: 1,
+    initiationUncertain: 1,
+  },
+]
+
+test('every card reads the summary of its own kind, and shows nothing when that kind is missing', () => {
   const support = { memberId: 2, anchors: 2, visibleResponse: 1, noVisibleResponse: 1, insufficientContext: 0 }
   const goodNews = { memberId: 1, anchors: 1, visibleResponse: 1, noVisibleResponse: 0, insufficientContext: 0 }
   const summaries: IntimacyKindSummary[] = [
@@ -253,6 +323,8 @@ test('a response card reads the summary of its own kind, and shows nothing when 
       kind: 'support_response',
       members: [{ ...support, byLabel: { acknowledges_feeling: 1 } }],
     },
+    // 追问汇总的字段和回应汇总完全不同，回应卡拿到它就会显示别人的数字。
+    { kind: 'follow_up', members: followUpMembers },
     {
       kind: 'good_news_response',
       members: [{ ...goodNews, byLabel: { congratulates_or_affirms: 1 } }],
@@ -265,7 +337,35 @@ test('a response card reads the summary of its own kind, and shows nothing when 
   assert.deepEqual(selectResponseSummary(summaries, 'good_news_response'), [
     { ...goodNews, byLabel: { congratulates_or_affirms: 1 } },
   ])
+  assert.deepEqual(selectFollowUpSummary(summaries), followUpMembers)
   assert.deepEqual(selectResponseSummary([summaries[0]!], 'support_response'), [])
+  assert.deepEqual(selectFollowUpSummary([summaries[0]!]), [])
+})
+
+test('the three initiation cells restate the counted pairs instead of adding a fourth number', () => {
+  const cells = buildFollowUpInitiationCounts(followUpMembers)
+
+  assert.deepEqual(cells, [
+    { initiation: 'before_subject_reintroduced', labelKey: 'views.intimacy.initiation.beforeReintroduced', count: 2 },
+    { initiation: 'after_subject_reintroduced', labelKey: 'views.intimacy.initiation.afterReintroduced', count: 2 },
+    { initiation: 'uncertain', labelKey: 'views.intimacy.initiation.uncertain', count: 1 },
+  ])
+  assert.equal(
+    cells.reduce((total, cell) => total + cell.count, 0),
+    followUpMembers.reduce((total, summary) => total + summary.pairs, 0)
+  )
+  assert.deepEqual(
+    buildFollowUpInitiationCounts([]).map((cell) => cell.count),
+    [0, 0, 0]
+  )
+})
+
+test('the gap between the two messages is stated in whole days, never to the second', () => {
+  assert.equal(formatIntimacyGap(null), null)
+  assert.deepEqual(formatIntimacyGap(0), { labelKey: 'views.intimacy.k3.gapWithinDay', count: 0 })
+  assert.deepEqual(formatIntimacyGap(3 * 3600 + 17), { labelKey: 'views.intimacy.k3.gapWithinDay', count: 0 })
+  assert.deepEqual(formatIntimacyGap(86_400), { labelKey: 'views.intimacy.k3.gapOneDay', count: 1 })
+  assert.deepEqual(formatIntimacyGap(3 * 86_400 + 4_237), { labelKey: 'views.intimacy.k3.gapDays', count: 3 })
 })
 
 test('excluded response events are split out the same way as sharing events', () => {
