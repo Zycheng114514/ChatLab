@@ -447,34 +447,6 @@ export class IntimacyStore {
     return rows.map((row) => mapEventRow(row, evidenceByEvent.get(row.id) ?? []))
   }
 
-  getEvent(sessionId: string, eventId: string): StoredIntimacyEvent | null {
-    const row = this.db
-      .prepare(
-        `SELECT ${EVENT_COLUMNS} FROM intimacy_event
-         WHERE session_id = ? AND id = ?
-         ORDER BY (run_id = '') ASC, created_at DESC LIMIT 1`
-      )
-      .get(sessionId, eventId) as IntimacyEventRow | undefined
-    if (!row) return null
-    const evidence = this.db
-      .prepare(
-        `SELECT event_id as eventId, message_id as messageId, timestamp, sender_id as senderId, role
-         FROM intimacy_evidence
-         WHERE session_id = ? AND run_id = ? AND event_id = ?
-         ORDER BY message_id ASC`
-      )
-      .all(sessionId, row.runId, eventId) as unknown as IntimacyEvidenceRow[]
-    return mapEventRow(
-      row,
-      evidence.map((item) => ({
-        messageId: item.messageId,
-        timestamp: item.timestamp,
-        senderId: item.senderId,
-        role: item.role,
-      }))
-    )
-  }
-
   /** Optimistic update. Returns null when the caller's expected revision is stale. */
   upsertReview(
     sessionId: string,

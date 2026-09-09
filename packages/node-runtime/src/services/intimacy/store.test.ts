@@ -106,8 +106,6 @@ test('a window commit stores events with their evidence and merges a sharing con
     )
     assert.deepEqual(merged.details.categories, ['experience_or_update', 'feeling'])
     assert.equal(merged.modelDecision, 'uncertain')
-    assert.equal(store.getEvent('session-1', 'sharing:10')?.anchorMessageId, 10)
-    assert.equal(store.getEvent('session-1', 'sharing:404'), null)
   } finally {
     store.close()
   }
