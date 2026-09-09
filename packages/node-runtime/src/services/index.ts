@@ -149,6 +149,16 @@ export type {
   TopicDayCheckpoint,
 } from './topics'
 
+// Private chat intimacy insights
+export {
+  createIntimacyService,
+  assertSessionIntimacyIdle,
+  deleteSessionIntimacy,
+  getIntimacyDbPath,
+  IntimacyStore,
+} from './intimacy'
+export type { IntimacyEventRecord, IntimacyService, IntimacyServiceDeps } from './intimacy'
+
 // Merge cache
 export { MergeSessionCache } from './merge-cache'
 

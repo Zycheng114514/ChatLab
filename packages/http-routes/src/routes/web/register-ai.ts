@@ -6,6 +6,7 @@ import { registerAiAgentStreamRoutes } from './ai-agent-stream'
 import { registerAiAssistantRoutes } from './ai-assistants'
 import { registerAiChatRoutes } from './ai-chats'
 import { registerAiChatTopicRoutes } from './ai-chat-topics'
+import { registerAiIntimacyRoutes } from './ai-intimacy'
 import { registerAiLlmStreamRoutes } from './ai-llm-stream'
 import { registerAiLlmRoutes } from './ai-llm'
 import { registerAiLogRoutes } from './ai-logs'
@@ -58,6 +59,7 @@ export function registerAiRoutes(server: FastifyInstance, ctx: AiRoutesContext, 
   registerAiChatRoutes(server, ctx)
   registerAiMemoryRoutes(server, ctx, memoryProvenanceCoordinator)
   registerAiChatTopicRoutes(server, ctx)
+  registerAiIntimacyRoutes(server, ctx)
   registerAiSummaryRoutes(server, ctx)
   registerAiLogRoutes(server, ctx)
   registerSemanticIndexRoutes(server, ctx)

@@ -31,6 +31,7 @@ import {
 import { deleteAnnualSummarySnapshots } from './services/global-insight/snapshot'
 import { deleteTimeInvestmentSnapshots } from './services/global-insight/time-investment-snapshot'
 import { getPeopleRelationshipsFactsCacheDir } from './services/people/relationships/paths'
+import { assertSessionIntimacyIdle, deleteSessionIntimacy } from './services/intimacy'
 import { assertSessionChatTopicsIdle, deleteSessionChatTopics } from './services/topics'
 
 interface DatabaseManagerOptions {
@@ -261,6 +262,7 @@ export class DatabaseManager {
    */
   deleteSessionDatabaseFiles(sessionId: string): boolean {
     assertSessionChatTopicsIdle(this.pathProvider.getUserDataDir(), sessionId, { nativeBinding: this.nativeBinding })
+    assertSessionIntimacyIdle(this.pathProvider.getUserDataDir(), sessionId, { nativeBinding: this.nativeBinding })
     this.close(sessionId)
 
     const dbPath = this.getDbPath(sessionId)
@@ -279,6 +281,7 @@ export class DatabaseManager {
     // Derived data is removed only after the primary database is gone. If deleting the main file fails, callers get
     // the original filesystem error and can retry without losing paid topic snapshots or other cached results.
     deleteSessionChatTopics(this.pathProvider.getUserDataDir(), sessionId, { nativeBinding: this.nativeBinding })
+    deleteSessionIntimacy(this.pathProvider.getUserDataDir(), sessionId, { nativeBinding: this.nativeBinding })
     const cacheDir = this.pathProvider.getCacheDir()
     deleteSessionCache(sessionId, cacheDir)
     deleteSessionCache(sessionId, path.join(cacheDir, 'query'))

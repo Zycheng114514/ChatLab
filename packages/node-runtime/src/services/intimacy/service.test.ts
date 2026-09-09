@@ -552,6 +552,24 @@ test('the intimacy store raises the data directory gate only from runtimes that 
   }
 })
 
+test('deleting a session removes the intimacy results derived from it', async () => {
+  const stub = modelStub((window) => defaultWindowResponse(window))
+  const { service, manager } = createHarness(stub.client)
+
+  try {
+    const started = service.start('private', { kinds: ['sharing'] })
+    await waitForRun(service, 'private', started.id, 'completed')
+    const results = await service.getResults('private', 'sharing')
+    await service.reviewEvent('private', results.events[0]!.id, { decision: 'excluded', expectedRevision: 0 })
+
+    assert.equal(manager.deleteSessionDatabaseFiles('private'), true)
+    assert.equal(service.getLatestRun('private'), null, 'paid results must not outlive the chat they describe')
+  } finally {
+    service.close()
+    manager.closeAll()
+  }
+})
+
 test('clearing results can keep the user decisions and is refused while an analysis is running', async () => {
   let blocked = true
   const stub = modelStub(async (window) => {
