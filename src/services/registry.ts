@@ -89,6 +89,7 @@ async function initElectronAdapters(): Promise<void> {
     { FetchSessionIndexAdapter },
     { FetchMessageAdapter },
     { FetchChatTopicsAdapter },
+    { FetchIntimacyAdapter },
     { ElectronAIAdapter },
     { FetchPreferencesAdapter },
     { FetchLLMAdapter },
@@ -104,6 +105,7 @@ async function initElectronAdapters(): Promise<void> {
     import('./session-index/fetch'),
     import('./message/fetch'),
     import('./chat-topics/fetch'),
+    import('./intimacy/fetch'),
     import('./ai/electron'),
     import('./preferences/fetch'),
     import('./llm/fetch'),
@@ -122,6 +124,7 @@ async function initElectronAdapters(): Promise<void> {
   registerAdapter('session-index', new FetchSessionIndexAdapter())
   registerAdapter('message', new FetchMessageAdapter())
   registerAdapter('chat-topics', new FetchChatTopicsAdapter())
+  registerAdapter('intimacy', new FetchIntimacyAdapter())
   registerAdapter('ai', new ElectronAIAdapter())
   registerAdapter('preferences', new FetchPreferencesAdapter())
   registerAdapter('llm', new FetchLLMAdapter())
@@ -142,6 +145,7 @@ async function initCliWebAdapters(): Promise<void> {
     { FetchSessionIndexAdapter },
     { FetchMessageAdapter },
     { FetchChatTopicsAdapter },
+    { FetchIntimacyAdapter },
     { FetchAIAdapter },
     { FetchPreferencesAdapter },
     { FetchLLMAdapter },
@@ -157,6 +161,7 @@ async function initCliWebAdapters(): Promise<void> {
     import('./session-index/fetch'),
     import('./message/fetch'),
     import('./chat-topics/fetch'),
+    import('./intimacy/fetch'),
     import('./ai/fetch'),
     import('./preferences/fetch'),
     import('./llm/fetch'),
@@ -175,6 +180,7 @@ async function initCliWebAdapters(): Promise<void> {
   registerAdapter('session-index', new FetchSessionIndexAdapter())
   registerAdapter('message', new FetchMessageAdapter())
   registerAdapter('chat-topics', new FetchChatTopicsAdapter())
+  registerAdapter('intimacy', new FetchIntimacyAdapter())
   registerAdapter('ai', new FetchAIAdapter())
   registerAdapter('preferences', new FetchPreferencesAdapter())
   registerAdapter('llm', new FetchLLMAdapter())

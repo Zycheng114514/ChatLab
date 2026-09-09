@@ -67,6 +67,26 @@ export type {
   ChatTopicRun,
   CreateChatTopicsRequest,
 } from './chat-topics/types'
+export { useIntimacyService } from './intimacy/service'
+export { IntimacyRequestError } from './intimacy/types'
+export type {
+  IntimacyAdapter,
+  IntimacyCandidateRequest,
+  IntimacyCandidates,
+  IntimacyEvent,
+  IntimacyEventStatus,
+  IntimacyKind,
+  IntimacyMember,
+  IntimacyMemberSummary,
+  IntimacyMessageSnippet,
+  IntimacyPreflight,
+  IntimacyResultRange,
+  IntimacyResults,
+  IntimacyRun,
+  SharingCategory,
+  SharingDetails,
+  SharingTopic,
+} from './intimacy/types'
 export { usePlatformService } from './platform/service'
 export type { PlatformAdapter, OpenDialogOptions, OpenDialogResult, RemoteConfigResult } from './platform/types'
 export { useAIService } from './ai/service'
