@@ -370,7 +370,8 @@
       "description": "ローカルで音声メッセージを文字に起こします。結果はメッセージに書き戻され、検索や分析からも参照できます。",
       "model": "モデル",
       "modelHint": "初回利用時にモデルをダウンロードします（tiny 約 42 MB、base 約 77 MB、small 約 260 MB）。中国語には base 以上をおすすめします。",
-      "language": "既定の言語"
+      "language": "既定の言語",
+      "chineseScript": "中国語の字体"
     }
   },
   "aiPrompt": {

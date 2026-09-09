@@ -86,6 +86,7 @@ export {
   UnsupportedAudioError,
 } from './transcription/decode-audio'
 export type {
+  ChineseScriptSetting,
   PendingTranscriptionItem,
   TranscriptionLanguage,
   TranscriptionModel,

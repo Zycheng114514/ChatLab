@@ -370,7 +370,8 @@
       "description": "在本地把语音消息转成文字，转写结果写回消息，可以被搜索和分析读到。",
       "model": "模型",
       "modelHint": "第一次使用会下载模型：tiny 约 42 MB、base 约 77 MB、small 约 260 MB。中文建议 base 及以上。",
-      "language": "默认语言"
+      "language": "默认语言",
+      "chineseScript": "中文字形"
     }
   },
   "aiPrompt": {
