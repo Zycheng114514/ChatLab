@@ -71,6 +71,7 @@ export { useIntimacyService } from './intimacy/service'
 export { IntimacyRequestError } from './intimacy/types'
 export type {
   CreateIntimacyEventRequest,
+  CreateSharedPlanStage,
   FollowUpDetails,
   GoodNewsResponseDetails,
   GoodNewsResponseLabel,
@@ -92,6 +93,10 @@ export type {
   IntimacyReviewDetails,
   IntimacyRun,
   ResponseObservation,
+  SharedPlanDetails,
+  SharedPlanStage,
+  SharedPlanStageRecord,
+  SharedPlanSummary,
   SharingCategory,
   SharingDetails,
   SharingTopic,

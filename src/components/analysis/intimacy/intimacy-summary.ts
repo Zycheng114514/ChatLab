@@ -1,5 +1,6 @@
 import dayjs from 'dayjs'
 import type {
+  CreateSharedPlanStage,
   FollowUpDetails,
   FollowUpInitiation,
   FollowUpSummary,
@@ -14,6 +15,9 @@ import type {
   IntimacyResponseMemberSummary,
   ResponseObservation,
   ResponseSummary,
+  SharedPlanDetails,
+  SharedPlanStage,
+  SharedPlanSummary,
   SharingCategory,
   SharingDetails,
   SharingTopic,
@@ -24,11 +28,12 @@ import type {
 /** 话题筛选值：`all` = 不筛选 */
 export type IntimacyTopicFilter = SharingTopic | 'all'
 
-/** 一次结果里混着四种 kind，卡片各取自己那一份；details 与 kind 一一对应，narrow 后模板不必再判断。 */
+/** 一次结果里混着五种 kind，卡片各取自己那一份；details 与 kind 一一对应，narrow 后模板不必再判断。 */
 export type IntimacySharingEvent = IntimacyEvent & { details: SharingDetails }
 export type IntimacySupportEvent = IntimacyEvent & { details: SupportResponseDetails }
 export type IntimacyGoodNewsEvent = IntimacyEvent & { details: GoodNewsResponseDetails }
 export type IntimacyFollowUpEvent = IntimacyEvent & { details: FollowUpDetails }
+export type IntimacySharedPlanEvent = IntimacyEvent & { details: SharedPlanDetails }
 export type IntimacyResponseEvent = IntimacySupportEvent | IntimacyGoodNewsEvent
 
 /**
@@ -86,10 +91,24 @@ export const FOLLOW_UP_INITIATION_LABEL_KEYS: Record<FollowUpInitiation, string>
   uncertain: 'views.intimacy.initiation.uncertain',
 }
 
+/**
+ * K5 的六种阶段只说这个安排在记录里走到了哪一步，彼此之间没有好坏或先后优劣，
+ * 所以按契约里的顺序固定展示，不排序也不着色。
+ */
+export const SHARED_PLAN_STAGE_LABEL_KEYS: Record<SharedPlanStage, string> = {
+  proposed: 'views.intimacy.planStage.proposed',
+  discussed: 'views.intimacy.planStage.discussed',
+  mutually_confirmed: 'views.intimacy.planStage.mutuallyConfirmed',
+  rescheduled: 'views.intimacy.planStage.rescheduled',
+  cancelled: 'views.intimacy.planStage.cancelled',
+  retrospective_mentioned: 'views.intimacy.planStage.retrospectiveMentioned',
+}
+
 export const SHARING_CATEGORIES = Object.keys(SHARING_CATEGORY_LABEL_KEYS) as SharingCategory[]
 export const SHARING_TOPICS = Object.keys(SHARING_TOPIC_LABEL_KEYS) as SharingTopic[]
 export const SUPPORT_RESPONSE_LABELS = Object.keys(SUPPORT_RESPONSE_LABEL_KEYS) as SupportResponseLabel[]
 export const GOOD_NEWS_RESPONSE_LABELS = Object.keys(GOOD_NEWS_RESPONSE_LABEL_KEYS) as GoodNewsResponseLabel[]
+export const SHARED_PLAN_STAGES = Object.keys(SHARED_PLAN_STAGE_LABEL_KEYS) as SharedPlanStage[]
 
 export interface IntimacyStatusBadge {
   labelKey: string
@@ -139,6 +158,10 @@ export function selectFollowUpEvents(events: IntimacyEvent[]): IntimacyFollowUpE
   return events.filter((event): event is IntimacyFollowUpEvent => event.details.kind === 'follow_up')
 }
 
+export function selectSharedPlanEvents(events: IntimacyEvent[]): IntimacySharedPlanEvent[] {
+  return events.filter((event): event is IntimacySharedPlanEvent => event.details.kind === 'shared_plan')
+}
+
 /**
  * 回应方计数直接用后端的汇总：K2 / K4 的卡片没有前端筛选，重算一遍只会引入第二套规则。
  * 缺这一条 kind 时返回空数组，页面显示 0，而不是崩在 undefined 上。
@@ -155,6 +178,101 @@ export function selectResponseSummary(
 export function selectFollowUpSummary(summaries: IntimacyKindSummary[]): IntimacyFollowUpMemberSummary[] {
   const summary = summaries.find((item): item is FollowUpSummary => item.kind === 'follow_up')
   return summary?.members ?? []
+}
+
+/** 共同安排的计数同样直接用后端汇总；这张卡也没有前端筛选，缺这一条 kind 时页面显示 0。 */
+export function selectSharedPlanSummary(summaries: IntimacyKindSummary[]): SharedPlanSummary | null {
+  return summaries.find((item): item is SharedPlanSummary => item.kind === 'shared_plan') ?? null
+}
+
+export interface IntimacySharedPlanStageCount {
+  stage: SharedPlanStage
+  labelKey: string
+  count: number
+}
+
+/**
+ * 六格「最后看到的一步」：拆的是「本期有更新」的那组安排（后端 `byLastStage` 的口径），
+ * 所以六格之和等于 `updatedInRange`，而不是「本期新提议」。
+ */
+export function buildSharedPlanStageCounts(summary: SharedPlanSummary | null): IntimacySharedPlanStageCount[] {
+  return SHARED_PLAN_STAGES.map((stage) => ({
+    stage,
+    labelKey: SHARED_PLAN_STAGE_LABEL_KEYS[stage],
+    count: summary?.byLastStage[stage] ?? 0,
+  }))
+}
+
+export interface IntimacySharedPlanMemberCount {
+  memberId: number
+  proposed: number
+  confirmed: number
+}
+
+/**
+ * 谁提议 / 谁确认：同样是「本期有更新」那一组的拆分。提议只计有提议记录的安排
+ * （较早提议没被覆盖到的安排不算在任何人头上），确认计在明确说同意的那一方。
+ */
+export function buildSharedPlanMemberCounts(
+  summary: SharedPlanSummary | null,
+  members: IntimacyMember[]
+): IntimacySharedPlanMemberCount[] {
+  return members.map((member) => ({
+    memberId: member.memberId,
+    proposed: summary?.proposedBy[member.memberId] ?? 0,
+    confirmed: summary?.confirmedBy[member.memberId] ?? 0,
+  }))
+}
+
+/** 候选面板里正在拼的一步：阶段由用户选，行为者由消息的发送者决定，用户不用自己指认。 */
+export interface SharedPlanStageDraft {
+  stage: SharedPlanStage
+  messageIds: number[]
+}
+
+export interface SharedPlanStageResolution {
+  stages: CreateSharedPlanStage[]
+  /** 不能提交时的提示文案 key；null = 通过前端这一遍检查 */
+  errorKey: string | null
+}
+
+/**
+ * 与后端 `checkSharedPlanStageSenders` 同一套规则：除「双方确认」外，一步里的消息全部由行为者本人发送；
+ * 「双方确认」要两方各至少一条，行为者是后说话的那一方（同意在后）。前端先查一遍是为了点错时当场说清楚，
+ * 后端仍会按聊天库里的真实发送者再查一次。
+ */
+export function resolveSharedPlanStages(
+  drafts: SharedPlanStageDraft[],
+  senderOf: (messageId: number) => number | undefined
+): SharedPlanStageResolution {
+  const stages: CreateSharedPlanStage[] = []
+  let errorKey: string | null = null
+  const fail = (key: string) => {
+    errorKey ??= key
+  }
+  for (const draft of drafts) {
+    const messageIds = [...new Set(draft.messageIds)].sort((left, right) => left - right)
+    const senders = messageIds.flatMap((messageId) => {
+      const senderId = senderOf(messageId)
+      return senderId === undefined ? [] : [senderId]
+    })
+    if (messageIds.length === 0 || senders.length !== messageIds.length) {
+      fail('views.intimacy.k5.stageNeedsMessage')
+      continue
+    }
+    if (draft.stage === 'mutually_confirmed') {
+      if (new Set(senders).size < 2) fail('views.intimacy.k5.confirmNeedsBoth')
+    } else if (senders.some((senderId) => senderId !== senders[0])) {
+      fail('views.intimacy.k5.oneSenderPerStage')
+    }
+    stages.push({
+      stage: draft.stage,
+      actorMemberId: draft.stage === 'mutually_confirmed' ? senders[senders.length - 1]! : senders[0]!,
+      messageIds,
+    })
+  }
+  if (stages.length === 0) fail('views.intimacy.k5.stageNeedsMessage')
+  return { stages, errorKey }
 }
 
 export interface IntimacyInitiationCount {

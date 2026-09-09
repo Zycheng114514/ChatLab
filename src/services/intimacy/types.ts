@@ -1,5 +1,6 @@
 import type {
   CreateIntimacyEventRequest,
+  CreateSharedPlanStage,
   FollowUpDetails,
   GoodNewsResponseDetails,
   GoodNewsResponseLabel,
@@ -21,6 +22,10 @@ import type {
   IntimacyRun,
   ResponseObservation,
   ReviewIntimacyEventRequest,
+  SharedPlanDetails,
+  SharedPlanStage,
+  SharedPlanStageRecord,
+  SharedPlanSummary,
   SharingCategory,
   SharingDetails,
   SharingTopic,
@@ -67,6 +72,7 @@ export class IntimacyRequestError extends Error {
 
 export type {
   CreateIntimacyEventRequest,
+  CreateSharedPlanStage,
   FollowUpDetails,
   GoodNewsResponseDetails,
   GoodNewsResponseLabel,
@@ -88,6 +94,10 @@ export type {
   IntimacyRun,
   ResponseObservation,
   ReviewIntimacyEventRequest,
+  SharedPlanDetails,
+  SharedPlanStage,
+  SharedPlanStageRecord,
+  SharedPlanSummary,
   SharingCategory,
   SharingDetails,
   SharingTopic,
