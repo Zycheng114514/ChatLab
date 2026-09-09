@@ -7,6 +7,7 @@
     "aiConfig": "モデルサービス",
     "aiDefaultModel": "デフォルトモデル",
     "semanticIndex": "セマンティックインデックス",
+    "transcription": "音声の文字起こし",
     "chatPreferences": "会話設定",
     "aiPreprocess": "前処理",
     "dataManage": "データ管理",
@@ -363,6 +364,13 @@
         "confirmRemoveTitle": "削除の確認",
         "confirmRemoveMessage": "これらの会話のセマンティックインデックスは即座に削除され、復元できません。"
       }
+    },
+    "transcription": {
+      "title": "音声の文字起こし",
+      "description": "ローカルで音声メッセージを文字に起こします。結果はメッセージに書き戻され、検索や分析からも参照できます。",
+      "model": "モデル",
+      "modelHint": "初回利用時にモデルをダウンロードします（tiny 約 42 MB、base 約 77 MB、small 約 260 MB）。中国語には base 以上をおすすめします。",
+      "language": "既定の言語"
     }
   },
   "aiPrompt": {

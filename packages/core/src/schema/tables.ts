@@ -26,6 +26,9 @@ export const MESSAGE_ATTACHMENT_TABLE = `
     duration_ms INTEGER,
     width INTEGER,
     height INTEGER,
+    transcript TEXT,
+    transcript_model TEXT,
+    transcribed_at INTEGER,
     FOREIGN KEY(message_id) REFERENCES message(id)
   );
 `

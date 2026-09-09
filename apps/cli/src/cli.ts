@@ -18,6 +18,7 @@ import { registerManifestCommand } from './query/manifest'
 import { registerImportCommand } from './import/command'
 import { registerValidateCommand } from './validate/command'
 import { registerRuntimeCommand } from './semantic-index/runtime-command'
+import { registerTranscribeCommand } from './transcribe/command'
 
 const program = new Command()
 
@@ -55,6 +56,7 @@ registerManifestCommand(program, getVersion())
 registerImportCommand(program)
 registerValidateCommand(program)
 registerRuntimeCommand(program)
+registerTranscribeCommand(program)
 
 program
   .command('formats')

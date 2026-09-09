@@ -46,6 +46,21 @@ export type { SessionIndexStatusItem } from './session-index-service'
 export { generateSummary, generateAllSummaries } from './summary-service'
 export type { LlmConfig, SummaryServiceDeps } from './summary-service'
 
+// Transcription service (desktop IPC + CLI Web routes)
+export {
+  getTranscriptionSettings,
+  InvalidTranscriptionSettingError,
+  listSessionTranscriptionQueue,
+  transcribeSessionAttachmentPcm,
+  updateTranscriptionSettings,
+} from './transcription-service'
+export type {
+  PendingTranscriptionItem,
+  TranscribeSessionAttachmentPcmOptions,
+  TranscriptionSettings,
+  TranscriptionWorker,
+} from './transcription-service'
+
 // Export service
 export { resolveAttachmentFile } from './attachment-service'
 export type { SessionAttachmentFile } from './attachment-service'
