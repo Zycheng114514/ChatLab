@@ -6,6 +6,9 @@ import type {
   IntimacyFollowUpMemberSummary,
   IntimacyKindSummary,
   ResponseObservation,
+  SharedPlanStage,
+  SharedPlanStageRecord,
+  SharedPlanSummary,
   SharingCategory,
   SharingTopic,
   SupportResponseLabel,
@@ -13,21 +16,28 @@ import type {
 import {
   buildFollowUpInitiationCounts,
   buildIntimacyTopicFilterOptions,
+  buildSharedPlanMemberCounts,
+  buildSharedPlanStageCounts,
   filterIntimacyEventsByTopic,
   formatIntimacyGap,
   partitionIntimacyEvents,
   resolveIntimacyStatusBadge,
+  resolveSharedPlanStages,
   selectFollowUpEvents,
   selectFollowUpSummary,
   selectGoodNewsEvents,
   selectResponseSummary,
+  selectSharedPlanEvents,
+  selectSharedPlanSummary,
   selectSharingEvents,
   selectSupportEvents,
   summarizeIntimacyEvents,
   type IntimacyFollowUpEvent,
   type IntimacyGoodNewsEvent,
+  type IntimacySharedPlanEvent,
   type IntimacySharingEvent,
   type IntimacySupportEvent,
+  type SharedPlanStageDraft,
 } from './intimacy-summary'
 
 const members = [
@@ -250,7 +260,45 @@ function followUpEvent(
   }
 }
 
-// 一次结果里混着四种 kind，K1 的分享事件与 K4 的好消息事件可以共用同一条核心消息。
+/**
+ * K5 的事件主体是提议者；较早的提议没被覆盖到时没有提议者，事件主体退到最早那一步的行为者。
+ * 一个安排无论走过几步都只是一个事件，所以时间线整条挂在这一行上。
+ */
+function sharedPlanEvent(
+  id: number,
+  proposerMemberId: number | null,
+  status: IntimacyEventStatus,
+  stages: SharedPlanStageRecord[]
+): IntimacySharedPlanEvent {
+  const subjectMemberId = proposerMemberId ?? stages[0]!.actorMemberId
+  return {
+    ...event(id, subjectMemberId, status, 'other', ['experience_or_update']),
+    id: `shared_plan:${id}`,
+    kind: 'shared_plan',
+    evidence: stages.flatMap((stage) =>
+      stage.messageIds.map((messageId) => ({
+        messageId,
+        timestamp: 1_700_000_000 + messageId,
+        senderId: stage.actorMemberId,
+        role: messageId === id ? ('core' as const) : ('stage' as const),
+      }))
+    ),
+    details: {
+      kind: 'shared_plan',
+      proposerMemberId,
+      activitySummary: 'the exhibition on Saturday',
+      stages,
+      lastObservedStage: stages[stages.length - 1]!.stage,
+      priorCoverage: proposerMemberId === null ? 'not_covered' : 'covered',
+    },
+  }
+}
+
+function stage(name: SharedPlanStage, actorMemberId: number, messageIds: number[]): SharedPlanStageRecord {
+  return { stage: name, actorMemberId, messageIds, at: 1_700_000_000 + Math.min(...messageIds) }
+}
+
+// 一次结果里混着五种 kind，K1 的分享事件与 K4 的好消息事件可以共用同一条核心消息。
 const mixedEvents = [
   ...events,
   supportEvent(2, 1, 'auto', 'visible_response', ['acknowledges_feeling']),
@@ -258,12 +306,18 @@ const mixedEvents = [
   goodNewsEvent(5, 2, 'auto', 'visible_response', ['congratulates_or_affirms']),
   followUpEvent(9, 2, 'auto', 1),
   followUpEvent(10, 2, 'uncertain', null),
+  sharedPlanEvent(20, 1, 'auto', [stage('proposed', 1, [20]), stage('mutually_confirmed', 2, [21, 22])]),
+  sharedPlanEvent(30, null, 'uncertain', [stage('retrospective_mentioned', 2, [30])]),
 ]
 
 test('each card only sees its own kind, so a response event is never counted as personal sharing', () => {
   assert.deepEqual(
     selectSharingEvents(mixedEvents).map((item) => item.id),
     events.map((item) => item.id)
+  )
+  assert.deepEqual(
+    selectSharedPlanEvents(mixedEvents).map((item) => item.id),
+    ['shared_plan:20', 'shared_plan:30']
   )
   assert.deepEqual(
     selectSupportEvents(mixedEvents).map((item) => item.id),
@@ -382,4 +436,138 @@ test('excluded response events are split out the same way as sharing events', ()
     excluded.map((item) => item.id),
     ['support_response:8']
   )
+})
+
+const planSummary: SharedPlanSummary = {
+  kind: 'shared_plan',
+  newlyProposed: 2,
+  updatedInRange: 3,
+  byLastStage: {
+    proposed: 0,
+    discussed: 1,
+    mutually_confirmed: 1,
+    rescheduled: 0,
+    cancelled: 0,
+    retrospective_mentioned: 1,
+  },
+  proposedBy: { 1: 2, 2: 0 },
+  confirmedBy: { 1: 0, 2: 1 },
+}
+
+test('the shared plan card reads its own summary, and shows zeros when that kind is missing', () => {
+  const summaries: IntimacyKindSummary[] = [
+    { kind: 'sharing', members: summarizeIntimacyEvents(events, members) },
+    { kind: 'follow_up', members: followUpMembers },
+    planSummary,
+  ]
+
+  assert.deepEqual(selectSharedPlanSummary(summaries), planSummary)
+  assert.equal(selectSharedPlanSummary([summaries[0]!, summaries[1]!]), null)
+  assert.deepEqual(
+    buildSharedPlanStageCounts(null).map((cell) => cell.count),
+    [0, 0, 0, 0, 0, 0]
+  )
+  assert.deepEqual(buildSharedPlanMemberCounts(null, members), [
+    { memberId: 1, proposed: 0, confirmed: 0 },
+    { memberId: 2, proposed: 0, confirmed: 0 },
+  ])
+})
+
+test('the six stage cells split the plans updated in range, not the ones newly suggested', () => {
+  const cells = buildSharedPlanStageCounts(planSummary)
+
+  assert.deepEqual(
+    cells.map((cell) => cell.stage),
+    ['proposed', 'discussed', 'mutually_confirmed', 'rescheduled', 'cancelled', 'retrospective_mentioned']
+  )
+  assert.deepEqual(
+    cells.map((cell) => cell.labelKey),
+    [
+      'views.intimacy.planStage.proposed',
+      'views.intimacy.planStage.discussed',
+      'views.intimacy.planStage.mutuallyConfirmed',
+      'views.intimacy.planStage.rescheduled',
+      'views.intimacy.planStage.cancelled',
+      'views.intimacy.planStage.retrospectiveMentioned',
+    ]
+  )
+  assert.equal(
+    cells.reduce((total, cell) => total + cell.count, 0),
+    planSummary.updatedInRange
+  )
+  assert.notEqual(planSummary.updatedInRange, planSummary.newlyProposed)
+})
+
+test('who suggested and who agreed are read per member, so neither column borrows the other total', () => {
+  assert.deepEqual(buildSharedPlanMemberCounts(planSummary, members), [
+    { memberId: 1, proposed: 2, confirmed: 0 },
+    { memberId: 2, proposed: 0, confirmed: 1 },
+  ])
+  // 汇总里没有这个成员时显示 0，而不是崩在 undefined 上。
+  assert.deepEqual(buildSharedPlanMemberCounts(planSummary, [{ memberId: 3, name: 'C', isOwner: false }]), [
+    { memberId: 3, proposed: 0, confirmed: 0 },
+  ])
+})
+
+/**
+ * 候选面板拼出来的时间线要和后端同一套发送者规则对上：拼错时后端会 400，
+ * 用户看到的却只是「无法确认这个事件」，所以这一遍检查要在点选的当场拦住。
+ */
+const senders = new Map([
+  [10, 1],
+  [11, 2],
+  [12, 1],
+  [13, 2],
+])
+
+function resolve(drafts: SharedPlanStageDraft[]) {
+  return resolveSharedPlanStages(drafts, (messageId) => senders.get(messageId))
+}
+
+test('a timeline the backend accepts resolves to the participant who acted in each step', () => {
+  const resolved = resolve([
+    { stage: 'proposed', messageIds: [10] },
+    { stage: 'discussed', messageIds: [11] },
+    // 「双方确认」引用两条：对方摆出可执行的安排（12），本人随后同意（13）
+    { stage: 'mutually_confirmed', messageIds: [13, 12] },
+  ])
+
+  assert.equal(resolved.errorKey, null)
+  assert.deepEqual(resolved.stages, [
+    { stage: 'proposed', actorMemberId: 1, messageIds: [10] },
+    { stage: 'discussed', actorMemberId: 2, messageIds: [11] },
+    // 同意在后，所以行为者是后说话的那一方，消息按 id 升序送出去
+    { stage: 'mutually_confirmed', actorMemberId: 2, messageIds: [12, 13] },
+  ])
+})
+
+test('a step the backend would reject is named before the request is sent', () => {
+  const cases: Array<[string, SharedPlanStageDraft[], string]> = [
+    ['a step with no messages at all', [], 'views.intimacy.k5.stageNeedsMessage'],
+    [
+      'a message that is not in the search results',
+      [{ stage: 'proposed', messageIds: [99] }],
+      'views.intimacy.k5.stageNeedsMessage',
+    ],
+    [
+      'two people in one ordinary step',
+      [
+        { stage: 'proposed', messageIds: [10] },
+        { stage: 'discussed', messageIds: [11, 12] },
+      ],
+      'views.intimacy.k5.oneSenderPerStage',
+    ],
+    [
+      'a mutual confirmation with only one side',
+      [
+        { stage: 'proposed', messageIds: [10] },
+        { stage: 'mutually_confirmed', messageIds: [11] },
+      ],
+      'views.intimacy.k5.confirmNeedsBoth',
+    ],
+  ]
+
+  for (const [name, drafts, errorKey] of cases) {
+    assert.equal(resolve(drafts).errorKey, errorKey, name)
+  }
 })
