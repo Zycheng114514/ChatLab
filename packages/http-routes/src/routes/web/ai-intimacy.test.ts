@@ -238,6 +238,52 @@ test('confirmed events and reviews stay inside one session and refuse a stale re
   )
   assert.equal(pair.subjectMemberId, 1, 'the participant who was asked is the subject')
 
+  // A confirmed arrangement carries its stages inside the details, so the route has to hand them over untouched.
+  const sharedPlan = await app.inject({
+    method: 'POST',
+    url: '/_web/sessions/private/intimacy/events',
+    payload: {
+      kind: 'shared_plan',
+      subjectMemberId: 1,
+      coreMessageIds: [1],
+      details: {
+        activitySummary: '周末一起吃饭',
+        stages: [
+          { stage: 'proposed', actorMemberId: 1, messageIds: [1] },
+          { stage: 'mutually_confirmed', actorMemberId: 2, messageIds: [1, 2] },
+        ],
+      },
+    },
+  })
+  assert.equal(sharedPlan.statusCode, 200)
+  const plan = sharedPlan.json().events.find((item: { id: string }) => item.id === 'shared_plan:1')
+  assert.equal(plan.details.lastObservedStage, 'mutually_confirmed')
+  assert.deepEqual(
+    plan.evidence.map((item: { messageId: number; role: string }) => [item.messageId, item.role]),
+    [
+      [1, 'core'],
+      [2, 'stage'],
+    ]
+  )
+
+  const movedPlan = await app.inject({
+    method: 'PUT',
+    url: '/_web/sessions/private/intimacy/events/shared_plan:1/review',
+    payload: { decision: 'included', expectedRevision: 1, details: { lastObservedStage: 'cancelled' } },
+  })
+  assert.equal(movedPlan.statusCode, 200)
+  assert.equal(
+    movedPlan.json().events.find((item: { id: string }) => item.id === 'shared_plan:1').details.lastObservedStage,
+    'cancelled'
+  )
+
+  const unknownStage = await app.inject({
+    method: 'PUT',
+    url: '/_web/sessions/private/intimacy/events/shared_plan:1/review',
+    payload: { decision: 'included', expectedRevision: 2, details: { lastObservedStage: 'agreed' } },
+  })
+  assert.equal(unknownStage.statusCode, 400, 'where an arrangement stands is one of the six stages')
+
   const ownEarlierMessage = await app.inject({
     method: 'POST',
     url: '/_web/sessions/private/intimacy/events',
@@ -283,7 +329,7 @@ test('confirmed events and reviews stay inside one session and refuse a stale re
       .json()
       .events.map((item: { id: string }) => item.id)
       .sort(),
-    ['follow_up:2', 'sharing:1', 'support_response:1'],
+    ['follow_up:2', 'shared_plan:1', 'sharing:1', 'support_response:1'],
     'the results contain every kind without asking for one'
   )
 

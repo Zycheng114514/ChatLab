@@ -6,6 +6,8 @@ import test from 'node:test'
 import Database from 'better-sqlite3'
 import { CHAT_DB_SCHEMA, type PathProvider } from '@openchatlab/core'
 import type {
+  CreateIntimacyEventRequest,
+  CreateSharedPlanDetails,
   FollowUpDetails,
   GoodNewsResponseDetails,
   IntimacyEvent,
@@ -13,6 +15,9 @@ import type {
   IntimacyMemberSummary,
   IntimacyResponseMemberSummary,
   IntimacyResults,
+  SharedPlanDetails,
+  SharedPlanStage,
+  SharedPlanSummary,
   SharingDetails,
   SupportResponseDetails,
 } from '@openchatlab/shared-types'
@@ -26,7 +31,7 @@ import { createIntimacyService, type IntimacyService } from './service'
 const nativeBinding = path.resolve('apps/cli/native/better_sqlite3.node')
 const baseTs = Date.parse('2026-05-01T08:00:00.000Z') / 1000
 const baseNow = Date.parse('2026-05-02T08:00:00.000Z')
-const MESSAGE_COUNT = 61
+const MESSAGE_COUNT = 81
 
 /** Ids of the hand-written messages inside the generated filler; senders alternate by parity. */
 const ALICE_FIRST_SHARING = 5
@@ -55,6 +60,41 @@ const ALICE_LICENCE_QUESTION = 57
 const ALICE_VAGUE_QUESTION = 59
 const ALICE_UNMATCHABLE_QUESTION = 61
 const BOB_PHONE_NUMBER = '13800001111'
+
+/** Long enough to end the window it lands in, so the arrangements after it start a window of their own. */
+const WINDOW_BREAK_BEFORE_PLANS = 62
+/** One arrangement proposed, discussed and agreed inside a single window. */
+const ALICE_EXHIBITION_PROPOSAL = 63
+const BOB_EXHIBITION_QUESTION = 64
+const ALICE_EXHIBITION_TICKETS = 65
+const BOB_EXHIBITION_AGREES = 66
+/** One arrangement moved twice before it is agreed. */
+const ALICE_HOTPOT_PROPOSAL = 67
+const BOB_HOTPOT_MOVES_IT = 68
+const ALICE_HOTPOT_MOVES_IT_AGAIN = 69
+const BOB_HOTPOT_AGREES = 70
+/** One arrangement called off and then agreed after all. */
+const ALICE_PARENTS_PROPOSAL = 71
+const BOB_PARENTS_CALLS_OFF = 72
+const ALICE_PARENTS_BOOKS_TICKETS = 73
+const BOB_PARENTS_AGREES = 74
+/** Proposed at the end of its window, so the look back on it only arrives as the next window opens. */
+const ALICE_HIKE_PROPOSAL = 75
+const BOB_HIKE_LOOKBACK = 76
+const WINDOW_BREAK_BEFORE_LATER_STAGES = 77
+/** Later stages with no proposal in their window: one belongs to an earlier plan, one to nothing coded. */
+const BOB_EXHIBITION_LOOKBACK = 78
+const ALICE_BADMINTON_LOOKBACK = 79
+/** Two months on, the same activity is arranged again: another arrangement, not the old one moved. */
+const BOB_SECOND_HOTPOT_PROPOSAL = 80
+const ALICE_SECOND_HOTPOT_AGREES = 81
+const SECOND_HOTPOT_TS = baseTs + 45 * 24 * 60 * 60
+
+const PLAN_EXHIBITION = '周六下午看摄影展'
+const PLAN_HOTPOT = '一起吃火锅'
+const PLAN_PARENTS = '周末回家看爸妈'
+const PLAN_HIKE = '周日爬山'
+const PLAN_BADMINTON = '打羽毛球'
 
 const MATTER_DECORATION = '客厅装修'
 const MATTER_VISIT = '妈妈来住'
@@ -110,7 +150,8 @@ function createSession(root: string, chatType: 'private' | 'group' = 'private'):
   db.prepare("INSERT INTO member (id, platform_id, account_name) VALUES (2, 'bob', 'Bob')").run()
   db.prepare("INSERT INTO member (id, platform_id, account_name) VALUES (3, 'system', '系统消息')").run()
 
-  const written = new Map<number, { type: number; content: string | null }>([
+  const filler = `${'闲聊 filler '.repeat(40)}`
+  const written = new Map<number, { type: number; content: string | null; ts?: number }>([
     [ALICE_FIRST_SHARING, { type: 0, content: '这周项目终于上线了，我连着加了三天班，现在整个人是空的' }],
     [BOB_RELAYED_THIRD_PARTY, { type: 0, content: '她说她很难过，我不知道该怎么接这句话' }],
     [ALICE_CONTINUED_SHARING, { type: 0, content: 'The launch is finally out, and I am mostly relieved now.' }],
@@ -139,6 +180,26 @@ function createSession(root: string, chatType: 'private' | 'group' = 'private'):
     [ALICE_LICENCE_QUESTION, { type: 0, content: '驾照换好了吗' }],
     [ALICE_VAGUE_QUESTION, { type: 0, content: '你最近怎么样' }],
     [ALICE_UNMATCHABLE_QUESTION, { type: 0, content: '那次复查医生怎么说' }],
+    [WINDOW_BREAK_BEFORE_PLANS, { type: 0, content: filler.repeat(13) }],
+    [ALICE_EXHIBITION_PROPOSAL, { type: 0, content: '周六去看那个摄影展吧' }],
+    [BOB_EXHIBITION_QUESTION, { type: 0, content: '几点的票？下午还是晚上' }],
+    [ALICE_EXHIBITION_TICKETS, { type: 0, content: '下午三点场，我买两张' }],
+    [BOB_EXHIBITION_AGREES, { type: 0, content: '好，那就周六下午三点' }],
+    [ALICE_HOTPOT_PROPOSAL, { type: 0, content: '下周三一起去吃那家火锅' }],
+    [BOB_HOTPOT_MOVES_IT, { type: 0, content: '下周三我有事，改成周四行吗' }],
+    [ALICE_HOTPOT_MOVES_IT_AGAIN, { type: 0, content: '周四我也不行，那改周五吧' }],
+    [BOB_HOTPOT_AGREES, { type: 0, content: '周五可以，就周五' }],
+    [ALICE_PARENTS_PROPOSAL, { type: 0, content: '这周末回家看爸妈吧' }],
+    [BOB_PARENTS_CALLS_OFF, { type: 0, content: '这周末算了，我实在走不开' }],
+    [ALICE_PARENTS_BOOKS_TICKETS, { type: 0, content: '我把车票订了，我们还是去吧' }],
+    [BOB_PARENTS_AGREES, { type: 0, content: '行，就按你订的走' }],
+    [ALICE_HIKE_PROPOSAL, { type: 0, content: '周日一起去爬山吧，早上八点出发' }],
+    [BOB_HIKE_LOOKBACK, { type: 0, content: `昨天爬山回来腿还酸，风景是真好。${filler.repeat(13)}` }],
+    [WINDOW_BREAK_BEFORE_LATER_STAGES, { type: 0, content: filler.repeat(13) }],
+    [BOB_EXHIBITION_LOOKBACK, { type: 0, content: '上次那个摄影展的票根我还留着' }],
+    [ALICE_BADMINTON_LOOKBACK, { type: 0, content: '羽毛球那次真的太累了' }],
+    [BOB_SECOND_HOTPOT_PROPOSAL, { type: 0, content: '下个月再去那家火锅店吧', ts: SECOND_HOTPOT_TS }],
+    [ALICE_SECOND_HOTPOT_AGREES, { type: 0, content: '好啊，那就下个月', ts: SECOND_HOTPOT_TS + 60 }],
   ])
   const insert = db.prepare('INSERT INTO message (id, sender_id, ts, type, content) VALUES (?, ?, ?, ?, ?)')
   db.transaction(() => {
@@ -147,9 +208,9 @@ function createSession(root: string, chatType: 'private' | 'group' = 'private'):
       insert.run(
         id,
         id % 2 === 1 ? 1 : 2,
-        baseTs + id * 60,
+        custom?.ts ?? baseTs + id * 60,
         custom?.type ?? 0,
-        custom ? custom.content : `${'闲聊 filler '.repeat(40)}${id}`
+        custom ? custom.content : `${filler}${id}`
       )
     }
     insert.run(MESSAGE_COUNT + 1, 3, baseTs + 10, 80, '对方撤回了一条消息')
@@ -177,6 +238,12 @@ interface PromptMatch {
   matter: string
   questionIds: number[]
   candidateIds: number[]
+}
+
+/** One association call for an arrangement: what the new messages are about and the plans offered for them. */
+interface PromptPlanMatch {
+  activity: string
+  candidateEventIds: string[]
 }
 
 const MESSAGE_LINE = /^(\d+) ([AB]) (\d\d:\d\d) (.*)$/
@@ -236,6 +303,13 @@ function readMatch(userPrompt: string): PromptMatch {
   return { matter: matter[1]!, questionIds, candidateIds }
 }
 
+function readPlanMatch(userPrompt: string): PromptPlanMatch {
+  const activity = /The new messages are about: (.*)/.exec(userPrompt)
+  assert.ok(activity)
+  const candidateEventIds = [...userPrompt.matchAll(/^Plan (\S+) —/gm)].map((match) => match[1]!)
+  return { activity: activity[1]!, candidateEventIds }
+}
+
 function sharingEvent(event: Record<string, unknown>): Record<string, unknown> {
   return {
     kind: 'sharing',
@@ -258,6 +332,17 @@ function goodNewsEvent(event: Record<string, unknown>): Record<string, unknown> 
     positiveForSharer: 'explicit_or_context_supported',
     confidence: 'clear',
     continuesContextEvent: false,
+    observation: 'sufficient',
+    reason: 'synthetic coding decision',
+    ...event,
+  }
+}
+
+function sharedPlanEvent(event: Record<string, unknown>): Record<string, unknown> {
+  return {
+    kind: 'shared_plan',
+    continuesContextEvent: false,
+    confidence: 'clear',
     observation: 'sufficient',
     reason: 'synthetic coding decision',
     ...event,
@@ -442,7 +527,119 @@ function defaultWindowResponse(window: PromptWindow): string {
       })
     )
   }
+  events.push(...sharedPlanEvents(own, asContext))
   return JSON.stringify({ events })
+}
+
+/**
+ * The arrangements the windows show: one proposed, discussed and agreed on the spot, one moved twice before it is
+ * agreed, one called off and then agreed after all, one whose look back only arrives in the next window, two later
+ * stages with no proposal of their own, and the same activity arranged again two months on.
+ */
+function sharedPlanEvents(own: (id: number) => boolean, asContext: (id: number) => boolean): Record<string, unknown>[] {
+  const events: Record<string, unknown>[] = []
+  if (own(ALICE_EXHIBITION_PROPOSAL)) {
+    events.push(
+      sharedPlanEvent({
+        proposer: 'A',
+        coreMessageIds: [ALICE_EXHIBITION_PROPOSAL],
+        activitySummary: PLAN_EXHIBITION,
+        stages: [
+          { stage: 'proposed', actor: 'A', messageIds: [ALICE_EXHIBITION_PROPOSAL] },
+          { stage: 'discussed', actor: 'B', messageIds: [BOB_EXHIBITION_QUESTION] },
+          {
+            stage: 'mutually_confirmed',
+            actor: 'B',
+            messageIds: [ALICE_EXHIBITION_TICKETS, BOB_EXHIBITION_AGREES],
+          },
+        ],
+      }),
+      sharedPlanEvent({
+        proposer: 'A',
+        coreMessageIds: [ALICE_HOTPOT_PROPOSAL],
+        activitySummary: PLAN_HOTPOT,
+        stages: [
+          { stage: 'proposed', actor: 'A', messageIds: [ALICE_HOTPOT_PROPOSAL] },
+          { stage: 'rescheduled', actor: 'B', messageIds: [BOB_HOTPOT_MOVES_IT] },
+          { stage: 'rescheduled', actor: 'A', messageIds: [ALICE_HOTPOT_MOVES_IT_AGAIN] },
+          {
+            stage: 'mutually_confirmed',
+            actor: 'B',
+            messageIds: [ALICE_HOTPOT_MOVES_IT_AGAIN, BOB_HOTPOT_AGREES],
+          },
+        ],
+      }),
+      sharedPlanEvent({
+        proposer: 'A',
+        coreMessageIds: [ALICE_PARENTS_PROPOSAL],
+        activitySummary: PLAN_PARENTS,
+        stages: [
+          { stage: 'proposed', actor: 'A', messageIds: [ALICE_PARENTS_PROPOSAL] },
+          { stage: 'cancelled', actor: 'B', messageIds: [BOB_PARENTS_CALLS_OFF] },
+          { stage: 'discussed', actor: 'A', messageIds: [ALICE_PARENTS_BOOKS_TICKETS] },
+          {
+            stage: 'mutually_confirmed',
+            actor: 'B',
+            messageIds: [ALICE_PARENTS_BOOKS_TICKETS, BOB_PARENTS_AGREES],
+          },
+        ],
+      })
+    )
+  }
+  if (own(ALICE_HIKE_PROPOSAL)) {
+    events.push(
+      sharedPlanEvent({
+        proposer: 'A',
+        coreMessageIds: [ALICE_HIKE_PROPOSAL],
+        activitySummary: PLAN_HIKE,
+        stages: [{ stage: 'proposed', actor: 'A', messageIds: [ALICE_HIKE_PROPOSAL] }],
+      })
+    )
+  }
+  if (asContext(ALICE_HIKE_PROPOSAL) && own(BOB_HIKE_LOOKBACK)) {
+    events.push(
+      sharedPlanEvent({
+        activitySummary: PLAN_HIKE,
+        continuesContextEvent: true,
+        stages: [{ stage: 'retrospective_mentioned', actor: 'B', messageIds: [BOB_HIKE_LOOKBACK] }],
+      })
+    )
+  }
+  // Neither of these two windows shows the arrangement being made: the association step has to place them.
+  if (own(BOB_EXHIBITION_LOOKBACK)) {
+    events.push(
+      sharedPlanEvent({
+        activitySummary: PLAN_EXHIBITION,
+        stages: [{ stage: 'retrospective_mentioned', actor: 'B', messageIds: [BOB_EXHIBITION_LOOKBACK] }],
+      })
+    )
+  }
+  if (own(ALICE_BADMINTON_LOOKBACK)) {
+    events.push(
+      sharedPlanEvent({
+        activitySummary: PLAN_BADMINTON,
+        stages: [{ stage: 'retrospective_mentioned', actor: 'A', messageIds: [ALICE_BADMINTON_LOOKBACK] }],
+      })
+    )
+  }
+  if (own(BOB_SECOND_HOTPOT_PROPOSAL)) {
+    events.push(
+      sharedPlanEvent({
+        proposer: 'B',
+        coreMessageIds: [BOB_SECOND_HOTPOT_PROPOSAL],
+        activitySummary: PLAN_HOTPOT,
+        stages: [
+          { stage: 'proposed', actor: 'B', messageIds: [BOB_SECOND_HOTPOT_PROPOSAL] },
+          {
+            stage: 'mutually_confirmed',
+            actor: 'A',
+            messageIds: [BOB_SECOND_HOTPOT_PROPOSAL, ALICE_SECOND_HOTPOT_AGREES],
+          },
+        ],
+      })
+    )
+  }
+  return events
 }
 
 /**
@@ -458,6 +655,14 @@ function defaultMatchResponse(match: PromptMatch): string {
   }
   if (match.matter === MATTER_REVIEW) return JSON.stringify({ priorMessageIds: [9999], match: 'supported' })
   return JSON.stringify({ priorMessageIds: [], match: 'uncertain' })
+}
+
+/** The look back on the exhibition belongs to the arrangement that was made for it; the badminton one to nothing. */
+function defaultPlanMatchResponse(match: PromptPlanMatch): string {
+  if (match.activity === PLAN_EXHIBITION) {
+    return JSON.stringify({ planEventId: `shared_plan:${ALICE_EXHIBITION_PROPOSAL}`, match: 'supported' })
+  }
+  return JSON.stringify({ planEventId: null, match: 'uncertain' })
 }
 
 interface Harness {
@@ -527,23 +732,32 @@ function createHarness(
 
 function modelStub(
   respond: (window: PromptWindow, calls: number) => string | Promise<string>,
-  matchRespond: (match: PromptMatch) => string = defaultMatchResponse
+  matchRespond: (match: PromptMatch) => string = defaultMatchResponse,
+  planMatchRespond: (match: PromptPlanMatch) => string = defaultPlanMatchResponse
 ): {
   client: ChatTopicModelClient
   windows: number[]
   matches: PromptMatch[]
+  planMatches: PromptPlanMatch[]
 } {
   const windows: number[] = []
   const matches: PromptMatch[] = []
+  const planMatches: PromptPlanMatch[] = []
   let calls = 0
   return {
     windows,
     matches,
+    planMatches,
     client: {
       modelId: 'test/model',
       async complete(prompts) {
         calls += 1
-        // The matching step reuses the same client, so the stub answers whichever prompt it was given.
+        // Every step reuses the same client, so the stub answers whichever prompt it was given.
+        if (prompts.userPrompt.includes('The new messages are about: ')) {
+          const match = readPlanMatch(prompts.userPrompt)
+          planMatches.push(match)
+          return { text: planMatchRespond(match), inputTokens: 3, outputTokens: 2 }
+        }
         if (!prompts.userPrompt.includes('\nWindow ')) {
           const match = readMatch(prompts.userPrompt)
           matches.push(match)
@@ -600,6 +814,22 @@ function followUpDetails(event: IntimacyEvent): FollowUpDetails {
   return event.details
 }
 
+function sharedPlanDetails(event: IntimacyEvent): SharedPlanDetails {
+  assert.ok(event.details.kind === 'shared_plan')
+  return event.details
+}
+
+/** The timeline of an arrangement as the card would read it: what happened, who did it, and where it is said. */
+function planStages(event: IntimacyEvent): Array<[SharedPlanStage, number, number[]]> {
+  return sharedPlanDetails(event).stages.map((stage) => [stage.stage, stage.actorMemberId, stage.messageIds])
+}
+
+function sharedPlanSummary(results: IntimacyResults): SharedPlanSummary {
+  const summary = results.summaries.find((item) => item.kind === 'shared_plan')
+  assert.ok(summary?.kind === 'shared_plan')
+  return summary
+}
+
 function evidenceRoles(event: IntimacyEvent): Array<[number, string]> {
   return event.evidence.map((item) => [item.messageId, item.role])
 }
@@ -640,7 +870,7 @@ test('a full run codes each matter once and keeps a sharing continued across win
     const started = service.start('private', { kinds: ['sharing'], locale: 'zh-CN' })
     assert.ok(started.totalWindows >= 3)
     const run = await waitForRun(service, 'private', started.id, 'completed')
-    assert.equal(run.modelCalls, run.totalWindows + stub.matches.length)
+    assert.equal(run.modelCalls, run.totalWindows + stub.matches.length + stub.planMatches.length)
     assert.equal(run.completedWindows, run.totalWindows)
     assert.deepEqual(run.failedWindowIndexes, [])
 
@@ -1091,7 +1321,7 @@ test('a window the model keeps mis-attributing is skipped while the rest of the 
     assert.deepEqual(run.failedWindowIndexes, [1])
     assert.equal(
       run.modelCalls,
-      run.totalWindows + 1 + stub.matches.length,
+      run.totalWindows + 1 + stub.matches.length + stub.planMatches.length,
       'the invalid window is retried once before it is skipped'
     )
     const results = await service.getResults('private')
@@ -1557,6 +1787,449 @@ test('a revision points an open follow-up question at the earlier message the us
       (error: unknown) => (error as { statusCode?: number }).statusCode === 400,
       'the asker cannot be paired with her own earlier words'
     )
+  } finally {
+    service.close()
+    manager.closeAll()
+  }
+})
+
+test('a run keeps one arrangement per plan, with every stage it went through', async () => {
+  const stub = modelStub((window) => defaultWindowResponse(window))
+  const { service, manager } = createHarness(stub.client)
+
+  try {
+    const started = service.start('private', { kinds: ['shared_plan'] })
+    const run = await waitForRun(service, 'private', started.id, 'completed')
+    assert.deepEqual(run.failedWindowIndexes, [])
+    assert.equal(
+      run.modelCalls,
+      run.totalWindows + stub.matches.length + stub.planMatches.length,
+      'one call per window, plus the calls that place a question or a stage in what came before'
+    )
+
+    const results = await service.getResults('private')
+    assert.deepEqual(
+      results.events.filter((item) => item.kind === 'shared_plan').map((item) => item.id),
+      [
+        `shared_plan:${ALICE_EXHIBITION_PROPOSAL}`,
+        `shared_plan:${ALICE_HOTPOT_PROPOSAL}`,
+        `shared_plan:${ALICE_PARENTS_PROPOSAL}`,
+        `shared_plan:${ALICE_HIKE_PROPOSAL}`,
+        `shared_plan:${ALICE_BADMINTON_LOOKBACK}`,
+        `shared_plan:${BOB_SECOND_HOTPOT_PROPOSAL}`,
+      ]
+    )
+
+    const exhibition = event(results, `shared_plan:${ALICE_EXHIBITION_PROPOSAL}`)
+    assert.equal(exhibition.subjectMemberId, 1, 'the participant who proposed it is the subject')
+    assert.equal(exhibition.otherMemberId, 2)
+    assert.equal(exhibition.status, 'auto')
+    assert.deepEqual(planStages(exhibition), [
+      ['proposed', 1, [ALICE_EXHIBITION_PROPOSAL]],
+      ['discussed', 2, [BOB_EXHIBITION_QUESTION]],
+      ['mutually_confirmed', 2, [ALICE_EXHIBITION_TICKETS, BOB_EXHIBITION_AGREES]],
+      ['retrospective_mentioned', 2, [BOB_EXHIBITION_LOOKBACK]],
+    ])
+    assert.equal(sharedPlanDetails(exhibition).activitySummary, PLAN_EXHIBITION)
+    assert.equal(sharedPlanDetails(exhibition).lastObservedStage, 'retrospective_mentioned')
+    assert.equal(sharedPlanDetails(exhibition).priorCoverage, 'covered')
+    assert.deepEqual(
+      evidenceRoles(exhibition),
+      [
+        [ALICE_EXHIBITION_PROPOSAL, 'core'],
+        [BOB_EXHIBITION_QUESTION, 'stage'],
+        [ALICE_EXHIBITION_TICKETS, 'stage'],
+        [BOB_EXHIBITION_AGREES, 'stage'],
+        [BOB_EXHIBITION_LOOKBACK, 'stage'],
+      ],
+      'the proposal anchors the arrangement and every later stage is evidence of it'
+    )
+
+    const hotpot = event(results, `shared_plan:${ALICE_HOTPOT_PROPOSAL}`)
+    assert.deepEqual(
+      planStages(hotpot),
+      [
+        ['proposed', 1, [ALICE_HOTPOT_PROPOSAL]],
+        ['rescheduled', 2, [BOB_HOTPOT_MOVES_IT]],
+        ['rescheduled', 1, [ALICE_HOTPOT_MOVES_IT_AGAIN]],
+        ['mutually_confirmed', 2, [ALICE_HOTPOT_MOVES_IT_AGAIN, BOB_HOTPOT_AGREES]],
+      ],
+      'an arrangement moved twice is still one arrangement'
+    )
+
+    const parents = event(results, `shared_plan:${ALICE_PARENTS_PROPOSAL}`)
+    assert.deepEqual(
+      planStages(parents),
+      [
+        ['proposed', 1, [ALICE_PARENTS_PROPOSAL]],
+        ['cancelled', 2, [BOB_PARENTS_CALLS_OFF]],
+        ['discussed', 1, [ALICE_PARENTS_BOOKS_TICKETS]],
+        ['mutually_confirmed', 2, [ALICE_PARENTS_BOOKS_TICKETS, BOB_PARENTS_AGREES]],
+      ],
+      'calling something off and settling it after all is one timeline, not two arrangements'
+    )
+    assert.equal(sharedPlanDetails(parents).lastObservedStage, 'mutually_confirmed')
+  } finally {
+    service.close()
+    manager.closeAll()
+  }
+})
+
+test('a look back that only arrives in the next window joins the arrangement it belongs to', async () => {
+  const stub = modelStub((window) => defaultWindowResponse(window))
+  const { service, manager } = createHarness(stub.client)
+
+  try {
+    const started = service.start('private', { kinds: ['shared_plan'] })
+    await waitForRun(service, 'private', started.id, 'completed')
+    const results = await service.getResults('private')
+
+    const hike = event(results, `shared_plan:${ALICE_HIKE_PROPOSAL}`)
+    assert.deepEqual(planStages(hike), [
+      ['proposed', 1, [ALICE_HIKE_PROPOSAL]],
+      ['retrospective_mentioned', 2, [BOB_HIKE_LOOKBACK]],
+    ])
+    assert.equal(
+      results.events.filter((item) => item.id === `shared_plan:${BOB_HIKE_LOOKBACK}`).length,
+      0,
+      'the look back joins the arrangement it continues instead of opening a second one'
+    )
+    assert.deepEqual(
+      stub.planMatches.map((match) => match.activity),
+      [PLAN_EXHIBITION, PLAN_BADMINTON],
+      'an arrangement the window still carries as context is placed without paying for a model call'
+    )
+  } finally {
+    service.close()
+    manager.closeAll()
+  }
+})
+
+test('a stage with no proposal of its own joins an earlier arrangement, or stands alone when none is found', async () => {
+  const stub = modelStub((window) => defaultWindowResponse(window))
+  const { service, manager } = createHarness(stub.client)
+
+  try {
+    const started = service.start('private', { kinds: ['shared_plan'] })
+    await waitForRun(service, 'private', started.id, 'completed')
+    const results = await service.getResults('private')
+
+    assert.deepEqual(
+      stub.planMatches.map((match) => match.candidateEventIds),
+      [
+        [
+          `shared_plan:${ALICE_HIKE_PROPOSAL}`,
+          `shared_plan:${ALICE_PARENTS_PROPOSAL}`,
+          `shared_plan:${ALICE_HOTPOT_PROPOSAL}`,
+          `shared_plan:${ALICE_EXHIBITION_PROPOSAL}`,
+        ],
+        [
+          `shared_plan:${ALICE_HIKE_PROPOSAL}`,
+          `shared_plan:${ALICE_PARENTS_PROPOSAL}`,
+          `shared_plan:${ALICE_HOTPOT_PROPOSAL}`,
+          `shared_plan:${ALICE_EXHIBITION_PROPOSAL}`,
+        ],
+      ],
+      'only the arrangements this run already coded are offered, most recent first'
+    )
+
+    const badminton = event(results, `shared_plan:${ALICE_BADMINTON_LOOKBACK}`)
+    assert.equal(sharedPlanDetails(badminton).proposerMemberId, null, 'nobody is guessed to have proposed it')
+    assert.equal(sharedPlanDetails(badminton).priorCoverage, 'not_covered')
+    assert.equal(badminton.subjectMemberId, 1, 'the participant who looked back on it stands in for the proposer')
+    assert.deepEqual(planStages(badminton), [['retrospective_mentioned', 1, [ALICE_BADMINTON_LOOKBACK]]])
+
+    const laterHotpot = event(results, `shared_plan:${BOB_SECOND_HOTPOT_PROPOSAL}`)
+    assert.equal(sharedPlanDetails(laterHotpot).proposerMemberId, 2)
+    assert.deepEqual(planStages(laterHotpot), [
+      ['proposed', 2, [BOB_SECOND_HOTPOT_PROPOSAL]],
+      ['mutually_confirmed', 1, [BOB_SECOND_HOTPOT_PROPOSAL, ALICE_SECOND_HOTPOT_AGREES]],
+    ])
+    assert.deepEqual(
+      planStages(event(results, `shared_plan:${ALICE_HOTPOT_PROPOSAL}`)).map((stage) => stage[0]),
+      ['proposed', 'rescheduled', 'rescheduled', 'mutually_confirmed'],
+      'the same activity arranged again six weeks later is its own arrangement, not the first one moved'
+    )
+  } finally {
+    service.close()
+    manager.closeAll()
+  }
+})
+
+test('shared plan counts separate what was newly proposed from what only moved, and a past view stops where it ended', async () => {
+  const stub = modelStub((window) => defaultWindowResponse(window))
+  const { service, manager } = createHarness(stub.client)
+
+  try {
+    const started = service.start('private', { kinds: ['shared_plan'] })
+    await waitForRun(service, 'private', started.id, 'completed')
+
+    const results = await service.getResults('private')
+    const summary = sharedPlanSummary(results)
+    assert.deepEqual(summary, {
+      kind: 'shared_plan',
+      newlyProposed: 5,
+      updatedInRange: 6,
+      byLastStage: {
+        proposed: 0,
+        discussed: 0,
+        mutually_confirmed: 3,
+        rescheduled: 0,
+        cancelled: 0,
+        retrospective_mentioned: 3,
+      },
+      proposedBy: { 1: 4, 2: 1 },
+      confirmedBy: { 1: 1, 2: 3 },
+    })
+    assert.equal(
+      Object.values(summary.byLastStage).reduce((sum, count) => sum + count, 0),
+      results.events.filter((item) => item.kind === 'shared_plan').length,
+      'every arrangement on the list stands somewhere, and stands there once'
+    )
+
+    // A view that ends the day the visit home was called off knows nothing of it being settled afterwards.
+    const early = await service.getResults('private', { endTs: baseTs + BOB_PARENTS_CALLS_OFF * 60 })
+    assert.deepEqual(
+      early.events.filter((item) => item.kind === 'shared_plan').map((item) => item.id),
+      [
+        `shared_plan:${ALICE_EXHIBITION_PROPOSAL}`,
+        `shared_plan:${ALICE_HOTPOT_PROPOSAL}`,
+        `shared_plan:${ALICE_PARENTS_PROPOSAL}`,
+      ]
+    )
+    assert.equal(
+      sharedPlanDetails(event(early, `shared_plan:${ALICE_EXHIBITION_PROPOSAL}`)).lastObservedStage,
+      'mutually_confirmed',
+      'the look back weeks later does not leak into a view of the day it was settled'
+    )
+    assert.deepEqual(
+      planStages(event(early, `shared_plan:${ALICE_PARENTS_PROPOSAL}`)).map((stage) => stage[0]),
+      ['proposed', 'cancelled']
+    )
+    assert.equal(sharedPlanSummary(early).newlyProposed, 3)
+    assert.equal(sharedPlanSummary(early).updatedInRange, 3)
+    assert.equal(sharedPlanSummary(early).byLastStage.cancelled, 1)
+
+    // A view of the last few days lists an arrangement made earlier, because it moved inside the range.
+    const late = await service.getResults('private', { startTs: baseTs + BOB_EXHIBITION_LOOKBACK * 60 })
+    assert.deepEqual(
+      late.events.filter((item) => item.kind === 'shared_plan').map((item) => item.id),
+      [
+        `shared_plan:${ALICE_EXHIBITION_PROPOSAL}`,
+        `shared_plan:${ALICE_BADMINTON_LOOKBACK}`,
+        `shared_plan:${BOB_SECOND_HOTPOT_PROPOSAL}`,
+      ]
+    )
+    assert.equal(sharedPlanSummary(late).updatedInRange, 3)
+    assert.equal(
+      sharedPlanSummary(late).newlyProposed,
+      1,
+      'an arrangement proposed before the range only counts as one that moved inside it'
+    )
+  } finally {
+    service.close()
+    manager.closeAll()
+  }
+})
+
+test('a user can confirm an arrangement by hand and is refused one the chat does not show', async () => {
+  const { service, manager } = createHarness(null)
+  const stages = [
+    { stage: 'proposed' as const, actorMemberId: 1, messageIds: [ALICE_EXHIBITION_PROPOSAL] },
+    { stage: 'discussed' as const, actorMemberId: 2, messageIds: [BOB_EXHIBITION_QUESTION] },
+    {
+      stage: 'mutually_confirmed' as const,
+      actorMemberId: 2,
+      messageIds: [ALICE_EXHIBITION_TICKETS, BOB_EXHIBITION_AGREES],
+    },
+  ]
+
+  try {
+    const created = await service.createUserEvent('private', {
+      kind: 'shared_plan',
+      subjectMemberId: 1,
+      coreMessageIds: [ALICE_EXHIBITION_PROPOSAL],
+      details: { activitySummary: PLAN_EXHIBITION, stages },
+    })
+
+    const plan = event(created, `shared_plan:${ALICE_EXHIBITION_PROPOSAL}`)
+    assert.equal(plan.origin, 'user')
+    assert.equal(plan.status, 'confirmed')
+    assert.equal(plan.runId, null)
+    assert.deepEqual(evidenceRoles(plan), [
+      [ALICE_EXHIBITION_PROPOSAL, 'core'],
+      [BOB_EXHIBITION_QUESTION, 'stage'],
+      [ALICE_EXHIBITION_TICKETS, 'stage'],
+      [BOB_EXHIBITION_AGREES, 'stage'],
+    ])
+    assert.equal(sharedPlanDetails(plan).lastObservedStage, 'mutually_confirmed')
+    assert.equal(sharedPlanDetails(plan).priorCoverage, 'covered')
+    assert.equal(sharedPlanSummary(created).newlyProposed, 1)
+    assert.equal(sharedPlanSummary(created).byLastStage.mutually_confirmed, 1)
+    assert.deepEqual(sharedPlanSummary(created).proposedBy, { 1: 1, 2: 0 })
+    assert.deepEqual(sharedPlanSummary(created).confirmedBy, { 1: 0, 2: 1 })
+
+    // Confirming the same proposal again says where the arrangement stands now, it does not arrange it twice.
+    const again = await service.createUserEvent('private', {
+      kind: 'shared_plan',
+      subjectMemberId: 1,
+      coreMessageIds: [ALICE_EXHIBITION_PROPOSAL],
+      details: {
+        activitySummary: PLAN_EXHIBITION,
+        stages: [stages[0]!, { stage: 'cancelled', actorMemberId: 2, messageIds: [BOB_PARENTS_CALLS_OFF] }],
+      },
+    })
+    assert.equal(again.events.filter((item) => item.kind === 'shared_plan').length, 1)
+    assert.equal(
+      sharedPlanDetails(event(again, `shared_plan:${ALICE_EXHIBITION_PROPOSAL}`)).lastObservedStage,
+      'cancelled'
+    )
+    assert.equal(sharedPlanSummary(again).byLastStage.cancelled, 1)
+    assert.equal(sharedPlanSummary(again).byLastStage.mutually_confirmed, 0)
+    assert.equal(sharedPlanSummary(again).updatedInRange, 1)
+
+    service.clearResults('private', { includeReviews: false })
+    const kept = await service.getResults('private')
+    assert.equal(kept.events.length, 1, 'an arrangement the user confirmed is a decision, not a generated result')
+    assert.equal(service.clearResults('private', { includeReviews: true }), true)
+    assert.equal((await service.getResults('private')).events.length, 0, 'a full reset does throw it away')
+
+    const rejected: Array<[string, Partial<CreateIntimacyEventRequest> & { details: CreateSharedPlanDetails }]> = [
+      [
+        'a mutual confirmation only one of them took part in',
+        {
+          coreMessageIds: [ALICE_PARENTS_PROPOSAL],
+          details: {
+            activitySummary: PLAN_PARENTS,
+            stages: [
+              { stage: 'proposed', actorMemberId: 1, messageIds: [ALICE_PARENTS_PROPOSAL] },
+              { stage: 'mutually_confirmed', actorMemberId: 2, messageIds: [BOB_PARENTS_AGREES] },
+            ],
+          },
+        },
+      ],
+      [
+        'a proposal the other participant sent',
+        {
+          coreMessageIds: [BOB_HOTPOT_MOVES_IT],
+          details: {
+            activitySummary: PLAN_HOTPOT,
+            stages: [{ stage: 'proposed', actorMemberId: 2, messageIds: [BOB_HOTPOT_MOVES_IT] }],
+          },
+        },
+      ],
+      [
+        'a stage the participant acting never sent',
+        {
+          coreMessageIds: [ALICE_PARENTS_PROPOSAL],
+          details: {
+            activitySummary: PLAN_PARENTS,
+            stages: [
+              { stage: 'proposed', actorMemberId: 1, messageIds: [ALICE_PARENTS_PROPOSAL] },
+              { stage: 'cancelled', actorMemberId: 1, messageIds: [BOB_PARENTS_CALLS_OFF] },
+            ],
+          },
+        },
+      ],
+      [
+        'a proposal that is not one of the stages',
+        {
+          coreMessageIds: [ALICE_PARENTS_PROPOSAL],
+          details: {
+            activitySummary: PLAN_PARENTS,
+            stages: [{ stage: 'cancelled', actorMemberId: 2, messageIds: [BOB_PARENTS_CALLS_OFF] }],
+          },
+        },
+      ],
+      [
+        'an arrangement with no stage at all',
+        { coreMessageIds: [ALICE_PARENTS_PROPOSAL], details: { activitySummary: PLAN_PARENTS, stages: [] } },
+      ],
+      [
+        'an unknown stage',
+        {
+          coreMessageIds: [ALICE_PARENTS_PROPOSAL],
+          details: {
+            activitySummary: PLAN_PARENTS,
+            stages: [{ stage: 'agreed' as SharedPlanStage, actorMemberId: 1, messageIds: [ALICE_PARENTS_PROPOSAL] }],
+          },
+        },
+      ],
+      [
+        'an arrangement with no activity to name it by',
+        {
+          coreMessageIds: [ALICE_PARENTS_PROPOSAL],
+          details: {
+            activitySummary: '  ',
+            stages: [{ stage: 'proposed', actorMemberId: 1, messageIds: [ALICE_PARENTS_PROPOSAL] }],
+          },
+        },
+      ],
+    ]
+    for (const [name, request] of rejected) {
+      await assert.rejects(
+        () =>
+          service.createUserEvent('private', {
+            kind: 'shared_plan',
+            subjectMemberId: 1,
+            coreMessageIds: [],
+            ...request,
+          }),
+        (error: unknown) => (error as { statusCode?: number }).statusCode === 400,
+        name
+      )
+    }
+  } finally {
+    service.close()
+    manager.closeAll()
+  }
+})
+
+test('a revision says where an arrangement stands and survives the next analysis', async () => {
+  const stub = modelStub((window) => defaultWindowResponse(window))
+  const { service, manager, advance } = createHarness(stub.client)
+
+  try {
+    const started = service.start('private', { kinds: ['shared_plan'] })
+    await waitForRun(service, 'private', started.id, 'completed')
+
+    const reviewed = await service.reviewEvent('private', `shared_plan:${ALICE_EXHIBITION_PROPOSAL}`, {
+      decision: 'included',
+      expectedRevision: 0,
+      details: { lastObservedStage: 'cancelled' },
+    })
+    const exhibition = event(reviewed, `shared_plan:${ALICE_EXHIBITION_PROPOSAL}`)
+    assert.equal(exhibition.status, 'confirmed')
+    assert.equal(sharedPlanDetails(exhibition).lastObservedStage, 'cancelled')
+    assert.deepEqual(
+      planStages(exhibition).map((stage) => stage[0]),
+      ['proposed', 'discussed', 'mutually_confirmed', 'retrospective_mentioned'],
+      'the stages are evidence: saying where it stands does not rewrite what was said'
+    )
+    assert.equal(sharedPlanSummary(reviewed).byLastStage.cancelled, 1)
+    assert.equal(sharedPlanSummary(reviewed).byLastStage.retrospective_mentioned, 2)
+    assert.equal(sharedPlanSummary(reviewed).updatedInRange, 6, 'a revision does not add or remove an arrangement')
+
+    await assert.rejects(
+      () =>
+        service.reviewEvent('private', `shared_plan:${ALICE_HOTPOT_PROPOSAL}`, {
+          decision: 'included',
+          expectedRevision: 0,
+          details: { lastObservedStage: 'agreed' as SharedPlanStage },
+        }),
+      (error: unknown) => (error as { statusCode?: number }).statusCode === 400,
+      'where an arrangement stands is one of the six stages, not free text'
+    )
+
+    advance(60_000)
+    const second = service.start('private', { kinds: ['shared_plan'] })
+    await waitForRun(service, 'private', second.id, 'completed')
+    const rerun = await service.getResults('private')
+    assert.equal(
+      sharedPlanDetails(event(rerun, `shared_plan:${ALICE_EXHIBITION_PROPOSAL}`)).lastObservedStage,
+      'cancelled'
+    )
+    assert.equal(rerun.orphanReviews, 0)
   } finally {
     service.close()
     manager.closeAll()
