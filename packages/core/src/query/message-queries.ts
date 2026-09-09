@@ -588,12 +588,28 @@ export interface MembersPaginatedResult {
 /**
  * Batch-load messages by IDs with full sender info (avatar, aliases, reply, etc.)
  */
-function hydrateMessagesByIds(db: DatabaseAdapter, ids: number[]): MappedMessage[] {
+export function getMessagesByIds(db: DatabaseAdapter, ids: number[]): MappedMessage[] {
   if (ids.length === 0) return []
   const placeholders = ids.map(() => '?').join(', ')
   const rows = db
     .prepare(`${FULL_MSG_SELECT} WHERE msg.id IN (${placeholders}) ORDER BY msg.id ASC`)
     .all(...ids) as unknown as FullMessageRow[]
+  return rows.map(mapMessageRow)
+}
+
+/**
+ * Load a contiguous message id range with full sender info, ordered by id.
+ * Used to expand retrieval hits that only carry a start/end message id.
+ */
+export function getMessagesInIdRange(
+  db: DatabaseAdapter,
+  startId: number,
+  endId: number,
+  limit: number
+): MappedMessage[] {
+  const rows = db
+    .prepare(`${FULL_MSG_SELECT} WHERE msg.id BETWEEN ? AND ? ORDER BY msg.id ASC LIMIT ?`)
+    .all(startId, endId, limit) as unknown as FullMessageRow[]
   return rows.map(mapMessageRow)
 }
 
@@ -624,7 +640,7 @@ export function getMessageContext(
     afterRows.forEach((r) => contextIds.add(r.id))
   }
 
-  return hydrateMessagesByIds(db, Array.from(contextIds))
+  return getMessagesByIds(db, Array.from(contextIds))
 }
 
 /**
@@ -692,7 +708,7 @@ export function getSearchMessageContext(
     }
   }
 
-  return hydrateMessagesByIds(db, Array.from(contextIds))
+  return getMessagesByIds(db, Array.from(contextIds))
 }
 
 /**

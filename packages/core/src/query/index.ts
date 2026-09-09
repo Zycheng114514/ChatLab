@@ -160,6 +160,8 @@ export {
   executeSql,
   getSchemaDetailed,
   getMessageContext,
+  getMessagesByIds,
+  getMessagesInIdRange,
   getSearchMessageContext,
   getConversationBetween,
   getMemberNameHistory,

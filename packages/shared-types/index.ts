@@ -298,6 +298,37 @@ export type {
   CreateChatTopicsRequest,
 } from './chat-topics'
 
+export { IMPLEMENTED_INTIMACY_KINDS } from './intimacy'
+export type {
+  CreateIntimacyEventRequest,
+  IntimacyAnalysisRequest,
+  IntimacyCandidateRequest,
+  IntimacyCandidates,
+  IntimacyEvent,
+  IntimacyEventDetails,
+  IntimacyEventOrigin,
+  IntimacyEventReview,
+  IntimacyEventStatus,
+  IntimacyEvidence,
+  IntimacyEvidenceRole,
+  IntimacyKind,
+  IntimacyMember,
+  IntimacyMemberSummary,
+  IntimacyMessageSnippet,
+  IntimacyModelDecision,
+  IntimacyObservation,
+  IntimacyPreflight,
+  IntimacyResults,
+  IntimacyReviewDecision,
+  IntimacyRun,
+  IntimacyRunStatus,
+  ReviewIntimacyEventRequest,
+  SharingCategory,
+  SharingDetails,
+  SharingTopic,
+  StartIntimacyRunRequest,
+} from './intimacy'
+
 export interface AIGlobalSettings {
   maxMessagesPerRequest: number
   exportFormat: 'markdown' | 'txt'
