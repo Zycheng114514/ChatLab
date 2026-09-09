@@ -200,6 +200,140 @@
       "month": "月"
     }
   },
+  "intimacy": {
+    "unavailable": {
+      "title": "親密さの分析にはデスクトップ版または CLI Web が必要です",
+      "description": "この分析はローカルのバックエンドでチャットを区間ごとに読み込みます。ブラウザのみの構成にはその実行環境がありません。"
+    },
+    "loadFailed": "親密さの結果を読み込めませんでした",
+    "info": {
+      "participants": "二人",
+      "range": "範囲 {start} 〜 {end}",
+      "rangeAll": "全期間",
+      "sourceModel": "自動分析：{model}、{time}",
+      "sourceUserOnly": "自分で確認した出来事のみ",
+      "sourceNone": "この範囲の分析結果はまだありません",
+      "coverage": "{total} 区間中 {completed} 区間を分析済み",
+      "coverageIncomplete": "今回の分析は範囲全体をカバーしていません。下の件数は分析できた部分だけを数えています。",
+      "coverageFailed": "{count} 区間は解析できずスキップしました。",
+      "sourceChanged": "分析後にこの期間のメッセージが変わっているため、結果が古い可能性があります。",
+      "orphanReviews": "あなたの修正のうち {count} 件は対応する出来事が見つからないため、確認し直してください。"
+    },
+    "actions": {
+      "analyze": "この範囲を分析",
+      "reanalyze": "この範囲を分析し直す",
+      "startFailed": "分析を開始できませんでした",
+      "actionFailed": "タスクの操作に失敗しました",
+      "clear": "結果を消す",
+      "clearTitle": "親密さの結果を消しますか？",
+      "clearDescription": "この分析が作った結果だけを削除します。チャット自体は消えません。あとで分析し直せます。",
+      "clearReviews": "自分の修正もまとめて消す",
+      "clearFailed": "結果を消せませんでした"
+    },
+    "preflight": {
+      "title": "この範囲を分析",
+      "description": "範囲内のメッセージを時系列で区間に分け、設定済みのモデルに順番に渡して自己開示の出来事を読み取ります。開始後は一時停止・再開・キャンセルができます。",
+      "range": "{start} 〜 {end}",
+      "messages": "メッセージ",
+      "windows": "区間",
+      "calls": "推定呼び出し回数",
+      "model": "モデル",
+      "noMessages": "範囲内にメッセージがありません",
+      "start": "分析を開始",
+      "failed": "今回の分析を見積もれませんでした"
+    },
+    "run": {
+      "progress": "{total} 区間中 {completed} 区間を分析済み",
+      "status": {
+        "pending": "開始待ち",
+        "running": "分析中",
+        "paused": "一時停止中",
+        "completed": "完了",
+        "failed": "分析に失敗",
+        "cancelled": "キャンセル済み"
+      }
+    },
+    "k1": {
+      "title": "自分のことを話す",
+      "definition": "片方が自分の出来事・気持ち・困りごとを自分から話すこと。本人が自分について話した場合だけを数え、人の話の又聞きや相手の発言は含めません。",
+      "noModelHint": "モデルが未設定だと自動分析はできませんが、下の候補検索から自分で出来事を確認できます。",
+      "countedLabel": "検出",
+      "countBreakdown": "自動 {auto} · 確認済み {confirmed} · 要確認 {uncertain}",
+      "uncertainNote": "「要確認」の出来事は下に並びますが、件数には入りません。",
+      "categoryTitle": "カテゴリ",
+      "categoryNote": "1 つの出来事が複数のカテゴリに入ることがあるため、3 つの合計が上の件数を超えることがあります。",
+      "topicFilter": "トピック",
+      "topicAll": "すべて",
+      "empty": "この範囲ではまだ自己開示の出来事が見つかっていません。"
+    },
+    "category": {
+      "experienceOrUpdate": "出来事・近況",
+      "feeling": "気持ち",
+      "worryOrNeed": "心配・要望"
+    },
+    "topic": {
+      "workStudy": "仕事・勉強",
+      "health": "健康",
+      "family": "家族",
+      "relationships": "人間関係",
+      "dailyLife": "日常生活",
+      "other": "その他"
+    },
+    "status": {
+      "auto": "自動検出",
+      "confirmed": "確認済み",
+      "uncertain": "要確認",
+      "excluded": "除外済み"
+    },
+    "event": {
+      "reason": "モデルが挙げた理由",
+      "quotes": "元のメッセージ",
+      "missingMessage": "元のメッセージはもうありません",
+      "observationBoundaryLimited": "この出来事は区間の境目にあるため、前後の文脈が欠けている可能性があります。",
+      "observationMediaMissing": "根拠にテキスト以外のメッセージが含まれ、モデルは中身を読めていません。",
+      "exclude": "除外",
+      "restore": "戻す",
+      "editLabels": "カテゴリとトピックを直す",
+      "categoriesRequired": "カテゴリを 1 つ以上選んでください",
+      "saveFailed": "修正を保存できませんでした",
+      "conflict": "結果が更新されました。読み込み直してください",
+      "excludedGroup": "除外済み（{count}）"
+    },
+    "candidates": {
+      "title": "候補検索",
+      "notice": "ここで出てくるのは候補のメッセージであり、測定結果ではありません。自分で確認したものだけが上の件数に入ります。",
+      "placeholder": "キーワードを入力（例：「今日」「疲れた」）",
+      "search": "検索",
+      "searchFailed": "候補検索に失敗しました",
+      "keyword": "キーワード",
+      "semantic": "意味",
+      "semanticUnavailable": "このチャットにはまだ意味検索の索引がないため、キーワード検索のみ使えます。",
+      "empty": "候補のメッセージは見つかりませんでした。",
+      "selectHint": "まず数えたいメッセージを選び、その検索結果の中から同じ人のメッセージをチェックしてください。",
+      "sameGroupOnly": "同じ人、同じ検索結果の中のメッセージだけ選べます。",
+      "selected": "{count} 件選択中",
+      "clearSelection": "選択を解除",
+      "categories": "カテゴリ（複数可）",
+      "topic": "トピック",
+      "submit": "自己開示として確認",
+      "submitFailed": "この出来事を確認できませんでした",
+      "submitted": "自分で確認した出来事に追加しました"
+    },
+    "methods": {
+      "title": "方法と出典",
+      "definitionTitle": "定義",
+      "definitionBody": "自己開示（K1）とは、片方が自分の出来事・近況・気持ち・困りごとを相手に話すことです。判断はチャットに書かれている内容だけから行い、話し手の性格や動機、関係の状態は推測しません。",
+      "includeTitle": "含めるもの・含めないもの",
+      "includeBody": "含める：本人が自分について話したもの（近況、気持ち、心配、要望など）。含めない：人から聞いた話の又聞き、記事やリンクの引用、事務的な段取りだけのやり取り、相手の発言の繰り返し、画像や音声など読めるテキストがないメッセージ。",
+      "countingTitle": "数え方",
+      "countingBody": "ひと続きで同じことを話した場合は 1 件として数え、区間をまたいで同じ話が続く場合は同じ出来事にまとめます。自動で見つかった出来事と自分で確認した出来事は別々に数えます。「要確認」の出来事は並びますが数えません。除外した出来事は数えず、分析し直しても自分の修正は上書きされません。カテゴリは複数付くため、1 つの出来事が複数に入ることがあります。",
+      "sourceTitle": "出典",
+      "sourceCitation": "Laurenceau, J.-P., Barrett, L. F., & Pietromonaco, P. R. (1998). Intimacy as an interpersonal process: The importance of self-disclosure, partner disclosure, and perceived partner responsiveness in interpersonal exchanges. Journal of Personality and Social Psychology, 74(5), 1238–1251.",
+      "sourceLink": "原論文を開く",
+      "limitationTitle": "限界",
+      "limitationBody": "ここでの出来事の定義は、実際のチャットでの自動検出の精度がまだ検証されていません。モデルは見落としたり取り違えたりします。件数は選んだ範囲でそのような出来事がいくつ見つかったかを示すだけで、親密さの度合いではなく、二人や二つの関係を比べるためにも使えません。"
+    }
+  },
   "journey": {
     "loadError": "チャットの歩みを読み込めませんでした",
     "empty": "歩みを作成するためのメッセージがまだ十分にありません",

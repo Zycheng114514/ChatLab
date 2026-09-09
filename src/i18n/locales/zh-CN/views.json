@@ -200,6 +200,140 @@
       "month": "月份"
     }
   },
+  "intimacy": {
+    "unavailable": {
+      "title": "亲密关系分析需要桌面版或 CLI Web",
+      "description": "这项分析要在本机后台按段读取聊天记录，纯浏览器版本没有对应的运行环境。"
+    },
+    "loadFailed": "亲密关系结果加载失败",
+    "info": {
+      "participants": "双方",
+      "range": "范围 {start} 至 {end}",
+      "rangeAll": "全部时间",
+      "sourceModel": "自动分析：{model}，{time}",
+      "sourceUserOnly": "只有你确认的事件",
+      "sourceNone": "本范围还没有分析结果",
+      "coverage": "已分析 {completed} / {total} 段",
+      "coverageIncomplete": "这次分析没有覆盖整个范围，下面只统计已分析的部分。",
+      "coverageFailed": "有 {count} 段没能解析，已跳过。",
+      "sourceChanged": "分析之后这段时间的消息有变化，结果可能已过期。",
+      "orphanReviews": "有 {count} 条你的修订找不到对应的事件，需要重新核对。"
+    },
+    "actions": {
+      "analyze": "分析本范围",
+      "reanalyze": "重新分析本范围",
+      "startFailed": "无法开始分析",
+      "actionFailed": "任务操作失败",
+      "clear": "清除结果",
+      "clearTitle": "清除亲密关系结果？",
+      "clearDescription": "只删除这项分析的派生结果，不会删除聊天记录；之后可以重新分析。",
+      "clearReviews": "同时清除我的修订",
+      "clearFailed": "清除结果失败"
+    },
+    "preflight": {
+      "title": "分析本范围",
+      "description": "按时间顺序把范围内的消息分段送给已配置的模型，逐段识别个人分享事件。开始后可以暂停、继续或取消。",
+      "range": "{start} 至 {end}",
+      "messages": "消息",
+      "windows": "分段",
+      "calls": "预计调用",
+      "model": "模型",
+      "noMessages": "范围内没有消息",
+      "start": "开始分析",
+      "failed": "无法估算本次分析"
+    },
+    "run": {
+      "progress": "已分析 {completed} / {total} 段",
+      "status": {
+        "pending": "等待开始",
+        "running": "正在分析",
+        "paused": "已暂停",
+        "completed": "已完成",
+        "failed": "分析失败",
+        "cancelled": "已取消"
+      }
+    },
+    "k1": {
+      "title": "个人分享",
+      "definition": "一方主动说出自己的经历、感受或困扰。只统计本人讲自己的事，转述别人的话和对方说的话都不算。",
+      "noModelHint": "没有配置模型时无法自动分析，你仍然可以用下面的候选检索自己确认事件。",
+      "countedLabel": "识别到",
+      "countBreakdown": "自动 {auto} · 已确认 {confirmed} · 待核对 {uncertain}",
+      "uncertainNote": "「待核对」的事件会列在下面，但不计入次数。",
+      "categoryTitle": "类别",
+      "categoryNote": "一个事件可以同时属于多个类别，所以三类之和可能大于上面的次数。",
+      "topicFilter": "话题",
+      "topicAll": "全部",
+      "empty": "本范围内还没有识别到个人分享事件。"
+    },
+    "category": {
+      "experienceOrUpdate": "经历与近况",
+      "feeling": "感受",
+      "worryOrNeed": "担心与需要"
+    },
+    "topic": {
+      "workStudy": "工作学习",
+      "health": "健康",
+      "family": "家人",
+      "relationships": "人际关系",
+      "dailyLife": "日常生活",
+      "other": "其他"
+    },
+    "status": {
+      "auto": "自动识别",
+      "confirmed": "已确认",
+      "uncertain": "待核对",
+      "excluded": "已排除"
+    },
+    "event": {
+      "reason": "模型给出的理由",
+      "quotes": "原话",
+      "missingMessage": "原消息已不存在",
+      "observationBoundaryLimited": "这个事件落在分段边界上，上下文可能不完整。",
+      "observationMediaMissing": "证据里有非文本消息，模型读不到里面的内容。",
+      "exclude": "排除",
+      "restore": "恢复",
+      "editLabels": "改类别与话题",
+      "categoriesRequired": "至少选择一个类别",
+      "saveFailed": "修订没能保存",
+      "conflict": "结果已更新，请重新加载",
+      "excludedGroup": "已排除（{count}）"
+    },
+    "candidates": {
+      "title": "候选检索",
+      "notice": "这里检索出来的是候选消息，不是测量结果；只有你确认过的才会计入上面的次数。",
+      "placeholder": "输入关键词，例如「今天」「有点累」",
+      "search": "检索",
+      "searchFailed": "候选检索失败",
+      "keyword": "关键词",
+      "semantic": "语义",
+      "semanticUnavailable": "这个会话还没有语义索引，只有关键词检索。",
+      "empty": "没有检索到候选消息。",
+      "selectHint": "先点一条要计入的消息，再勾选同一个人在这条检索结果里的其他消息。",
+      "sameGroupOnly": "只能选同一个人、同一条检索结果里的消息。",
+      "selected": "已选 {count} 条",
+      "clearSelection": "清除选择",
+      "categories": "类别（可多选）",
+      "topic": "话题",
+      "submit": "确认为个人分享",
+      "submitFailed": "无法确认这个事件",
+      "submitted": "已计入你确认的事件"
+    },
+    "methods": {
+      "title": "方法与来源",
+      "definitionTitle": "定义",
+      "definitionBody": "个人分享（K1）指一方主动说出关于自己的经历、近况、感受或困扰。判断只看这段聊天里写了什么，不推断说话人的性格、动机或关系状态。",
+      "includeTitle": "纳入与排除",
+      "includeBody": "纳入：本人讲自己的事，包括事实性的近况、情绪感受、担心或需要。排除：转述别人的话、引用文章或链接、纯事务性的安排、复述对方说过的话，以及图片、语音等没有可读文字的消息。",
+      "countingTitle": "计数规则",
+      "countingBody": "连续讲同一件事只算一个事件，跨分段继续讲同一件事会并入同一个事件。自动识别的事件和你确认的事件分别计数；标为「待核对」的事件会列出来但不计入。你排除的事件不计入，重新分析也不会覆盖你的修订。类别是多标签，一个事件可以同时算进多个类别。",
+      "sourceTitle": "来源",
+      "sourceCitation": "Laurenceau, J.-P., Barrett, L. F., & Pietromonaco, P. R. (1998). Intimacy as an interpersonal process: The importance of self-disclosure, partner disclosure, and perceived partner responsiveness in interpersonal exchanges. Journal of Personality and Social Psychology, 74(5), 1238–1251.",
+      "sourceLink": "查看原文",
+      "limitationTitle": "局限",
+      "limitationBody": "这里的事件定义还没有在真实聊天上验证过自动识别的准确度，模型可能漏掉或认错。计数只表示在所选范围内识别到多少个这样的事件，不表示亲密程度，也不能用来比较两个人或两段关系。"
+    }
+  },
   "journey": {
     "loadError": "无法加载聊天历程",
     "empty": "暂无足够的聊天记录来生成历程",

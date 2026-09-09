@@ -6,6 +6,7 @@ import UserSelect from '@/components/common/UserSelect.vue'
 import TypeAnalysisView from '@/components/analysis/message/TypeAnalysisView.vue'
 import TimeAnalysisView from '@/components/analysis/message/TimeAnalysisView.vue'
 import PrivateRelationshipView from '@/components/analysis/relationship/PrivateRelationshipView.vue'
+import PrivateIntimacyView from '@/components/analysis/intimacy/PrivateIntimacyView.vue'
 import JourneyView from '@/components/analysis/journey/JourneyView.vue'
 import { WordcloudTab, LanguagePreferenceTab } from '@/components/analysis/quotes'
 import type { TimeFilter } from '@openchatlab/shared-types'
@@ -32,6 +33,7 @@ const props = defineProps<{
 const subTabs = computed(() => [
   { id: 'overview', label: t('analysis.tabs.overview'), icon: 'i-heroicons-squares-2x2' },
   { id: 'relationship', label: t('analysis.subTabs.insights.relationship'), icon: 'i-heroicons-heart' },
+  { id: 'intimacy', label: t('analysis.subTabs.insights.intimacy'), icon: 'i-heroicons-chat-bubble-left-right' },
   { id: 'journey', label: t('analysis.subTabs.insights.journey'), icon: 'i-heroicons-map' },
   { id: 'type-analysis', label: t('analysis.subTabs.insights.typeAnalysis'), icon: 'i-heroicons-chart-pie' },
   { id: 'time-analysis', label: t('analysis.subTabs.insights.timeAnalysis'), icon: 'i-heroicons-clock' },
@@ -101,6 +103,11 @@ const viewTimeFilter = computed(() => ({
           />
           <PrivateRelationshipView
             v-else-if="viewKey === 'relationship'"
+            :session-id="props.sessionId"
+            :time-filter="props.timeFilter"
+          />
+          <PrivateIntimacyView
+            v-else-if="viewKey === 'intimacy'"
             :session-id="props.sessionId"
             :time-filter="props.timeFilter"
           />

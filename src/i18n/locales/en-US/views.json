@@ -200,6 +200,140 @@
       "month": "Month"
     }
   },
+  "intimacy": {
+    "unavailable": {
+      "title": "Intimacy analysis needs the desktop app or CLI Web",
+      "description": "This analysis reads the chat segment by segment through a local backend, which the browser-only build does not have."
+    },
+    "loadFailed": "Failed to load intimacy results",
+    "info": {
+      "participants": "Participants",
+      "range": "Range {start} to {end}",
+      "rangeAll": "All time",
+      "sourceModel": "Automatic analysis: {model}, {time}",
+      "sourceUserOnly": "Only the events you confirmed",
+      "sourceNone": "No analysis for this range yet",
+      "coverage": "{completed} of {total} segments analysed",
+      "coverageIncomplete": "This analysis did not cover the whole range; the counts below only include the part that was analysed.",
+      "coverageFailed": "{count} segments could not be parsed and were skipped.",
+      "sourceChanged": "Messages in this range changed after the analysis, so the results may be out of date.",
+      "orphanReviews": "{count} of your decisions no longer match an event and need rechecking."
+    },
+    "actions": {
+      "analyze": "Analyse this range",
+      "reanalyze": "Analyse this range again",
+      "startFailed": "Could not start the analysis",
+      "actionFailed": "The task action failed",
+      "clear": "Clear results",
+      "clearTitle": "Clear the intimacy results?",
+      "clearDescription": "This only deletes the results derived by this analysis, never the chat itself; you can analyse again afterwards.",
+      "clearReviews": "Also clear my decisions",
+      "clearFailed": "Could not clear the results"
+    },
+    "preflight": {
+      "title": "Analyse this range",
+      "description": "Messages in the range are sent to the configured model segment by segment, in time order, and each segment is read for personal sharing events. You can pause, resume or cancel once it starts.",
+      "range": "{start} to {end}",
+      "messages": "Messages",
+      "windows": "Segments",
+      "calls": "Estimated calls",
+      "model": "Model",
+      "noMessages": "No messages in this range",
+      "start": "Start the analysis",
+      "failed": "Could not estimate this analysis"
+    },
+    "run": {
+      "progress": "{completed} of {total} segments analysed",
+      "status": {
+        "pending": "Waiting to start",
+        "running": "Analysing",
+        "paused": "Paused",
+        "completed": "Finished",
+        "failed": "Analysis failed",
+        "cancelled": "Cancelled"
+      }
+    },
+    "k1": {
+      "title": "Personal sharing",
+      "definition": "One person tells the other about their own experience, feelings or worries. Only what someone says about themselves counts; retelling someone else's words or the other person's own messages do not.",
+      "noModelHint": "Without a configured model there is no automatic analysis, but you can still find and confirm events yourself with the candidate search below.",
+      "countedLabel": "Identified",
+      "countBreakdown": "Automatic {auto} · Confirmed {confirmed} · To check {uncertain}",
+      "uncertainNote": "Events marked \"to check\" are listed below but are not counted.",
+      "categoryTitle": "Categories",
+      "categoryNote": "One event can belong to several categories, so the three numbers can add up to more than the count above.",
+      "topicFilter": "Topic",
+      "topicAll": "All",
+      "empty": "No personal sharing events identified in this range yet."
+    },
+    "category": {
+      "experienceOrUpdate": "Experience or update",
+      "feeling": "Feeling",
+      "worryOrNeed": "Worry or need"
+    },
+    "topic": {
+      "workStudy": "Work or study",
+      "health": "Health",
+      "family": "Family",
+      "relationships": "Relationships",
+      "dailyLife": "Daily life",
+      "other": "Other"
+    },
+    "status": {
+      "auto": "Auto-detected",
+      "confirmed": "Confirmed",
+      "uncertain": "To check",
+      "excluded": "Excluded"
+    },
+    "event": {
+      "reason": "Reason given by the model",
+      "quotes": "Messages",
+      "missingMessage": "The original message no longer exists",
+      "observationBoundaryLimited": "This event sits on a segment boundary, so its context may be incomplete.",
+      "observationMediaMissing": "The evidence includes a non-text message whose content the model could not read.",
+      "exclude": "Exclude",
+      "restore": "Restore",
+      "editLabels": "Change category and topic",
+      "categoriesRequired": "Pick at least one category",
+      "saveFailed": "Could not save your decision",
+      "conflict": "The results changed, please reload",
+      "excludedGroup": "Excluded ({count})"
+    },
+    "candidates": {
+      "title": "Candidate search",
+      "notice": "What the search returns are candidate messages, not measurement results; only the ones you confirm are added to the counts above.",
+      "placeholder": "Type a keyword, for example \"today\" or \"tired\"",
+      "search": "Search",
+      "searchFailed": "Candidate search failed",
+      "keyword": "Keyword",
+      "semantic": "Semantic",
+      "semanticUnavailable": "This chat has no semantic index yet, so only keyword search is available.",
+      "empty": "No candidate messages found.",
+      "selectHint": "Pick the message to count first, then tick the other messages from the same person in that result.",
+      "sameGroupOnly": "You can only pick messages from the same person within the same result.",
+      "selected": "{count} selected",
+      "clearSelection": "Clear selection",
+      "categories": "Categories (pick one or more)",
+      "topic": "Topic",
+      "submit": "Confirm as personal sharing",
+      "submitFailed": "Could not confirm this event",
+      "submitted": "Added to the events you confirmed"
+    },
+    "methods": {
+      "title": "Method and sources",
+      "definitionTitle": "Definition",
+      "definitionBody": "Personal sharing (K1) is one person telling the other about their own experience, recent life, feelings or worries. The judgement is made only from what is written in the chat; it infers nothing about the speaker's personality, motives or the state of the relationship.",
+      "includeTitle": "What is included and excluded",
+      "includeBody": "Included: someone talking about themselves, whether factual updates, feelings, worries or needs. Excluded: retelling what other people said, quoting articles or links, purely logistical arrangements, repeating what the other person said, and images, voice notes or other messages with no readable text.",
+      "countingTitle": "How events are counted",
+      "countingBody": "Talking about the same thing in one stretch is a single event, and continuing the same thing into the next segment is merged into that same event. Events found automatically and events you confirmed are counted separately; events marked \"to check\" are listed but not counted. Events you excluded are not counted, and analysing again does not overwrite your decisions. Categories are multi-label, so one event can fall into several of them.",
+      "sourceTitle": "Source",
+      "sourceCitation": "Laurenceau, J.-P., Barrett, L. F., & Pietromonaco, P. R. (1998). Intimacy as an interpersonal process: The importance of self-disclosure, partner disclosure, and perceived partner responsiveness in interpersonal exchanges. Journal of Personality and Social Psychology, 74(5), 1238–1251.",
+      "sourceLink": "Open the paper",
+      "limitationTitle": "Limitations",
+      "limitationBody": "These event definitions have not yet been validated for automatic detection on real chats, and the model can miss events or mistake them. A count only says how many such events were identified in the selected range. It is not a measure of intimacy and cannot be used to compare two people or two relationships."
+    }
+  },
   "journey": {
     "loadError": "Unable to load the chat journey",
     "empty": "There are not enough messages to build a journey yet",

@@ -12,6 +12,8 @@
   "expandSidebar": "Expand sidebar",
   "done": "Done",
   "retry": "Retry",
+  "pause": "Pause",
+  "resume": "Resume",
   "initFailed": "App initialization failed",
   "presentationFallback": "Appearance preferences couldn't be loaded in time. System theme and the built-in language are in use for this session.",
   "webWasmWorkspaceBusy": "The local workspace is temporarily in use by another tab. Wait a moment and retry.",

@@ -17,7 +17,7 @@ import { useSkillStore } from '@/stores/skill'
 import { useLLMStore } from '@/stores/llm'
 import type { TokenUsage, AgentRuntimeStatus, SerializedErrorInfo } from '@electron/shared/types'
 import { useAgentStreamService } from '@/services/ai-stream/service'
-import { buildSerializablePreprocessConfig, shouldEnsureDesensitizeRulesBeforeSerialize } from './aiPreprocessConfig'
+import { buildReadySerializablePreprocessConfig } from './aiPreprocessConfig'
 import type { ChartPayload, ChatEvidencePayload } from '@openchatlab/core'
 import { extractToolResultText, truncateToolResultText } from '@openchatlab/core'
 import {
@@ -1183,7 +1183,7 @@ export const useAIChatStore = defineStore('aiChatRuntime', () => {
           ? { platformId: state.ownerInfo.platformId, displayName: state.ownerInfo.displayName }
           : undefined,
         mentionedMembers: currentMentionedMembers.length > 0 ? currentMentionedMembers : undefined,
-        preprocessConfig: await buildReadySerializablePreprocessConfig(),
+        preprocessConfig: await buildReadySerializablePreprocessConfig(settingsStore),
         searchContextBefore: aiGlobalSettings.value.searchContextBefore,
         searchContextAfter: aiGlobalSettings.value.searchContextAfter,
       }
@@ -1583,15 +1583,6 @@ export const useAIChatStore = defineStore('aiChatRuntime', () => {
     }
   }
 
-  async function buildReadySerializablePreprocessConfig() {
-    const preprocessConfig = settingsStore.aiPreprocessConfig
-    if (shouldEnsureDesensitizeRulesBeforeSerialize(preprocessConfig)) {
-      await settingsStore.ensureDesensitizeRules()
-    }
-
-    return buildSerializablePreprocessConfig(settingsStore.aiPreprocessConfig)
-  }
-
   function normalizeMentionLookupText(value: string): string {
     return value
       .trim()
@@ -1821,7 +1812,7 @@ export const useAIChatStore = defineStore('aiChatRuntime', () => {
           ? { platformId: state.ownerInfo.platformId, displayName: state.ownerInfo.displayName }
           : undefined,
         mentionedMembers: currentMentionedMembers.length > 0 ? currentMentionedMembers : undefined,
-        preprocessConfig: await buildReadySerializablePreprocessConfig(),
+        preprocessConfig: await buildReadySerializablePreprocessConfig(settingsStore),
         searchContextBefore: aiGlobalSettings.value.searchContextBefore,
         searchContextAfter: aiGlobalSettings.value.searchContextAfter,
       }
