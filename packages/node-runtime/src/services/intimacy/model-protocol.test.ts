@@ -4,6 +4,7 @@ import type { IntimacyMember } from '@openchatlab/shared-types'
 import {
   buildIntimacyWindowPrompt,
   parseIntimacyResponse,
+  type ParsedFollowUpEvent,
   type ParsedIntimacyEvent,
   type ParsedSharingEvent,
 } from './model-protocol'
@@ -29,12 +30,19 @@ const window: IntimacyWindow = {
     message(4, { senderId: 2 }),
     message(5, { isText: false, content: '', type: 2 }),
     message(6),
+    message(7, { senderId: 2 }),
   ],
 }
 
 function firstSharing(parsed: ParsedIntimacyEvent[]): ParsedSharingEvent {
   const event = parsed[0]
   assert.ok(event?.kind === 'sharing')
+  return event
+}
+
+function firstFollowUp(parsed: ParsedIntimacyEvent[]): ParsedFollowUpEvent {
+  const event = parsed[0]
+  assert.ok(event?.kind === 'follow_up')
   return event
 }
 
@@ -64,9 +72,9 @@ test('a valid window response is accepted, deduplicated and readable from a fenc
   )
 
   assert.equal(parsed.length, 1)
-  assert.deepEqual(parsed[0]?.coreMessageIds, [3, 6])
-  assert.deepEqual(parsed[0]?.relatedMessageIds, [4])
-  assert.equal(parsed[0]?.confidence, 'clear')
+  assert.deepEqual(firstSharing(parsed).coreMessageIds, [3, 6])
+  assert.deepEqual(firstSharing(parsed).relatedMessageIds, [4])
+  assert.equal(firstSharing(parsed).confidence, 'clear')
   assert.equal(firstSharing(parsed).topic, 'work_study')
 })
 
@@ -86,10 +94,10 @@ test('optional label fields fall back to their neutral value and a long reason i
 
   assert.equal(firstSharing(parsed).topic, 'other')
   assert.equal(firstSharing(parsed).distress, 'uncertain')
-  assert.equal(parsed[0]?.observation, 'sufficient')
-  assert.equal(parsed[0]?.continuesContextEvent, false)
-  assert.deepEqual(parsed[0]?.relatedMessageIds, [])
-  assert.equal(parsed[0]?.reason.length, 300)
+  assert.equal(firstSharing(parsed).observation, 'sufficient')
+  assert.equal(firstSharing(parsed).continuesContextEvent, false)
+  assert.deepEqual(firstSharing(parsed).relatedMessageIds, [])
+  assert.equal(firstSharing(parsed).reason.length, 300)
 })
 
 /** A disclosure with the answer the other participant gave to it. */
@@ -144,8 +152,47 @@ test('a reply to an event of the previous window is accepted without new message
     members
   )
 
-  assert.deepEqual(parsed[0]?.coreMessageIds, [])
-  assert.deepEqual(parsed[0]?.responses?.messageIds, [4])
+  assert.deepEqual(firstSharing(parsed).coreMessageIds, [])
+  assert.deepEqual(firstSharing(parsed).responses?.messageIds, [4])
+})
+
+/** Bob asks about something Alice said earlier in this window. */
+const followUpQuestion = {
+  kind: 'follow_up',
+  asker: 'B',
+  coreMessageIds: [7],
+  priorMessageIds: [3],
+  matter: 'Alice の check-up',
+  matterKeywords: ['check-up', '复查'],
+  confidence: 'clear',
+  observation: 'sufficient',
+  reason: 'Bob asks how the check-up went.',
+}
+
+test('a follow-up question keeps the pair the window shows and bounds the matter it names', () => {
+  const parsed = parseIntimacyResponse(
+    response({
+      ...followUpQuestion,
+      priorMessageIds: [3, 1, 3],
+      matter: `  ${'m'.repeat(200)}  `,
+      matterKeywords: ['check-up', 'check-up', '复查', 'a', 'b', 'c', 'd', 'e'],
+    }),
+    window,
+    members
+  )
+
+  const event = firstFollowUp(parsed)
+  assert.deepEqual(event.coreMessageIds, [7])
+  assert.deepEqual(event.priorMessageIds, [3, 1], 'an earlier message from the context can be the prior')
+  assert.equal(event.matter.length, 60)
+  assert.deepEqual(event.matterKeywords, ['check-up', '复查', 'a', 'b', 'c'])
+  assert.equal(event.confidence, 'clear')
+})
+
+test('a follow-up question whose earlier message is not in this window is left for the matching step', () => {
+  const parsed = parseIntimacyResponse(response({ ...followUpQuestion, priorMessageIds: undefined }), window, members)
+
+  assert.deepEqual(firstFollowUp(parsed).priorMessageIds, [])
 })
 
 const rejections: Array<{ name: string; payload: string }> = [
@@ -266,6 +313,43 @@ const rejections: Array<{ name: string; payload: string }> = [
   {
     name: 'a continued event with neither new messages nor a reply',
     payload: response({ ...validEvent, coreMessageIds: [], categories: [], continuesContextEvent: true }),
+  },
+  {
+    name: 'a follow-up question the participant who is asked sent themselves',
+    payload: response({ ...followUpQuestion, coreMessageIds: [6] }),
+  },
+  {
+    name: 'a follow-up question that only appears as context of this window',
+    payload: response({ ...followUpQuestion, coreMessageIds: [2] }),
+  },
+  {
+    name: 'a follow-up question with no readable text',
+    payload: response({ ...followUpQuestion, asker: 'A', coreMessageIds: [5], priorMessageIds: [] }),
+  },
+  {
+    name: 'an earlier message the asker sent themselves',
+    payload: response({ ...followUpQuestion, priorMessageIds: [2] }),
+  },
+  {
+    name: 'an earlier message that comes after the question',
+    payload: response({ ...followUpQuestion, coreMessageIds: [4], priorMessageIds: [6] }),
+  },
+  {
+    name: 'an earlier message from outside this window',
+    payload: response({ ...followUpQuestion, priorMessageIds: [99] }),
+  },
+  {
+    name: 'an earlier message with no readable text',
+    payload: response({ ...followUpQuestion, priorMessageIds: [5] }),
+  },
+  { name: 'a follow-up question with no matter', payload: response({ ...followUpQuestion, matter: '  ' }) },
+  {
+    name: 'a follow-up question with no words to search the matter by',
+    payload: response({ ...followUpQuestion, matterKeywords: [] }),
+  },
+  {
+    name: 'a follow-up question with no confidence',
+    payload: response({ ...followUpQuestion, confidence: undefined }),
   },
 ]
 

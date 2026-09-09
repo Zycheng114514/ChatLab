@@ -11,10 +11,11 @@ import {
   applyReviewDetails,
   buildIntimacyEvents,
   resolveEventStatus,
+  summarizeFollowUps,
   summarizeResponses,
   summarizeSharing,
 } from './events'
-import type { ParsedGoodNewsEvent, ParsedSharingEvent } from './model-protocol'
+import type { ParsedFollowUpEvent, ParsedGoodNewsEvent, ParsedSharingEvent } from './model-protocol'
 import type { IntimacySourceMessage, IntimacyWindow } from './source'
 import type { IntimacyEventRecord } from './store'
 
@@ -70,6 +71,21 @@ function parsedGoodNews(overrides: Partial<ParsedGoodNewsEvent> = {}): ParsedGoo
     observation: 'sufficient',
     reason: 'Alice reports her own offer.',
     responses: null,
+    ...overrides,
+  }
+}
+
+function parsedFollowUp(overrides: Partial<ParsedFollowUpEvent> = {}): ParsedFollowUpEvent {
+  return {
+    kind: 'follow_up',
+    asker: 'B',
+    coreMessageIds: [4],
+    priorMessageIds: [],
+    matter: 'Alice の check-up',
+    matterKeywords: ['check-up'],
+    confidence: 'clear',
+    observation: 'sufficient',
+    reason: 'Bob asks how it went.',
     ...overrides,
   }
 }
@@ -423,6 +439,155 @@ test('a user revision overrides the labels used for display and counting', () =>
   assert.deepEqual(sharingDetails(details).categories, ['feeling', 'worry_or_need'])
   assert.equal(sharingDetails(details).topic, 'health')
   assert.equal(sharingDetails(details).isDistressDisclosure, 'no')
+})
+
+test('a follow-up question is paired with the earlier message the window shows', () => {
+  const events = buildIntimacyEvents([parsedFollowUp({ priorMessageIds: [3] })], window, members, [], 123)
+
+  assert.equal(events.length, 1)
+  const event = events[0]!
+  assert.equal(event.id, 'follow_up:4')
+  assert.equal(event.subjectMemberId, 1, 'the participant who is asked is the subject')
+  assert.equal(event.otherMemberId, 2, 'the asker is the other side')
+  assert.deepEqual(
+    event.evidence.map((evidence) => [evidence.messageId, evidence.role]),
+    [
+      [3, 'prior'],
+      [4, 'core'],
+    ]
+  )
+  assert.ok(event.details.kind === 'follow_up')
+  assert.equal(event.details.matchConfidence, 'supported')
+  assert.equal(event.details.gapSeconds, 1)
+  assert.equal(event.details.matter, 'Alice の check-up')
+  assert.equal(
+    resolveEventStatus({ origin: 'model', modelDecision: event.modelDecision, details: event.details }, null),
+    'auto'
+  )
+})
+
+test('a question whose earlier matter was not found is never counted as a pair', () => {
+  const events = buildIntimacyEvents([parsedFollowUp()], window, members, [], 123)
+
+  const event = events[0]!
+  assert.ok(event.details.kind === 'follow_up')
+  assert.equal(event.details.matchConfidence, 'uncertain')
+  assert.equal(event.details.gapSeconds, null)
+  assert.equal(
+    resolveEventStatus({ origin: 'model', modelDecision: 'included', details: event.details }, null),
+    'uncertain',
+    'the question waits for the user instead of being counted'
+  )
+})
+
+test('questions about one matter in one conversation are one event, a later conversation another', () => {
+  const conversation: IntimacyWindow = {
+    index: 0,
+    contextCount: 0,
+    messages: [
+      { id: 1, senderId: 1, timestamp: baseTs, type: 0, content: 'text', isText: true },
+      { id: 2, senderId: 2, timestamp: baseTs + 60, type: 0, content: 'text', isText: true },
+      { id: 3, senderId: 2, timestamp: baseTs + 120, type: 0, content: 'text', isText: true },
+      { id: 4, senderId: 2, timestamp: baseTs + 60 * 200, type: 0, content: 'text', isText: true },
+    ],
+  }
+  const events = buildIntimacyEvents(
+    [
+      parsedFollowUp({ coreMessageIds: [2], priorMessageIds: [1] }),
+      parsedFollowUp({ coreMessageIds: [3] }),
+      parsedFollowUp({ coreMessageIds: [4] }),
+    ],
+    conversation,
+    members,
+    [],
+    123
+  )
+
+  assert.deepEqual(
+    events.map((event) => [event.id, event.evidence.map((evidence) => evidence.messageId)]),
+    [
+      ['follow_up:2', [1, 2, 3]],
+      ['follow_up:4', [4]],
+    ],
+    'a second question minutes later joins the first, one hours later opens its own event'
+  )
+})
+
+function followUpEvent(overrides: Partial<IntimacyEvent> = {}): IntimacyEvent {
+  return {
+    ...storedEvent(),
+    id: 'follow_up:4',
+    kind: 'follow_up',
+    subjectMemberId: 1,
+    otherMemberId: 2,
+    anchorMessageId: 4,
+    evidence: [{ messageId: 3, timestamp: baseTs + 3, senderId: 1, role: 'prior' }],
+    details: {
+      kind: 'follow_up',
+      priorEventId: 'sharing:3',
+      matter: 'check-up',
+      matterKeywords: ['check-up'],
+      matchConfidence: 'supported',
+      initiationInObservedRecord: 'before_subject_reintroduced',
+      gapSeconds: 3600,
+      lookbackStartTs: baseTs - 100,
+      candidateMessageIds: [],
+    },
+    ...overrides,
+  }
+}
+
+test('follow-up summaries count the pairs, the matters behind them and the questions still waiting', () => {
+  const events: IntimacyEvent[] = [
+    followUpEvent(),
+    // A second question about the same coded matter: another pair, still one matter.
+    followUpEvent({ id: 'follow_up:9', status: 'confirmed' }),
+    followUpEvent({
+      id: 'follow_up:11',
+      evidence: [{ messageId: 10, timestamp: baseTs + 10, senderId: 1, role: 'prior' }],
+      details: {
+        kind: 'follow_up',
+        priorEventId: null,
+        matter: 'the move',
+        matterKeywords: ['move'],
+        matchConfidence: 'supported',
+        initiationInObservedRecord: 'after_subject_reintroduced',
+        gapSeconds: 60,
+        lookbackStartTs: baseTs - 100,
+        candidateMessageIds: [],
+      },
+    }),
+    followUpEvent({
+      id: 'follow_up:13',
+      status: 'uncertain',
+      evidence: [],
+      details: {
+        kind: 'follow_up',
+        priorEventId: null,
+        matter: 'something',
+        matterKeywords: ['something'],
+        matchConfidence: 'uncertain',
+        initiationInObservedRecord: 'uncertain',
+        gapSeconds: null,
+        lookbackStartTs: baseTs - 100,
+        candidateMessageIds: [7, 8],
+      },
+    }),
+    followUpEvent({ id: 'follow_up:15', status: 'excluded' }),
+  ]
+
+  const [alice, bob] = summarizeFollowUps(events, members)
+
+  assert.equal(alice?.pairs, 0, 'the participant who was asked did not ask')
+  assert.deepEqual(bob, {
+    memberId: 2,
+    pairs: 3,
+    matters: 2,
+    uncertain: 1,
+    beforeReintroduced: 2,
+    afterReintroduced: 1,
+    initiationUncertain: 0,
+  })
 })
 
 function responseEvent(overrides: Partial<IntimacyEvent> = {}): IntimacyEvent {

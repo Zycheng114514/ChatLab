@@ -215,6 +215,42 @@ test('confirmed events and reviews stay inside one session and refuse a stale re
     'one request answers for every implemented kind'
   )
 
+  const followUp = await app.inject({
+    method: 'POST',
+    url: '/_web/sessions/private/intimacy/events',
+    payload: {
+      kind: 'follow_up',
+      subjectMemberId: 2,
+      coreMessageIds: [2],
+      priorMessageIds: [1],
+      details: { matter: 'the interview' },
+    },
+  })
+  assert.equal(followUp.statusCode, 200)
+  const pair = followUp.json().events.find((item: { id: string }) => item.id === 'follow_up:2')
+  assert.deepEqual(
+    pair.evidence.map((item: { messageId: number; role: string }) => [item.messageId, item.role]),
+    [
+      [1, 'prior'],
+      [2, 'core'],
+    ],
+    'the question and the earlier message it asks about are both served'
+  )
+  assert.equal(pair.subjectMemberId, 1, 'the participant who was asked is the subject')
+
+  const ownEarlierMessage = await app.inject({
+    method: 'POST',
+    url: '/_web/sessions/private/intimacy/events',
+    payload: {
+      kind: 'follow_up',
+      subjectMemberId: 2,
+      coreMessageIds: [2],
+      priorMessageIds: [2],
+      details: { matter: 'the interview' },
+    },
+  })
+  assert.equal(ownEarlierMessage.statusCode, 400, "a question cannot be paired with the asker's own words")
+
   const wrongSender = await app.inject({
     method: 'POST',
     url: '/_web/sessions/private/intimacy/events',
@@ -247,7 +283,7 @@ test('confirmed events and reviews stay inside one session and refuse a stale re
       .json()
       .events.map((item: { id: string }) => item.id)
       .sort(),
-    ['sharing:1', 'support_response:1'],
+    ['follow_up:2', 'sharing:1', 'support_response:1'],
     'the results contain every kind without asking for one'
   )
 

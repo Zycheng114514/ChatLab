@@ -6,8 +6,10 @@ import test from 'node:test'
 import Database from 'better-sqlite3'
 import { CHAT_DB_SCHEMA, type PathProvider } from '@openchatlab/core'
 import type {
+  FollowUpDetails,
   GoodNewsResponseDetails,
   IntimacyEvent,
+  IntimacyFollowUpMemberSummary,
   IntimacyMemberSummary,
   IntimacyResponseMemberSummary,
   IntimacyResults,
@@ -16,6 +18,7 @@ import type {
 } from '@openchatlab/shared-types'
 import { assertDataDirCompatible, DataDirCompatibilityError, readDataDirCompatibilityMeta } from '../../data-dir-compat'
 import { DatabaseManager } from '../../database-manager'
+import type { SemanticIndexRuntime } from '../../semantic-index'
 import { createDatabaseManagerAdapter } from '../adapters'
 import type { ChatTopicModelClient } from '../topics/model-client'
 import { createIntimacyService, type IntimacyService } from './service'
@@ -23,7 +26,7 @@ import { createIntimacyService, type IntimacyService } from './service'
 const nativeBinding = path.resolve('apps/cli/native/better_sqlite3.node')
 const baseTs = Date.parse('2026-05-01T08:00:00.000Z') / 1000
 const baseNow = Date.parse('2026-05-02T08:00:00.000Z')
-const MESSAGE_COUNT = 48
+const MESSAGE_COUNT = 61
 
 /** Ids of the hand-written messages inside the generated filler; senders alternate by parity. */
 const ALICE_FIRST_SHARING = 5
@@ -37,8 +40,28 @@ const ALICE_SUPPORTS_BOB = 31
 const BOB_LATE_DISCLOSURE = 34
 const ALICE_LATE_SUPPORT = 37
 const ALICE_UNANSWERED_DISCLOSURE = 39
+/** The last message of its window, so no answer to it could be visible there. */
 const BOB_DISCLOSURE_AT_RANGE_END = 48
+/** Long enough to end the window it lands in, so the question after it reads it as context. */
+const ALICE_DECORATION_PRIOR = 49
+const BOB_DECORATION_QUESTION = 50
+const ALICE_VISIT_PRIOR = 51
+const BOB_VISIT_QUESTION = 52
+/** Bob brings his check-up up again between his first mention of it and Alice asking about it. */
+const BOB_REPEATS_CHECKUP = 54
+const ALICE_CHECKUP_QUESTION = 55
+const BOB_LICENCE_PRIOR = 56
+const ALICE_LICENCE_QUESTION = 57
+const ALICE_VAGUE_QUESTION = 59
+const ALICE_UNMATCHABLE_QUESTION = 61
 const BOB_PHONE_NUMBER = '13800001111'
+
+const MATTER_DECORATION = '客厅装修'
+const MATTER_VISIT = '妈妈来住'
+const MATTER_CHECKUP = '体检结果'
+const MATTER_LICENCE = '换驾照'
+const MATTER_VAGUE = '最近过得怎么样'
+const MATTER_REVIEW = '复查结果'
 
 /** UTC-10 all year, so a message sent at 08:30 UTC belongs to the previous local calendar day. */
 const RUN_TIMEZONE = 'Pacific/Honolulu'
@@ -103,6 +126,19 @@ function createSession(root: string, chatType: 'private' | 'group' = 'private'):
     [ALICE_LATE_SUPPORT, { type: 0, content: '需要我请假过去帮你盯一天吗？我明天上午没会' }],
     [ALICE_UNANSWERED_DISCLOSURE, { type: 0, content: '我这两天总睡不着，心里一直发慌' }],
     [BOB_DISCLOSURE_AT_RANGE_END, { type: 0, content: '简历改完了，但一直没敢投，怕又是白忙一场' }],
+    [
+      ALICE_DECORATION_PRIOR,
+      { type: 0, content: `我家客厅下周开始装修，师傅说要两周。${'装修的事真是麻烦。'.repeat(700)}` },
+    ],
+    [BOB_DECORATION_QUESTION, { type: 0, content: '装修的事进展怎么样了' }],
+    [ALICE_VISIT_PRIOR, { type: 0, content: '我妈下周要来住一段时间，我有点紧张' }],
+    [BOB_VISIT_QUESTION, { type: 0, content: '阿姨来住的事你准备得怎么样了' }],
+    [BOB_REPEATS_CHECKUP, { type: 0, content: '体检报告还是没出来，我有点烦' }],
+    [ALICE_CHECKUP_QUESTION, { type: 0, content: '你上次说的体检结果出来了吗' }],
+    [BOB_LICENCE_PRIOR, { type: 0, content: '我这周还要去趟车管所换驾照' }],
+    [ALICE_LICENCE_QUESTION, { type: 0, content: '驾照换好了吗' }],
+    [ALICE_VAGUE_QUESTION, { type: 0, content: '你最近怎么样' }],
+    [ALICE_UNMATCHABLE_QUESTION, { type: 0, content: '那次复查医生怎么说' }],
   ])
   const insert = db.prepare('INSERT INTO message (id, sender_id, ts, type, content) VALUES (?, ?, ?, ?, ?)')
   db.transaction(() => {
@@ -134,6 +170,13 @@ interface PromptWindow {
   index: number
   total: number
   messages: PromptMessage[]
+}
+
+/** One matching call: the matter the question is about, the question itself and the candidates offered for it. */
+interface PromptMatch {
+  matter: string
+  questionIds: number[]
+  candidateIds: number[]
 }
 
 const MESSAGE_LINE = /^(\d+) ([AB]) (\d\d:\d\d) (.*)$/
@@ -177,6 +220,22 @@ function readWindow(userPrompt: string): PromptWindow {
   return { index: Number(header[1]), total: Number(header[2]), messages: readMessageLines(userPrompt) }
 }
 
+function readMatch(userPrompt: string): PromptMatch {
+  const matter = /The question asks about: (.*)/.exec(userPrompt)
+  assert.ok(matter)
+  const questionIds: number[] = []
+  const candidateIds: number[] = []
+  let section: 'question' | 'candidates' | null = null
+  for (const line of userPrompt.split('\n')) {
+    if (line.startsWith('Question:')) section = 'question'
+    else if (line.startsWith('Earlier messages from')) section = 'candidates'
+    const parsed = MESSAGE_LINE.exec(line)
+    if (!parsed) continue
+    ;(section === 'candidates' ? candidateIds : questionIds).push(Number(parsed[1]))
+  }
+  return { matter: matter[1]!, questionIds, candidateIds }
+}
+
 function sharingEvent(event: Record<string, unknown>): Record<string, unknown> {
   return {
     kind: 'sharing',
@@ -199,6 +258,16 @@ function goodNewsEvent(event: Record<string, unknown>): Record<string, unknown> 
     positiveForSharer: 'explicit_or_context_supported',
     confidence: 'clear',
     continuesContextEvent: false,
+    observation: 'sufficient',
+    reason: 'synthetic coding decision',
+    ...event,
+  }
+}
+
+function followUpEvent(event: Record<string, unknown>): Record<string, unknown> {
+  return {
+    kind: 'follow_up',
+    confidence: 'clear',
     observation: 'sufficient',
     reason: 'synthetic coding decision',
     ...event,
@@ -308,7 +377,87 @@ function defaultWindowResponse(window: PromptWindow): string {
       })
     )
   }
+  // The earlier message is right there in this window, or in the tail it carries over from the previous one.
+  if (own(BOB_DECORATION_QUESTION) && asContext(ALICE_DECORATION_PRIOR)) {
+    events.push(
+      followUpEvent({
+        asker: 'B',
+        coreMessageIds: [BOB_DECORATION_QUESTION],
+        priorMessageIds: [ALICE_DECORATION_PRIOR],
+        matter: MATTER_DECORATION,
+        matterKeywords: ['装修'],
+      })
+    )
+  }
+  if (own(BOB_VISIT_QUESTION) && own(ALICE_VISIT_PRIOR)) {
+    events.push(
+      followUpEvent({
+        asker: 'B',
+        coreMessageIds: [BOB_VISIT_QUESTION],
+        priorMessageIds: [ALICE_VISIT_PRIOR],
+        matter: MATTER_VISIT,
+        matterKeywords: ['来住', '阿姨'],
+      })
+    )
+  }
+  // These three cite no earlier message: the matter has to be found by the matching step, or not at all.
+  if (own(ALICE_CHECKUP_QUESTION)) {
+    events.push(
+      followUpEvent({
+        asker: 'A',
+        coreMessageIds: [ALICE_CHECKUP_QUESTION],
+        matter: MATTER_CHECKUP,
+        matterKeywords: ['体检'],
+      })
+    )
+  }
+  if (own(ALICE_LICENCE_QUESTION)) {
+    events.push(
+      followUpEvent({
+        asker: 'A',
+        coreMessageIds: [ALICE_LICENCE_QUESTION],
+        matter: MATTER_LICENCE,
+        matterKeywords: ['驾照'],
+      })
+    )
+  }
+  if (own(ALICE_VAGUE_QUESTION)) {
+    events.push(
+      followUpEvent({
+        asker: 'A',
+        coreMessageIds: [ALICE_VAGUE_QUESTION],
+        matter: MATTER_VAGUE,
+        matterKeywords: ['最近'],
+        confidence: 'uncertain',
+      })
+    )
+  }
+  if (own(ALICE_UNMATCHABLE_QUESTION)) {
+    events.push(
+      followUpEvent({
+        asker: 'A',
+        coreMessageIds: [ALICE_UNMATCHABLE_QUESTION],
+        matter: MATTER_REVIEW,
+        matterKeywords: ['复查'],
+      })
+    )
+  }
   return JSON.stringify({ events })
+}
+
+/**
+ * The synthetic matching decisions: the check-up and the licence are found among the candidates, the general
+ * check-in matches nothing, and one answer cites a message that was never offered.
+ */
+function defaultMatchResponse(match: PromptMatch): string {
+  if (match.matter === MATTER_CHECKUP) {
+    return JSON.stringify({ priorMessageIds: [BOB_OWN_SHARING], match: 'supported' })
+  }
+  if (match.matter === MATTER_LICENCE) {
+    return JSON.stringify({ priorMessageIds: [BOB_LICENCE_PRIOR], match: 'supported' })
+  }
+  if (match.matter === MATTER_REVIEW) return JSON.stringify({ priorMessageIds: [9999], match: 'supported' })
+  return JSON.stringify({ priorMessageIds: [], match: 'uncertain' })
 }
 
 interface Harness {
@@ -321,9 +470,24 @@ interface Harness {
   restart(): IntimacyService
 }
 
+/** Stands in for the semantic index: every query returns the block the test wants recalled. */
+function semanticStub(startMessageId: number, endMessageId: number): SemanticIndexRuntime {
+  return {
+    canSearch: () => true,
+    search: () =>
+      Promise.resolve({
+        available: true,
+        blocks: [{ parentId: 'p1', startMessageId, endMessageId, messages: [], tokens: 0, chunkIds: [], score: 0.6 }],
+        coverage: 1,
+        partial: false,
+        hitCount: 1,
+      }),
+  } as unknown as SemanticIndexRuntime
+}
+
 function createHarness(
   modelClient: ChatTopicModelClient | null,
-  options: { chatType?: 'private' | 'group'; version?: string } = {}
+  options: { chatType?: 'private' | 'group'; version?: string; semanticIndex?: SemanticIndexRuntime } = {}
 ): Harness {
   const root = makeTempDir()
   const chatType = options.chatType ?? 'private'
@@ -339,6 +503,7 @@ function createHarness(
       pathProvider: paths,
       runtimeIdentity,
       nativeBinding,
+      semanticIndex: options.semanticIndex,
       getModelClient: () => modelClient,
       now: () => clock,
       generateId: () => `run-${nextRunId++}`,
@@ -360,18 +525,30 @@ function createHarness(
   return harness
 }
 
-function modelStub(respond: (window: PromptWindow, calls: number) => string | Promise<string>): {
+function modelStub(
+  respond: (window: PromptWindow, calls: number) => string | Promise<string>,
+  matchRespond: (match: PromptMatch) => string = defaultMatchResponse
+): {
   client: ChatTopicModelClient
   windows: number[]
+  matches: PromptMatch[]
 } {
   const windows: number[] = []
+  const matches: PromptMatch[] = []
   let calls = 0
   return {
     windows,
+    matches,
     client: {
       modelId: 'test/model',
       async complete(prompts) {
         calls += 1
+        // The matching step reuses the same client, so the stub answers whichever prompt it was given.
+        if (!prompts.userPrompt.includes('\nWindow ')) {
+          const match = readMatch(prompts.userPrompt)
+          matches.push(match)
+          return { text: matchRespond(match), inputTokens: 3, outputTokens: 2 }
+        }
         const window = readWindow(prompts.userPrompt)
         windows.push(window.index)
         return { text: await respond(window, calls), inputTokens: 3, outputTokens: 2 }
@@ -392,7 +569,13 @@ function responseSummary(
   kind: 'support_response' | 'good_news_response'
 ): IntimacyResponseMemberSummary[] {
   const summary = results.summaries.find((item) => item.kind === kind)
-  assert.ok(summary && summary.kind !== 'sharing')
+  assert.ok(summary?.kind === 'support_response' || summary?.kind === 'good_news_response')
+  return summary.members
+}
+
+function followUpSummary(results: IntimacyResults): IntimacyFollowUpMemberSummary[] {
+  const summary = results.summaries.find((item) => item.kind === 'follow_up')
+  assert.ok(summary?.kind === 'follow_up')
   return summary.members
 }
 
@@ -408,8 +591,17 @@ function sharingDetails(event: IntimacyEvent): SharingDetails {
 }
 
 function responseDetails(event: IntimacyEvent): SupportResponseDetails | GoodNewsResponseDetails {
-  assert.ok(event.details.kind !== 'sharing')
+  assert.ok(event.details.kind === 'support_response' || event.details.kind === 'good_news_response')
   return event.details
+}
+
+function followUpDetails(event: IntimacyEvent): FollowUpDetails {
+  assert.ok(event.details.kind === 'follow_up')
+  return event.details
+}
+
+function evidenceRoles(event: IntimacyEvent): Array<[number, string]> {
+  return event.evidence.map((item) => [item.messageId, item.role])
 }
 
 async function waitForRun(service: IntimacyService, sessionId: string, runId: string, status: string) {
@@ -448,7 +640,7 @@ test('a full run codes each matter once and keeps a sharing continued across win
     const started = service.start('private', { kinds: ['sharing'], locale: 'zh-CN' })
     assert.ok(started.totalWindows >= 3)
     const run = await waitForRun(service, 'private', started.id, 'completed')
-    assert.equal(run.modelCalls, run.totalWindows)
+    assert.equal(run.modelCalls, run.totalWindows + stub.matches.length)
     assert.equal(run.completedWindows, run.totalWindows)
     assert.deepEqual(run.failedWindowIndexes, [])
 
@@ -897,14 +1089,20 @@ test('a window the model keeps mis-attributing is skipped while the rest of the 
     const run = await waitForRun(service, 'private', started.id, 'completed')
 
     assert.deepEqual(run.failedWindowIndexes, [1])
-    assert.equal(run.modelCalls, run.totalWindows + 1, 'the invalid window is retried once before it is skipped')
+    assert.equal(
+      run.modelCalls,
+      run.totalWindows + 1 + stub.matches.length,
+      'the invalid window is retried once before it is skipped'
+    )
     const results = await service.getResults('private')
     assert.equal(results.coverage?.failedWindows, 1)
     assert.equal(results.coverage?.complete, false)
     assert.ok(results.events.length >= 1)
     for (const event of results.events) {
+      // The core messages are the discloser's own words, except for a question, which the asker sent.
+      const author = event.kind === 'follow_up' ? event.otherMemberId : event.subjectMemberId
       for (const evidence of event.evidence.filter((item) => item.role === 'core')) {
-        assert.equal(evidence.senderId, event.subjectMemberId)
+        assert.equal(evidence.senderId, author)
       }
     }
   } finally {
@@ -1028,7 +1226,8 @@ test('a confirmed candidate is counted without a run and rejects messages the pa
     assert.equal(candidates.semanticAvailable, false)
     assert.deepEqual(
       candidates.keyword.map((message) => message.messageId),
-      [BOB_OWN_SHARING]
+      [ALICE_CHECKUP_QUESTION, BOB_REPEATS_CHECKUP, BOB_OWN_SHARING],
+      'every message that mentions the matter is offered, most recent first'
     )
   } finally {
     service.close()
@@ -1152,6 +1351,212 @@ test('clearing results can keep the user decisions and is refused while an analy
 
     assert.equal(service.clearResults('private', { includeReviews: true }), true)
     assert.equal((await service.getResults('private')).orphanReviews, 0)
+  } finally {
+    service.close()
+    manager.closeAll()
+  }
+})
+
+test('a follow-up question is paired with the earlier matter, by its own window or by the matching step', async () => {
+  const stub = modelStub((window) => defaultWindowResponse(window))
+  // The semantic index recalls a message no keyword and no coded event would have found.
+  const { service, manager } = createHarness(stub.client, { semanticIndex: semanticStub(20, 20) })
+
+  try {
+    const preflight = await service.preflight('private', { kinds: ['follow_up'] })
+    assert.equal(
+      preflight.estimatedCalls,
+      preflight.estimatedWindows * 2,
+      'the estimate covers the pairing calls the analysis may need'
+    )
+
+    const started = service.start('private', {
+      kinds: ['sharing', 'support_response', 'follow_up', 'good_news_response'],
+    })
+    await waitForRun(service, 'private', started.id, 'completed')
+    const results = await service.getResults('private')
+
+    // The earlier message is in the question's own window, or in the tail it carries over from the previous one.
+    const visit = event(results, `follow_up:${BOB_VISIT_QUESTION}`)
+    assert.equal(visit.subjectMemberId, 1, 'the participant who was asked is the subject')
+    assert.equal(visit.otherMemberId, 2, 'the asker is the other side')
+    assert.equal(visit.status, 'auto')
+    assert.deepEqual(evidenceRoles(visit), [
+      [ALICE_VISIT_PRIOR, 'prior'],
+      [BOB_VISIT_QUESTION, 'core'],
+    ])
+    assert.equal(followUpDetails(visit).matchConfidence, 'supported')
+    assert.deepEqual(evidenceRoles(event(results, `follow_up:${BOB_DECORATION_QUESTION}`)), [
+      [ALICE_DECORATION_PRIOR, 'prior'],
+      [BOB_DECORATION_QUESTION, 'core'],
+    ])
+
+    // The check-up was mentioned windows earlier: the matching step has to find it among the candidates.
+    const checkup = event(results, `follow_up:${ALICE_CHECKUP_QUESTION}`)
+    const checkupDetails = followUpDetails(checkup)
+    assert.deepEqual(evidenceRoles(checkup), [
+      [BOB_OWN_SHARING, 'prior'],
+      [ALICE_CHECKUP_QUESTION, 'core'],
+    ])
+    assert.equal(checkupDetails.priorEventId, `sharing:${BOB_OWN_SHARING}`)
+    assert.equal(checkupDetails.gapSeconds, (ALICE_CHECKUP_QUESTION - BOB_OWN_SHARING) * 60)
+    assert.equal(
+      checkupDetails.initiationInObservedRecord,
+      'after_subject_reintroduced',
+      'he had brought the check-up up again himself before she asked'
+    )
+    const checkupCall = stub.matches.find((match) => match.matter === MATTER_CHECKUP)
+    assert.ok(checkupCall)
+    for (const [recall, messageId] of [
+      ['the sharing this run coded', BOB_OWN_SHARING],
+      ['the keyword search', BOB_REPEATS_CHECKUP],
+      ['the semantic index', 20],
+    ] as const) {
+      assert.ok(checkupCall.candidateIds.includes(messageId), `the candidates include what came from ${recall}`)
+    }
+    assert.ok(
+      !checkupCall.candidateIds.includes(ALICE_CHECKUP_QUESTION),
+      'the asker cannot be paired with her own words'
+    )
+
+    assert.equal(
+      followUpDetails(event(results, `follow_up:${ALICE_LICENCE_QUESTION}`)).initiationInObservedRecord,
+      'before_subject_reintroduced',
+      'nobody raised the licence again between his mention of it and her question'
+    )
+
+    // A question with nothing specific behind it is never counted, and neither is one the matching step lost.
+    const vague = event(results, `follow_up:${ALICE_VAGUE_QUESTION}`)
+    assert.equal(vague.status, 'uncertain')
+    assert.deepEqual(evidenceRoles(vague), [[ALICE_VAGUE_QUESTION, 'core']])
+    assert.equal(followUpDetails(vague).matchConfidence, 'uncertain')
+    assert.ok(followUpDetails(vague).candidateMessageIds.length > 0, 'the candidates stay for the user to choose from')
+    for (const messageId of followUpDetails(vague).candidateMessageIds) {
+      assert.ok(results.messages[messageId], 'the page can show every candidate it may offer')
+    }
+
+    const unmatchable = event(results, `follow_up:${ALICE_UNMATCHABLE_QUESTION}`)
+    assert.equal(unmatchable.status, 'uncertain', 'an answer citing a message nobody offered is not a pair')
+    assert.equal(unmatchable.evidence.filter((item) => item.role === 'prior').length, 0)
+    assert.equal(
+      stub.matches.filter((match) => match.matter === MATTER_REVIEW).length,
+      2,
+      'the unreadable answer is asked for once more before the question is left open'
+    )
+
+    const [alice, bob] = followUpSummary(results)
+    assert.deepEqual(alice, {
+      memberId: 1,
+      pairs: 2,
+      matters: 2,
+      uncertain: 2,
+      beforeReintroduced: 1,
+      afterReintroduced: 1,
+      initiationUncertain: 0,
+    })
+    assert.equal(bob?.pairs, 2)
+    assert.equal(bob?.uncertain, 0)
+  } finally {
+    service.close()
+    manager.closeAll()
+  }
+})
+
+test('a user can pair a follow-up question by hand and is refused a pair the chat does not show', async () => {
+  const { service, manager } = createHarness(null)
+
+  try {
+    const created = await service.createUserEvent('private', {
+      kind: 'follow_up',
+      subjectMemberId: 2,
+      coreMessageIds: [BOB_VISIT_QUESTION],
+      priorMessageIds: [ALICE_VISIT_PRIOR],
+      details: { matter: MATTER_VISIT },
+    })
+
+    const paired = event(created, `follow_up:${BOB_VISIT_QUESTION}`)
+    assert.equal(paired.origin, 'user')
+    assert.equal(paired.status, 'confirmed')
+    assert.equal(paired.subjectMemberId, 1, 'the participant who was asked is the subject, not the one who asked')
+    assert.equal(paired.otherMemberId, 2)
+    assert.deepEqual(evidenceRoles(paired), [
+      [ALICE_VISIT_PRIOR, 'prior'],
+      [BOB_VISIT_QUESTION, 'core'],
+    ])
+    assert.equal(followUpDetails(paired).matchConfidence, 'supported')
+    assert.equal(followUpDetails(paired).gapSeconds, 60)
+    assert.equal(followUpSummary(created)[1]?.pairs, 1)
+    assert.equal(followUpSummary(created)[1]?.matters, 1)
+
+    const rejected: Array<[string, number[], string]> = [
+      ['an earlier message the asker sent himself', [BOB_OWN_SHARING], MATTER_VISIT],
+      ['an earlier message that comes after the question', [ALICE_CHECKUP_QUESTION], MATTER_VISIT],
+      ['an earlier message with no readable text', [23], MATTER_VISIT],
+      ['no earlier message at all', [], MATTER_VISIT],
+      ['no matter to show the pair under', [ALICE_VISIT_PRIOR], '  '],
+    ]
+    for (const [name, priorMessageIds, matter] of rejected) {
+      await assert.rejects(
+        () =>
+          service.createUserEvent('private', {
+            kind: 'follow_up',
+            subjectMemberId: 2,
+            coreMessageIds: [BOB_DECORATION_QUESTION],
+            priorMessageIds,
+            details: { matter },
+          }),
+        (error: unknown) => (error as { statusCode?: number }).statusCode === 400,
+        name
+      )
+    }
+  } finally {
+    service.close()
+    manager.closeAll()
+  }
+})
+
+test('a revision points an open follow-up question at the earlier message the user picked', async () => {
+  const stub = modelStub((window) => defaultWindowResponse(window))
+  const { service, manager } = createHarness(stub.client)
+
+  try {
+    const started = service.start('private', { kinds: ['sharing', 'follow_up'] })
+    await waitForRun(service, 'private', started.id, 'completed')
+    const before = await service.getResults('private')
+    assert.equal(followUpSummary(before)[0]?.pairs, 2)
+    assert.equal(followUpSummary(before)[0]?.uncertain, 2)
+
+    const reviewed = await service.reviewEvent('private', `follow_up:${ALICE_VAGUE_QUESTION}`, {
+      decision: 'included',
+      expectedRevision: 0,
+      details: { priorMessageIds: [BOB_OWN_SHARING] },
+    })
+
+    const paired = event(reviewed, `follow_up:${ALICE_VAGUE_QUESTION}`)
+    assert.equal(paired.status, 'confirmed')
+    assert.deepEqual(evidenceRoles(paired), [
+      [BOB_OWN_SHARING, 'prior'],
+      [ALICE_VAGUE_QUESTION, 'core'],
+    ])
+    assert.equal(followUpDetails(paired).matchConfidence, 'supported')
+    assert.equal(followUpDetails(paired).priorEventId, `sharing:${BOB_OWN_SHARING}`)
+    assert.equal(followUpDetails(paired).gapSeconds, (ALICE_VAGUE_QUESTION - BOB_OWN_SHARING) * 60)
+
+    const [alice] = followUpSummary(reviewed)
+    assert.equal(alice?.pairs, 3)
+    assert.equal(alice?.uncertain, 1)
+    assert.equal(alice?.matters, 2, 'the second question about the same matter does not add a matter')
+
+    await assert.rejects(
+      () =>
+        service.reviewEvent('private', `follow_up:${ALICE_UNMATCHABLE_QUESTION}`, {
+          decision: 'included',
+          expectedRevision: 0,
+          details: { priorMessageIds: [ALICE_FIRST_SHARING] },
+        }),
+      (error: unknown) => (error as { statusCode?: number }).statusCode === 400,
+      'the asker cannot be paired with her own earlier words'
+    )
   } finally {
     service.close()
     manager.closeAll()
