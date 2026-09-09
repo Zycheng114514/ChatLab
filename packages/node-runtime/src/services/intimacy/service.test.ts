@@ -320,12 +320,13 @@ test('a full run codes each matter once and keeps a sharing continued across win
     assert.equal(run.completedWindows, run.totalWindows)
     assert.deepEqual(run.failedWindowIndexes, [])
 
-    const results = await service.getResults('private', 'sharing')
-    assert.equal(results.events.length, 2)
+    const results = await service.getResults('private')
+    const sharingEvents = results.events.filter((event) => event.kind === 'sharing')
+    assert.equal(sharingEvents.length, 2)
     assert.equal(results.coverage?.complete, true)
     assert.equal(results.coverage?.sourceChanged, false)
 
-    const [aliceEvent, bobEvent] = results.events
+    const [aliceEvent, bobEvent] = sharingEvents
     assert.equal(aliceEvent?.subjectMemberId, 1)
     assert.equal(aliceEvent?.status, 'auto')
     assert.equal(aliceEvent?.evidence.length, 2, 'the continued window appends evidence instead of adding an event')
@@ -372,7 +373,7 @@ test('cancelling keeps the windows already paid for and reports the range as inc
     const cancelled = await waitForRun(service, 'private', started.id, 'cancelled')
     assert.equal(cancelled.completedWindows, 1)
 
-    const results = await service.getResults('private', 'sharing')
+    const results = await service.getResults('private')
     assert.equal(results.events.length, 1)
     assert.equal(results.coverage?.complete, false)
     assert.equal(results.coverage?.completedWindows, 1)
@@ -417,8 +418,8 @@ test('resuming continues at the window the analysis stopped on instead of paying
 
     assert.equal(stub.windows.filter((index) => index === 1).length, 1, 'the first window is not analysed twice')
     assert.equal(completed.completedWindows, completed.totalWindows)
-    const results = await service.getResults('private', 'sharing')
-    assert.equal(results.events.length, 2)
+    const results = await service.getResults('private')
+    assert.equal(results.events.filter((event) => event.kind === 'sharing').length, 2)
   } finally {
     service.close()
     manager.closeAll()
@@ -492,7 +493,7 @@ test('a window the model keeps mis-attributing is skipped while the rest of the 
 
     assert.deepEqual(run.failedWindowIndexes, [1])
     assert.equal(run.modelCalls, run.totalWindows + 1, 'the invalid window is retried once before it is skipped')
-    const results = await service.getResults('private', 'sharing')
+    const results = await service.getResults('private')
     assert.equal(results.coverage?.failedWindows, 1)
     assert.equal(results.coverage?.complete, false)
     assert.ok(results.events.length >= 1)
@@ -514,7 +515,7 @@ test('deleting a cited message marks its event stale and reports the range as ch
   try {
     const started = service.start('private', { kinds: ['sharing'] })
     await waitForRun(service, 'private', started.id, 'completed')
-    const before = await service.getResults('private', 'sharing')
+    const before = await service.getResults('private')
     const citedId = before.events[0]!.evidence[0]!.messageId
 
     manager.close('private')
@@ -522,7 +523,7 @@ test('deleting a cited message marks its event stale and reports the range as ch
     db.prepare('DELETE FROM message WHERE id = ?').run(citedId)
     db.close()
 
-    const after = await service.getResults('private', 'sharing')
+    const after = await service.getResults('private')
     assert.equal(after.events[0]?.stale, true)
     assert.equal(after.coverage?.sourceChanged, true)
     assert.equal(after.messages[citedId], undefined)
@@ -539,7 +540,7 @@ test('a rerun replaces the generated events but keeps the decisions the user mad
   try {
     const first = service.start('private', { kinds: ['sharing'] })
     await waitForRun(service, 'private', first.id, 'completed')
-    const initial = await service.getResults('private', 'sharing')
+    const initial = await service.getResults('private')
     const excludedId = initial.events[0]!.id
 
     const reviewed = await service.reviewEvent('private', excludedId, { decision: 'excluded', expectedRevision: 0 })
@@ -554,7 +555,7 @@ test('a rerun replaces the generated events but keeps the decisions the user mad
     const second = service.start('private', { kinds: ['sharing'] })
     await waitForRun(service, 'private', second.id, 'completed')
 
-    const rerun = await service.getResults('private', 'sharing')
+    const rerun = await service.getResults('private')
     assert.equal(rerun.run?.id, second.id)
     assert.equal(rerun.events.find((event) => event.id === excludedId)?.status, 'excluded')
     assert.equal(rerun.orphanReviews, 0)
@@ -693,7 +694,7 @@ test('deleting a session removes the intimacy results derived from it', async ()
   try {
     const started = service.start('private', { kinds: ['sharing'] })
     await waitForRun(service, 'private', started.id, 'completed')
-    const results = await service.getResults('private', 'sharing')
+    const results = await service.getResults('private')
     await service.reviewEvent('private', results.events[0]!.id, { decision: 'excluded', expectedRevision: 0 })
 
     assert.equal(manager.deleteSessionDatabaseFiles('private'), true)
@@ -734,17 +735,17 @@ test('clearing results can keep the user decisions and is refused while an analy
     blocked = false
     service.cancel('private', started.id)
     await waitForRun(service, 'private', started.id, 'cancelled')
-    const results = await service.getResults('private', 'sharing')
+    const results = await service.getResults('private')
     await service.reviewEvent('private', results.events[0]!.id, { decision: 'excluded', expectedRevision: 0 })
 
     assert.equal(service.clearResults('private', { includeReviews: false }), true)
-    const cleared = await service.getResults('private', 'sharing')
+    const cleared = await service.getResults('private')
     assert.equal(cleared.events.length, 0)
     assert.equal(cleared.coverage, null)
     assert.equal(cleared.orphanReviews, 1, 'the kept decision is reported for re-checking')
 
     assert.equal(service.clearResults('private', { includeReviews: true }), true)
-    assert.equal((await service.getResults('private', 'sharing')).orphanReviews, 0)
+    assert.equal((await service.getResults('private')).orphanReviews, 0)
   } finally {
     service.close()
     manager.closeAll()

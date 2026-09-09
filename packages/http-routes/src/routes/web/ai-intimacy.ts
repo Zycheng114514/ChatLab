@@ -7,7 +7,6 @@ import {
   type IntimacyCandidateRequest,
   type IntimacyKind,
   type ReviewIntimacyEventRequest,
-  type SharingDetails,
   type StartIntimacyRunRequest,
 } from '@openchatlab/shared-types'
 import type { AiRouteContext } from '../../context/ai'
@@ -76,10 +75,11 @@ export function registerAiIntimacyRoutes(server: FastifyInstance, ctx: IntimacyR
     )
   }
 
-  server.get<{ Params: { id: string }; Querystring: { kind?: string; startTs?: string; endTs?: string } }>(
+  // One request returns every implemented kind; the page splits them into its cards.
+  server.get<{ Params: { id: string }; Querystring: { startTs?: string; endTs?: string } }>(
     '/_web/sessions/:id/intimacy/results',
     async (request) =>
-      getService().getResults(request.params.id, requireKind(request.query.kind), {
+      getService().getResults(request.params.id, {
         startTs: optionalTimestamp(request.query.startTs, 'startTs'),
         endTs: optionalTimestamp(request.query.endTs, 'endTs'),
       })
@@ -132,21 +132,23 @@ function requireCandidateRequest(value: IntimacyCandidateRequest | undefined): I
 }
 
 function requireCreateEventRequest(value: CreateIntimacyEventRequest | undefined): CreateIntimacyEventRequest {
-  if (requireKind(value?.kind) !== 'sharing') {
-    throw Object.assign(new Error('Unsupported intimacy kind'), { statusCode: 400 })
-  }
+  const kind = requireKind(value?.kind)
   if (!Number.isInteger(value?.subjectMemberId)) {
     throw Object.assign(new Error('A confirmed event needs a participant'), { statusCode: 400 })
   }
   return {
-    kind: 'sharing',
+    kind,
     subjectMemberId: value!.subjectMemberId,
     coreMessageIds: requireMessageIds(value?.coreMessageIds, 'coreMessageIds'),
     relatedMessageIds:
       value?.relatedMessageIds === undefined
         ? undefined
         : requireMessageIds(value.relatedMessageIds, 'relatedMessageIds'),
-    details: requireObject(value?.details, 'details') as Omit<SharingDetails, 'kind'>,
+    responseMessageIds:
+      value?.responseMessageIds === undefined
+        ? undefined
+        : requireMessageIds(value.responseMessageIds, 'responseMessageIds'),
+    details: requireObject(value?.details, 'details'),
   }
 }
 

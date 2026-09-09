@@ -14,8 +14,12 @@ import {
   type IntimacyCandidateRequest,
   type IntimacyCandidates,
   type CreateIntimacyEventDetails,
+  type GoodNewsResponseDetails,
   type IntimacyEvent,
+  type IntimacyEventDetails,
   type IntimacyEventReview,
+  type IntimacyEvidence,
+  type IntimacyEvidenceRole,
   type IntimacyKind,
   type IntimacyKindSummary,
   type IntimacyMember,
@@ -24,9 +28,11 @@ import {
   type IntimacyResults,
   type IntimacyReviewDetails,
   type IntimacyRun,
+  type ResponseObservation,
   type ReviewIntimacyEventRequest,
   type SharingDetails,
   type StartIntimacyRunRequest,
+  type SupportResponseDetails,
 } from '@openchatlab/shared-types'
 import { isRuntimeVersionAtLeast, raiseDataDirMinRuntimeVersion, type RuntimeIdentity } from '../../data-dir-compat'
 import { appLogger } from '../../logging/app-logger'
@@ -43,10 +49,13 @@ import {
   summarizeSharing,
 } from './events'
 import {
+  GOOD_NEWS_RESPONSE_LABELS,
   INTIMACY_ALGORITHM_VERSION,
   INTIMACY_PROMPT_VERSION,
+  POSITIVE_FOR_SHARER_VALUES,
   SHARING_CATEGORIES,
   SHARING_TOPICS,
+  SUPPORT_RESPONSE_LABELS,
   buildIntimacyWindowPrompt,
   parseIntimacyResponse,
   resolveIntimacyPreprocess,
@@ -87,7 +96,7 @@ export interface IntimacyService {
   pause(sessionId: string, runId: string): IntimacyRun
   resume(sessionId: string, runId: string): IntimacyRun
   cancel(sessionId: string, runId: string): IntimacyRun
-  getResults(sessionId: string, kind: IntimacyKind, range?: IntimacyResultRange): Promise<IntimacyResults>
+  getResults(sessionId: string, range?: IntimacyResultRange): Promise<IntimacyResults>
   searchCandidates(sessionId: string, request: IntimacyCandidateRequest): Promise<IntimacyCandidates>
   createUserEvent(sessionId: string, request: CreateIntimacyEventRequest): Promise<IntimacyResults>
   reviewEvent(sessionId: string, eventId: string, request: ReviewIntimacyEventRequest): Promise<IntimacyResults>
@@ -288,23 +297,17 @@ export function createIntimacyService(deps: IntimacyServiceDeps): IntimacyServic
     return updateRun(run, { status: 'cancelled' })
   }
 
-  async function getResults(
-    sessionId: string,
-    kind: IntimacyKind,
-    range?: IntimacyResultRange
-  ): Promise<IntimacyResults> {
+  /** One call returns every implemented kind: a single window call coded them all, and the page shows them together. */
+  async function getResults(sessionId: string, range?: IntimacyResultRange): Promise<IntimacyResults> {
     assertOpen()
-    requireImplementedKinds([kind])
     const db = deps.runtime.ensureReadonly(sessionId)
     const members = resolveIntimacyMembers(db)
     const latestRun = store.getLatestRun(sessionId)
     const resultRun = store.getLatestRunWithResults(sessionId)
     const reviews = new Map(store.listReviews(sessionId).map((review) => [review.eventId, toReview(review)]))
-    const runEvents = resultRun ? store.listEvents(sessionId, resultRun.id).filter((event) => event.kind === kind) : []
+    const runEvents = resultRun ? store.listEvents(sessionId, resultRun.id) : []
     const runEventIds = new Set(runEvents.map((event) => event.id))
-    const userEvents = store
-      .listEvents(sessionId, INTIMACY_USER_RUN_ID)
-      .filter((event) => event.kind === kind && !runEventIds.has(event.id))
+    const userEvents = store.listEvents(sessionId, INTIMACY_USER_RUN_ID).filter((event) => !runEventIds.has(event.id))
 
     const stored = [...runEvents, ...userEvents]
     const messages = loadEvidenceSnippets(db, stored)
@@ -385,9 +388,7 @@ export function createIntimacyService(deps: IntimacyServiceDeps): IntimacyServic
 
   async function createUserEvent(sessionId: string, request: CreateIntimacyEventRequest): Promise<IntimacyResults> {
     assertOpen()
-    if (request.kind !== 'sharing') {
-      throw Object.assign(new Error(`Unsupported intimacy kind: ${String(request.kind)}`), { statusCode: 400 })
-    }
+    const [kind] = requireImplementedKinds([request.kind])
     const db = deps.runtime.ensureReadonly(sessionId)
     const members = resolveIntimacyMembers(db)
     const subject = members.find((member) => member.memberId === request.subjectMemberId)
@@ -402,8 +403,11 @@ export function createIntimacyService(deps: IntimacyServiceDeps): IntimacyServic
     const relatedMessageIds = [...new Set(request.relatedMessageIds ?? [])].filter(
       (messageId) => !coreMessageIds.includes(messageId)
     )
-    const details = requireSharingDetails(request.details)
-    const found = new Map(getMessagesByIds(db, [...coreMessageIds, ...relatedMessageIds]).map((m) => [m.id, m]))
+    // A sharing event has no reply of its own; the reply belongs to the response kinds.
+    const responseMessageIds = kind === 'sharing' ? [] : [...new Set(request.responseMessageIds ?? [])]
+    const found = new Map(
+      getMessagesByIds(db, [...coreMessageIds, ...relatedMessageIds, ...responseMessageIds]).map((m) => [m.id, m])
+    )
     for (const messageId of coreMessageIds) {
       const message = found.get(messageId)
       if (!message) {
@@ -424,51 +428,167 @@ export function createIntimacyService(deps: IntimacyServiceDeps): IntimacyServic
       }
     }
 
-    const anchorMessageId = Math.min(...coreMessageIds)
-    const eventId = `sharing:${anchorMessageId}`
     const timestamp = now()
-    // A message can support only one event. When the confirmed messages already belong to an event in the
-    // current results (generated or user-confirmed), the confirmation becomes a decision on that event instead
-    // of a second event for the same matter.
-    const existing = store.getLatestRunWithResults(sessionId)
+    // A message supports one event per kind: confirming messages that already carry one relabels that event
+    // instead of counting the same matter twice.
+    const resultRun = store.getLatestRunWithResults(sessionId)
     const currentEvents = [
-      ...(existing ? store.listEvents(sessionId, existing.id) : []),
+      ...(resultRun ? store.listEvents(sessionId, resultRun.id) : []),
       ...store.listEvents(sessionId, INTIMACY_USER_RUN_ID),
-    ].filter((event) => event.kind === 'sharing')
-    const overlapping = currentEvents.find(
-      (event) => event.id === eventId || event.evidence.some((evidence) => coreMessageIds.includes(evidence.messageId))
-    )
-    if (overlapping) {
-      const current = store.listReviews(sessionId).find((review) => review.eventId === overlapping.id)
-      store.upsertReview(
+    ]
+    const coreEvidence = coreMessageIds
+      .map((messageId) => toEvidence(found.get(messageId)!, 'core'))
+      .sort((left, right) => left.messageId - right.messageId)
+
+    if (kind === 'sharing') {
+      const details = requireSharingDetails(request.details)
+      confirmEvent(
         sessionId,
-        overlapping.id,
-        'included',
-        JSON.stringify(requirePartialSharingDetails(details)),
-        current?.revision ?? 0,
-        timestamp
+        {
+          id: `sharing:${coreEvidence[0]!.messageId}`,
+          kind: 'sharing',
+          subjectMemberId: subject.memberId,
+          otherMemberId: other.memberId,
+          anchorMessageId: coreEvidence[0]!.messageId,
+          anchorTs: coreEvidence[0]!.timestamp,
+          evidence: [
+            ...coreEvidence,
+            ...relatedMessageIds.map((messageId) => toEvidence(found.get(messageId)!, 'related')),
+          ].sort((left, right) => left.messageId - right.messageId),
+          observation: 'sufficient',
+          origin: 'user',
+          modelDecision: null,
+          modelReason: null,
+          details,
+          createdAt: timestamp,
+        },
+        { currentEvents, coreMessageIds, reviewDetails: toReviewDetails(details), timestamp }
       )
-    } else {
-      store.createUserEvent(sessionId, {
-        id: eventId,
-        kind: 'sharing',
+      return getResults(sessionId)
+    }
+
+    // K2 counts a reply to a disclosure, so the disclosure has to exist as a K1 event of its own.
+    const disclosure =
+      kind === 'support_response'
+        ? ensureDisclosureEvent(sessionId, currentEvents, {
+            subject,
+            other,
+            coreEvidence,
+            relatedEvidence: relatedMessageIds.map((messageId) => toEvidence(found.get(messageId)!, 'related')),
+            timestamp,
+          })
+        : null
+    const anchorMessageId = disclosure?.anchorMessageId ?? coreEvidence[0]!.messageId
+    const responseEvidence = responseMessageIds.map((messageId) => {
+      const message = found.get(messageId)
+      if (!message) {
+        throw Object.assign(new Error(`Message ${messageId} is not part of this chat`), { statusCode: 400 })
+      }
+      if (message.senderId !== other.memberId) {
+        throw Object.assign(new Error(`Message ${messageId} was not sent by the other participant`), {
+          statusCode: 400,
+        })
+      }
+      if (messageId <= anchorMessageId) {
+        throw Object.assign(new Error(`Message ${messageId} does not follow the message it answers`), {
+          statusCode: 400,
+        })
+      }
+      return toEvidence(message, 'response')
+    })
+    const details = disclosure
+      ? buildConfirmedSupportDetails(disclosure.id, request.details, responseEvidence.length)
+      : buildConfirmedGoodNewsDetails(request.details, responseEvidence.length)
+    const anchorEvidence = (disclosure?.evidence ?? coreEvidence).filter((evidence) => evidence.role === 'core')
+    confirmEvent(
+      sessionId,
+      {
+        id: `${kind}:${anchorMessageId}`,
+        kind,
         subjectMemberId: subject.memberId,
         otherMemberId: other.memberId,
         anchorMessageId,
-        anchorTs: found.get(anchorMessageId)!.timestamp,
-        evidence: [
-          ...coreMessageIds.map((messageId) => toEvidence(found.get(messageId)!, 'core')),
-          ...relatedMessageIds.map((messageId) => toEvidence(found.get(messageId)!, 'related')),
-        ].sort((left, right) => left.messageId - right.messageId),
+        anchorTs: disclosure?.anchorTs ?? coreEvidence[0]!.timestamp,
+        evidence: [...anchorEvidence, ...responseEvidence].sort((left, right) => left.messageId - right.messageId),
         observation: 'sufficient',
         origin: 'user',
         modelDecision: null,
         modelReason: null,
         details,
         createdAt: timestamp,
-      })
+      },
+      { currentEvents, coreMessageIds, reviewDetails: toReviewDetails(details), timestamp }
+    )
+    return getResults(sessionId)
+  }
+
+  /** Write the confirmed event, or turn the confirmation into a decision on the event that already covers it. */
+  function confirmEvent(
+    sessionId: string,
+    record: IntimacyEventRecord,
+    context: {
+      currentEvents: StoredIntimacyEvent[]
+      coreMessageIds: number[]
+      reviewDetails: IntimacyReviewDetails
+      timestamp: number
     }
-    return getResults(sessionId, 'sharing')
+  ): void {
+    const overlapping = findOverlappingEvent(context.currentEvents, record.kind, record.id, context.coreMessageIds)
+    if (!overlapping) {
+      store.createUserEvent(sessionId, record)
+      return
+    }
+    const current = store.listReviews(sessionId).find((review) => review.eventId === overlapping.id)
+    store.upsertReview(
+      sessionId,
+      overlapping.id,
+      'included',
+      JSON.stringify(context.reviewDetails),
+      current?.revision ?? 0,
+      context.timestamp
+    )
+  }
+
+  /** The K1 event a confirmed support response answers; a disclosure the user coded by hand is created here. */
+  function ensureDisclosureEvent(
+    sessionId: string,
+    currentEvents: StoredIntimacyEvent[],
+    input: {
+      subject: IntimacyMember
+      other: IntimacyMember
+      coreEvidence: IntimacyEvidence[]
+      relatedEvidence: IntimacyEvidence[]
+      timestamp: number
+    }
+  ): { id: string; anchorMessageId: number; anchorTs: number; evidence: IntimacyEvidence[] } {
+    const anchor = input.coreEvidence[0]!
+    const existing = findOverlappingEvent(
+      currentEvents,
+      'sharing',
+      `sharing:${anchor.messageId}`,
+      input.coreEvidence.map((evidence) => evidence.messageId)
+    )
+    if (existing) return existing
+    const record: IntimacyEventRecord = {
+      id: `sharing:${anchor.messageId}`,
+      kind: 'sharing',
+      subjectMemberId: input.subject.memberId,
+      otherMemberId: input.other.memberId,
+      anchorMessageId: anchor.messageId,
+      anchorTs: anchor.timestamp,
+      evidence: [...input.coreEvidence, ...input.relatedEvidence].sort(
+        (left, right) => left.messageId - right.messageId
+      ),
+      observation: 'sufficient',
+      origin: 'user',
+      modelDecision: null,
+      modelReason: null,
+      // The user confirmed a reply to it, so the disclosure itself is the worry or need that triggered the reply.
+      details: { kind: 'sharing', categories: ['worry_or_need'], topic: 'other', isDistressDisclosure: 'yes' },
+      createdAt: input.timestamp,
+    }
+    store.createUserEvent(sessionId, record)
+    return record
   }
 
   async function reviewEvent(
@@ -480,11 +600,12 @@ export function createIntimacyService(deps: IntimacyServiceDeps): IntimacyServic
     if (request.decision !== 'included' && request.decision !== 'excluded') {
       throw Object.assign(new Error(`Unsupported review decision: ${String(request.decision)}`), { statusCode: 400 })
     }
-    const results = await getResults(sessionId, 'sharing')
-    if (!results.events.some((event) => event.id === eventId)) {
+    const results = await getResults(sessionId)
+    const event = results.events.find((item) => item.id === eventId)
+    if (!event) {
       throw Object.assign(new Error(`Intimacy event not found: ${eventId}`), { statusCode: 404 })
     }
-    const details = request.details ? requirePartialSharingDetails(request.details) : null
+    const details = request.details ? requireRevisableDetails(event, request.details) : null
     const review = store.upsertReview(
       sessionId,
       eventId,
@@ -494,7 +615,7 @@ export function createIntimacyService(deps: IntimacyServiceDeps): IntimacyServic
       now()
     )
     if (!review) throw Object.assign(new Error('Review revision conflict'), { statusCode: 409 })
-    return getResults(sessionId, 'sharing')
+    return getResults(sessionId)
   }
 
   function clearResults(sessionId: string, options: { includeReviews: boolean }): boolean {
@@ -966,6 +1087,121 @@ function requireImplementedKinds(kinds: IntimacyKind[] | undefined): IntimacyKin
   return [...new Set(kinds)]
 }
 
+/** An event of the same kind already built on these messages; the same matter is never counted twice. */
+function findOverlappingEvent(
+  events: StoredIntimacyEvent[],
+  kind: IntimacyKind,
+  eventId: string,
+  coreMessageIds: number[]
+): StoredIntimacyEvent | undefined {
+  return events.find(
+    (event) =>
+      event.kind === kind &&
+      (event.id === eventId || event.evidence.some((evidence) => coreMessageIds.includes(evidence.messageId)))
+  )
+}
+
+function buildConfirmedSupportDetails(
+  disclosureEventId: string,
+  details: CreateIntimacyEventDetails,
+  responseCount: number
+): SupportResponseDetails {
+  const responseLabels = requirePartialSupportDetails(details).responseLabels ?? []
+  return {
+    kind: 'support_response',
+    disclosureEventId,
+    responseLabels,
+    responseObservation: resolveConfirmedObservation(responseCount, responseLabels.length),
+  }
+}
+
+function buildConfirmedGoodNewsDetails(
+  details: CreateIntimacyEventDetails,
+  responseCount: number
+): GoodNewsResponseDetails {
+  const revised = requirePartialGoodNewsDetails(details)
+  const responseLabels = revised.responseLabels ?? []
+  return {
+    kind: 'good_news_response',
+    positiveForSharer: revised.positiveForSharer ?? 'uncertain',
+    responseLabels,
+    responseObservation: resolveConfirmedObservation(responseCount, responseLabels.length),
+  }
+}
+
+/**
+ * A user confirming a response sees the whole chat, so the reply is either there with labels or not there at all.
+ * A reply nobody selected is recorded as "no visible response", never as a label about how it went.
+ */
+function resolveConfirmedObservation(responseCount: number, labelCount: number): ResponseObservation {
+  if (responseCount > 0 && labelCount > 0) return 'visible_response'
+  if (responseCount === 0 && labelCount === 0) return 'no_visible_response'
+  throw Object.assign(new Error('A confirmed response needs both the reply messages and how they answered'), {
+    statusCode: 400,
+  })
+}
+
+/** The revisable part of the labels, used when a confirmation lands on an event that already exists. */
+function toReviewDetails(details: IntimacyEventDetails): IntimacyReviewDetails {
+  if (details.kind === 'sharing') {
+    return { categories: details.categories, topic: details.topic, isDistressDisclosure: details.isDistressDisclosure }
+  }
+  if (details.kind === 'support_response') return { responseLabels: details.responseLabels }
+  return { positiveForSharer: details.positiveForSharer, responseLabels: details.responseLabels }
+}
+
+/** A revision may only touch the labels of the kind it is about, and only label a reply that was seen. */
+function requireRevisableDetails(event: IntimacyEvent, details: IntimacyReviewDetails): IntimacyReviewDetails {
+  if (event.details.kind === 'sharing') return requirePartialSharingDetails(details)
+  const revised =
+    event.details.kind === 'support_response'
+      ? requirePartialSupportDetails(details)
+      : requirePartialGoodNewsDetails(details)
+  if ((revised.responseLabels?.length ?? 0) > 0 && event.details.responseObservation !== 'visible_response') {
+    throw Object.assign(new Error('Response labels need a visible response'), { statusCode: 400 })
+  }
+  return revised
+}
+
+function requirePartialSupportDetails(
+  details: IntimacyReviewDetails | CreateIntimacyEventDetails
+): Partial<Omit<SupportResponseDetails, 'kind'>> {
+  const revised = details as Partial<Omit<SupportResponseDetails, 'kind'>>
+  if (revised.responseLabels === undefined) return {}
+  return { responseLabels: requireLabels(revised.responseLabels, SUPPORT_RESPONSE_LABELS, 'support response labels') }
+}
+
+function requirePartialGoodNewsDetails(
+  details: IntimacyReviewDetails | CreateIntimacyEventDetails
+): Partial<Omit<GoodNewsResponseDetails, 'kind'>> {
+  const revised = details as Partial<Omit<GoodNewsResponseDetails, 'kind'>>
+  const result: Partial<Omit<GoodNewsResponseDetails, 'kind'>> = {}
+  if (revised.responseLabels !== undefined) {
+    result.responseLabels = requireLabels(
+      revised.responseLabels,
+      GOOD_NEWS_RESPONSE_LABELS,
+      'good news response labels'
+    )
+  }
+  if (revised.positiveForSharer !== undefined) {
+    if (!POSITIVE_FOR_SHARER_VALUES.includes(revised.positiveForSharer)) {
+      throw Object.assign(new Error(`Invalid good news value: ${String(revised.positiveForSharer)}`), {
+        statusCode: 400,
+      })
+    }
+    result.positiveForSharer = revised.positiveForSharer
+  }
+  return result
+}
+
+function requireLabels<T extends string>(value: T[], allowed: readonly T[], field: string): T[] {
+  if (!Array.isArray(value) || value.some((label) => !allowed.includes(label))) {
+    throw Object.assign(new Error(`Invalid ${field}`), { statusCode: 400 })
+  }
+  const unique = new Set(value)
+  return allowed.filter((label) => unique.has(label))
+}
+
 function requireSharingDetails(details: CreateIntimacyEventDetails): SharingDetails {
   const partial = requirePartialSharingDetails(details as Partial<Omit<SharingDetails, 'kind'>>)
   if (!partial.categories || partial.categories.length === 0) {
@@ -1019,7 +1255,7 @@ function toSnippet(message: MappedMessage): IntimacyMessageSnippet {
   }
 }
 
-function toEvidence(message: MappedMessage, role: 'core' | 'related') {
+function toEvidence(message: MappedMessage, role: IntimacyEvidenceRole): IntimacyEvidence {
   return { messageId: message.id, timestamp: message.timestamp, senderId: message.senderId, role }
 }
 
