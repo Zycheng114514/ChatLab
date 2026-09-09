@@ -1,12 +1,13 @@
 import assert from 'node:assert/strict'
 import test from 'node:test'
-import type { IntimacyEvent, IntimacyEventStatus, SharingCategory, SharingTopic } from '@openchatlab/shared-types'
+import type { IntimacyEventStatus, SharingCategory, SharingTopic } from '@openchatlab/shared-types'
 import {
   buildIntimacyTopicFilterOptions,
   filterIntimacyEventsByTopic,
   partitionIntimacyEvents,
   resolveIntimacyStatusBadge,
   summarizeIntimacyEvents,
+  type IntimacySharingEvent,
 } from './intimacy-summary'
 
 const members = [
@@ -20,7 +21,7 @@ function event(
   status: IntimacyEventStatus,
   topic: SharingTopic,
   categories: SharingCategory[]
-): IntimacyEvent {
+): IntimacySharingEvent {
   return {
     id: `sharing:${id}`,
     sessionId: 's',

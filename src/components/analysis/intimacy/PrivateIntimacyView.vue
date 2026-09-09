@@ -30,6 +30,7 @@ import {
   buildIntimacyTopicFilterOptions,
   filterIntimacyEventsByTopic,
   partitionIntimacyEvents,
+  selectSharingEvents,
   summarizeIntimacyEvents,
   type IntimacyTopicFilter,
 } from './intimacy-summary'
@@ -62,10 +63,11 @@ let pollTimer: ReturnType<typeof setTimeout> | null = null
 
 const events = computed(() => results.value?.events ?? [])
 const members = computed(() => results.value?.members ?? [])
-const filteredEvents = computed(() => filterIntimacyEventsByTopic(events.value, topicFilter.value))
+const sharingEvents = computed(() => selectSharingEvents(events.value))
+const filteredEvents = computed(() => filterIntimacyEventsByTopic(sharingEvents.value, topicFilter.value))
 const listedEvents = computed(() => partitionIntimacyEvents(filteredEvents.value).listed)
 const excludedEvents = computed(() => partitionIntimacyEvents(filteredEvents.value).excluded)
-const topicOptions = computed(() => buildIntimacyTopicFilterOptions(events.value))
+const topicOptions = computed(() => buildIntimacyTopicFilterOptions(sharingEvents.value))
 const summaries = computed(() => summarizeIntimacyEvents(filteredEvents.value, members.value))
 const hasModel = computed(() => Boolean(results.value?.modelId))
 
@@ -101,7 +103,7 @@ async function loadResults(options: { silent?: boolean } = {}) {
   clearPollTimer()
   if (!options.silent) loading.value = true
   try {
-    const next = await useIntimacyService().getResults(props.sessionId, 'sharing', {
+    const next = await useIntimacyService().getResults(props.sessionId, {
       startTs: props.timeFilter?.startTs,
       endTs: props.timeFilter?.endTs,
     })
@@ -307,11 +309,8 @@ onUnmounted(clearPollTimer)
         <p v-if="results?.coverage?.sourceChanged" class="mt-1 text-[11px] text-amber-600 dark:text-amber-400">
           {{ t('views.intimacy.info.sourceChanged') }}
         </p>
-        <p
-          v-if="results && results.summary.orphanReviews > 0"
-          class="mt-1 text-[11px] text-amber-600 dark:text-amber-400"
-        >
-          {{ t('views.intimacy.info.orphanReviews', { count: results.summary.orphanReviews }) }}
+        <p v-if="results && results.orphanReviews > 0" class="mt-1 text-[11px] text-amber-600 dark:text-amber-400">
+          {{ t('views.intimacy.info.orphanReviews', { count: results.orphanReviews }) }}
         </p>
       </section>
 

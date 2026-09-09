@@ -70,22 +70,31 @@ export type {
 export { useIntimacyService } from './intimacy/service'
 export { IntimacyRequestError } from './intimacy/types'
 export type {
+  GoodNewsResponseDetails,
+  GoodNewsResponseLabel,
   IntimacyAdapter,
   IntimacyCandidateRequest,
   IntimacyCandidates,
   IntimacyEvent,
+  IntimacyEventDetails,
   IntimacyEventStatus,
   IntimacyKind,
+  IntimacyKindSummary,
   IntimacyMember,
   IntimacyMemberSummary,
   IntimacyMessageSnippet,
   IntimacyPreflight,
+  IntimacyResponseMemberSummary,
   IntimacyResultRange,
   IntimacyResults,
+  IntimacyReviewDetails,
   IntimacyRun,
+  ResponseObservation,
   SharingCategory,
   SharingDetails,
   SharingTopic,
+  SupportResponseDetails,
+  SupportResponseLabel,
 } from './intimacy/types'
 export { usePlatformService } from './platform/service'
 export type { PlatformAdapter, OpenDialogOptions, OpenDialogResult, RemoteConfigResult } from './platform/types'

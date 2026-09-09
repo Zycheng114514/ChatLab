@@ -4,7 +4,14 @@ import { computed, ref } from 'vue'
 import dayjs from 'dayjs'
 import { useI18n } from 'vue-i18n'
 import { getMessageTypeName } from '@/types/base'
-import type { IntimacyEvent, IntimacyMember, IntimacyMessageSnippet, SharingCategory, SharingTopic } from '@/services'
+import type {
+  IntimacyEvent,
+  IntimacyMember,
+  IntimacyMessageSnippet,
+  SharingCategory,
+  SharingDetails,
+  SharingTopic,
+} from '@/services'
 import {
   SHARING_CATEGORIES,
   SHARING_CATEGORY_LABEL_KEYS,
@@ -43,6 +50,11 @@ const topicOptions = computed(() =>
   SHARING_TOPICS.map((topic) => ({ value: topic, label: t(SHARING_TOPIC_LABEL_KEYS[topic]) }))
 )
 
+/** 一次结果里混着三种 kind，类别与话题只属于个人分享事件。 */
+function sharingDetails(event: IntimacyEvent): SharingDetails | null {
+  return event.details.kind === 'sharing' ? event.details : null
+}
+
 function memberName(memberId: number): string {
   return props.members.find((member) => member.memberId === memberId)?.name ?? String(memberId)
 }
@@ -68,9 +80,11 @@ function toggleReason(eventId: string) {
 }
 
 function startEditing(event: IntimacyEvent) {
+  const details = sharingDetails(event)
+  if (!details) return
   editingId.value = event.id
-  editCategories.value = [...event.details.categories]
-  editTopic.value = event.details.topic
+  editCategories.value = [...details.categories]
+  editTopic.value = details.topic
 }
 
 function toggleCategory(category: SharingCategory, checked: boolean) {
@@ -107,13 +121,15 @@ function submitEdit(event: IntimacyEvent) {
         </span>
         <span class="text-xs tabular-nums text-gray-400">{{ formatTime(event.anchorTs) }}</span>
         <span
-          v-for="category in event.details.categories"
+          v-for="category in sharingDetails(event)?.categories ?? []"
           :key="category"
           class="rounded bg-gray-100 px-1.5 py-0.5 text-[10px] text-gray-600 dark:bg-gray-800 dark:text-gray-300"
         >
           {{ t(SHARING_CATEGORY_LABEL_KEYS[category]) }}
         </span>
-        <span class="text-[10px] text-gray-400">{{ t(SHARING_TOPIC_LABEL_KEYS[event.details.topic]) }}</span>
+        <span v-if="sharingDetails(event)" class="text-[10px] text-gray-400">
+          {{ t(SHARING_TOPIC_LABEL_KEYS[sharingDetails(event)!.topic]) }}
+        </span>
       </div>
 
       <p v-if="observationKey(event)" class="mt-1.5 text-[11px] text-gray-400">

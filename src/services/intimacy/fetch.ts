@@ -3,7 +3,6 @@ import {
   IntimacyRequestError,
   type IntimacyAdapter,
   type IntimacyCandidates,
-  type IntimacyKind,
   type IntimacyPreflight,
   type IntimacyResultRange,
   type IntimacyResults,
@@ -42,11 +41,12 @@ export class FetchIntimacyAdapter implements IntimacyAdapter {
     return this.runAction(sessionId, runId, 'cancel')
   }
 
-  getResults(sessionId: string, kind: IntimacyKind, range?: IntimacyResultRange) {
-    const query = new URLSearchParams({ kind })
+  getResults(sessionId: string, range?: IntimacyResultRange) {
+    const query = new URLSearchParams()
     if (range?.startTs !== undefined) query.set('startTs', String(range.startTs))
     if (range?.endTs !== undefined) query.set('endTs', String(range.endTs))
-    return requestJson<IntimacyResults>(`${base(sessionId)}/results?${query.toString()}`)
+    const search = query.toString()
+    return requestJson<IntimacyResults>(`${base(sessionId)}/results${search === '' ? '' : `?${search}`}`)
   }
 
   searchCandidates(sessionId: string, request: Parameters<IntimacyAdapter['searchCandidates']>[1]) {
