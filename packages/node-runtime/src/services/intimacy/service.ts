@@ -14,8 +14,10 @@ import {
   type IntimacyAnalysisRequest,
   type IntimacyCandidateRequest,
   type IntimacyCandidates,
+  type CreateFollowUpDetails,
   type CreateIntimacyEventDetails,
   type FollowUpMatchConfidence,
+  type FollowUpReviewDetails,
   type GoodNewsResponseDetails,
   type IntimacyEvent,
   type IntimacyEventReview,
@@ -45,6 +47,7 @@ import { chatTopicWorkCoordinator } from '../topics/work-coordinator'
 import {
   INTIMACY_FOLLOW_UP_LOOKBACK_SECONDS,
   applyFollowUpPairing,
+  type FollowUpPairing,
   applyReviewDetails,
   buildIntimacyEvents,
   findSharingEventCovering,
@@ -136,6 +139,8 @@ const INTIMACY_EXECUTION_HEARTBEAT_MS = 10_000
 const INTIMACY_KEYWORD_CANDIDATE_LIMIT = 30
 const INTIMACY_SEMANTIC_CANDIDATE_LIMIT = 10
 const INTIMACY_SEMANTIC_BLOCK_MESSAGE_LIMIT = 40
+/** The matter of a confirmed follow-up question is a list title, like the one the model writes. */
+const INTIMACY_FOLLOW_UP_MATTER_CHARS = 60
 /** How many follow-up questions of one window may be paired by a model call; the rest wait for the user. */
 const INTIMACY_FOLLOW_UP_MATCH_CALLS_PER_WINDOW = 10
 const INTIMACY_WINDOW_INVALID = 'INTIMACY_WINDOW_INVALID'
@@ -328,7 +333,7 @@ export function createIntimacyService(deps: IntimacyServiceDeps): IntimacyServic
     const userEvents = store.listEvents(sessionId, INTIMACY_USER_RUN_ID).filter((event) => !runEventIds.has(event.id))
 
     const stored = [...runEvents, ...userEvents]
-    const messages = loadEvidenceSnippets(db, stored)
+    const messages = loadEvidenceSnippets(db, stored, reviews)
     // A decision on an event outside the requested range still has an event behind it, so it is not orphaned.
     const storedIds = new Set(stored.map((event) => event.id))
     const events = stored
@@ -345,9 +350,12 @@ export function createIntimacyService(deps: IntimacyServiceDeps): IntimacyServic
       events,
       messages: Object.fromEntries(
         events.flatMap((event) =>
-          event.evidence.flatMap((evidence) => {
-            const snippet = messages.get(evidence.messageId)
-            return snippet ? [[evidence.messageId, snippet] as const] : []
+          [
+            ...event.evidence.map((evidence) => evidence.messageId),
+            ...(event.details.kind === 'follow_up' ? event.details.candidateMessageIds : []),
+          ].flatMap((messageId) => {
+            const snippet = messages.get(messageId)
+            return snippet ? [[messageId, snippet] as const] : []
           })
         )
       ),
@@ -421,10 +429,14 @@ export function createIntimacyService(deps: IntimacyServiceDeps): IntimacyServic
     const relatedMessageIds = [...new Set(request.relatedMessageIds ?? [])].filter(
       (messageId) => !coreMessageIds.includes(messageId)
     )
-    // A sharing event has no reply of its own; the reply belongs to the response kinds.
-    const responseMessageIds = kind === 'sharing' ? [] : [...new Set(request.responseMessageIds ?? [])]
+    // A sharing event has no reply of its own, and only a follow-up question points at an earlier message.
+    const responseMessageIds =
+      kind === 'support_response' || kind === 'good_news_response' ? [...new Set(request.responseMessageIds ?? [])] : []
+    const priorMessageIds = kind === 'follow_up' ? [...new Set(request.priorMessageIds ?? [])] : []
     const found = new Map(
-      getMessagesByIds(db, [...coreMessageIds, ...relatedMessageIds, ...responseMessageIds]).map((m) => [m.id, m])
+      getMessagesByIds(db, [...coreMessageIds, ...relatedMessageIds, ...responseMessageIds, ...priorMessageIds]).map(
+        (m) => [m.id, m]
+      )
     )
     for (const messageId of coreMessageIds) {
       const message = found.get(messageId)
@@ -481,10 +493,60 @@ export function createIntimacyService(deps: IntimacyServiceDeps): IntimacyServic
       return getResults(sessionId)
     }
 
+    // K3 turns the request around: the core messages are the question, so the participant who was asked is the
+    // other one, and the earlier messages the question is about have to be theirs.
     if (kind === 'follow_up') {
-      throw Object.assign(new Error('A confirmed follow-up question needs the earlier message it asks about'), {
-        statusCode: 400,
-      })
+      if (priorMessageIds.length === 0) {
+        throw Object.assign(new Error('A confirmed follow-up question needs the earlier message it asks about'), {
+          statusCode: 400,
+        })
+      }
+      const anchor = coreEvidence[0]!
+      const priorEvidence = priorMessageIds.map((messageId) =>
+        requirePriorMessage(found.get(messageId), messageId, other.memberId, anchor.messageId)
+      )
+      const record = applyFollowUpPairing(
+        {
+          id: `follow_up:${anchor.messageId}`,
+          kind: 'follow_up',
+          subjectMemberId: other.memberId,
+          otherMemberId: subject.memberId,
+          anchorMessageId: anchor.messageId,
+          anchorTs: anchor.timestamp,
+          evidence: [
+            ...coreEvidence,
+            ...relatedMessageIds.map((messageId) => toEvidence(found.get(messageId)!, 'related')),
+          ].sort((left, right) => left.messageId - right.messageId),
+          observation: 'sufficient',
+          origin: 'user',
+          modelDecision: null,
+          modelReason: null,
+          details: {
+            kind: 'follow_up',
+            priorEventId: null,
+            matter: requireFollowUpMatter(request.details),
+            // The user picked the pair by hand, so there are no search words behind it.
+            matterKeywords: [],
+            matchConfidence: 'uncertain',
+            initiationInObservedRecord: 'uncertain',
+            gapSeconds: null,
+            lookbackStartTs: 0,
+            candidateMessageIds: [],
+          },
+          createdAt: timestamp,
+        },
+        buildFollowUpPairing(db, {
+          priorEvidence,
+          askedMemberId: other.memberId,
+          anchor: { messageId: anchor.messageId, timestamp: anchor.timestamp },
+          matterKeywords: [],
+          knownEvents: currentEvents,
+          matchConfidence: 'supported',
+          candidateMessageIds: [],
+        })
+      )
+      confirmEvent(sessionId, record, { currentEvents, coreMessageIds, timestamp })
+      return getResults(sessionId)
     }
 
     // K2 counts a reply to a disclosure, so the disclosure has to exist as a K1 event of its own.
@@ -537,6 +599,90 @@ export function createIntimacyService(deps: IntimacyServiceDeps): IntimacyServic
     }
     confirmEvent(sessionId, record, { currentEvents, coreMessageIds, timestamp })
     return getResults(sessionId)
+  }
+
+  /**
+   * A revision of a follow-up question names the earlier messages it is about — from the candidate list or any
+   * earlier message of the participant who was asked. The pairing it implies is worked out here and stored with
+   * the decision, so it survives a rerun the same way a relabelled event does.
+   */
+  function resolveRevisionDetails(
+    sessionId: string,
+    event: IntimacyEvent,
+    details: IntimacyReviewDetails
+  ): IntimacyReviewDetails {
+    if (event.details.kind !== 'follow_up') return requireRevisableDetails(event, details)
+    const priorMessageIds = [...new Set((details as FollowUpReviewDetails).priorMessageIds ?? [])]
+    if (priorMessageIds.length === 0) {
+      throw Object.assign(new Error('A follow-up revision needs the earlier messages it asks about'), {
+        statusCode: 400,
+      })
+    }
+    const db = deps.runtime.ensureReadonly(sessionId)
+    const found = new Map(getMessagesByIds(db, priorMessageIds).map((message) => [message.id, message]))
+    const priorEvidence = priorMessageIds.map((messageId) =>
+      requirePriorMessage(found.get(messageId), messageId, event.subjectMemberId, event.anchorMessageId)
+    )
+    const resultRun = store.getLatestRunWithResults(sessionId)
+    const pairing = buildFollowUpPairing(db, {
+      priorEvidence,
+      askedMemberId: event.subjectMemberId,
+      anchor: { messageId: event.anchorMessageId, timestamp: event.anchorTs },
+      matterKeywords: event.details.matterKeywords,
+      knownEvents: [
+        ...(resultRun ? store.listEvents(sessionId, resultRun.id) : []),
+        ...store.listEvents(sessionId, INTIMACY_USER_RUN_ID),
+      ],
+      matchConfidence: 'supported',
+      candidateMessageIds: event.details.candidateMessageIds,
+    })
+    return {
+      priorMessageIds,
+      priorEventId: pairing.priorEventId,
+      matchConfidence: 'supported',
+      initiationInObservedRecord: pairing.initiation,
+      gapSeconds: event.anchorTs - Math.min(...priorEvidence.map((evidence) => evidence.timestamp)),
+    }
+  }
+
+  /** Everything a follow-up pairing derives from its earlier messages: which event, when, and who raised it. */
+  function buildFollowUpPairing(
+    db: DatabaseAdapter,
+    input: {
+      priorEvidence: IntimacyEvidence[]
+      askedMemberId: number
+      anchor: { messageId: number; timestamp: number }
+      matterKeywords: string[]
+      knownEvents: IntimacyEventRecord[]
+      matchConfidence: FollowUpMatchConfidence
+      candidateMessageIds: number[]
+      chatStartTs?: number
+    }
+  ): FollowUpPairing {
+    const priorAnchor =
+      input.priorEvidence.length === 0
+        ? null
+        : input.priorEvidence.reduce((left, right) => (left.messageId <= right.messageId ? left : right))
+    const priorEventId = priorAnchor
+      ? findSharingEventCovering(input.knownEvents, priorAnchor.messageId, input.askedMemberId)
+      : null
+    const priorEvent = priorEventId ? input.knownEvents.find((event) => event.id === priorEventId) : null
+    const chatStartTs = input.chatStartTs ?? getSessionOverview(db).firstMessageTs ?? 0
+    return {
+      priorEvidence: input.priorEvidence,
+      priorEventId,
+      matchConfidence: input.matchConfidence,
+      initiation: resolveFollowUpInitiation({
+        db,
+        askedMemberId: input.askedMemberId,
+        prior: priorAnchor && { messageId: priorAnchor.messageId, timestamp: priorAnchor.timestamp },
+        followUp: input.anchor,
+        matterKeywords: input.matterKeywords,
+        priorEventEvidence: priorEvent?.evidence ?? [],
+      }),
+      candidateMessageIds: input.candidateMessageIds,
+      lookbackStartTs: Math.max(input.anchor.timestamp - INTIMACY_FOLLOW_UP_LOOKBACK_SECONDS, chatStartTs),
+    }
   }
 
   /** Write the confirmed event, or turn the confirmation into a decision on the event that already covers it. */
@@ -621,7 +767,7 @@ export function createIntimacyService(deps: IntimacyServiceDeps): IntimacyServic
     if (!event) {
       throw Object.assign(new Error(`Intimacy event not found: ${eventId}`), { statusCode: 404 })
     }
-    const details = request.details ? requireRevisableDetails(event, request.details) : null
+    const details = request.details ? resolveRevisionDetails(sessionId, event, request.details) : null
     const review = store.upsertReview(
       sessionId,
       eventId,
@@ -862,7 +1008,6 @@ export function createIntimacyService(deps: IntimacyServiceDeps): IntimacyServic
       let prior = event.evidence.filter((evidence) => evidence.role === 'prior')
       let matchConfidence: FollowUpMatchConfidence = prior.length > 0 ? 'supported' : 'uncertain'
       let candidateMessageIds: number[] = []
-      let lookbackStartTs = Math.max(event.anchorTs - INTIMACY_FOLLOW_UP_LOOKBACK_SECONDS, context.chatStartTs)
 
       if (prior.length === 0 && matchCalls < INTIMACY_FOLLOW_UP_MATCH_CALLS_PER_WINDOW) {
         const collected = await collectFollowUpCandidates({
@@ -880,7 +1025,6 @@ export function createIntimacyService(deps: IntimacyServiceDeps): IntimacyServic
           semanticIndex: deps.semanticIndex,
           semanticAvailable: context.semanticAvailable,
         })
-        lookbackStartTs = collected.lookbackStartTs
         candidateMessageIds = collected.candidates.map((candidate) => candidate.id)
         if (collected.candidates.length > 0) {
           matchCalls += 1
@@ -922,27 +1066,20 @@ export function createIntimacyService(deps: IntimacyServiceDeps): IntimacyServic
         }
       }
 
-      const priorAnchor = prior.length === 0 ? null : prior.reduce((a, b) => (a.messageId <= b.messageId ? a : b))
-      const priorEventId = priorAnchor
-        ? findSharingEventCovering(knownEvents, priorAnchor.messageId, askedMemberId)
-        : null
-      const priorEvent = priorEventId ? knownEvents.find((item) => item.id === priorEventId) : null
       resolved.push(
-        applyFollowUpPairing(event, {
-          priorEvidence: prior,
-          priorEventId,
-          matchConfidence,
-          initiation: resolveFollowUpInitiation({
-            db,
+        applyFollowUpPairing(
+          event,
+          buildFollowUpPairing(db, {
+            priorEvidence: prior,
             askedMemberId,
-            prior: priorAnchor && { messageId: priorAnchor.messageId, timestamp: priorAnchor.timestamp },
-            followUp: { messageId: event.anchorMessageId, timestamp: event.anchorTs },
+            anchor: { messageId: event.anchorMessageId, timestamp: event.anchorTs },
             matterKeywords: details.matterKeywords,
-            priorEventEvidence: priorEvent?.evidence ?? [],
-          }),
-          candidateMessageIds,
-          lookbackStartTs,
-        })
+            knownEvents,
+            matchConfidence,
+            candidateMessageIds,
+            chatStartTs: context.chatStartTs,
+          })
+        )
       )
     }
     return { run, events: resolved }
@@ -1047,11 +1184,24 @@ export function createIntimacyService(deps: IntimacyServiceDeps): IntimacyServic
     }
   }
 
+  /**
+   * The messages the page needs: every cited one, the earlier messages a user picked in a revision, and the
+   * candidates a follow-up question that is still waiting can be paired with.
+   */
   function loadEvidenceSnippets(
     db: DatabaseAdapter,
-    events: StoredIntimacyEvent[]
+    events: StoredIntimacyEvent[],
+    reviews: Map<string, IntimacyEventReview>
   ): Map<number, IntimacyMessageSnippet> {
-    const messageIds = [...new Set(events.flatMap((event) => event.evidence.map((item) => item.messageId)))]
+    const messageIds = [
+      ...new Set(
+        events.flatMap((event) => [
+          ...event.evidence.map((item) => item.messageId),
+          ...(event.details.kind === 'follow_up' ? event.details.candidateMessageIds : []),
+          ...followUpReviewPriorIds(event, reviews.get(event.id) ?? null),
+        ])
+      ),
+    ]
     return new Map(getMessagesByIds(db, messageIds).map((message) => [message.id, toSnippet(message)]))
   }
 
@@ -1060,6 +1210,10 @@ export function createIntimacyService(deps: IntimacyServiceDeps): IntimacyServic
     review: IntimacyEventReview | null,
     messages: Map<number, IntimacyMessageSnippet>
   ): IntimacyEvent {
+    // A revision may replace the earlier messages a follow-up question is paired with; evidence follows it.
+    const reviewPriorIds = followUpReviewPriorIds(event, review)
+    const evidence =
+      reviewPriorIds.length === 0 ? event.evidence : replacePriorEvidence(event.evidence, reviewPriorIds, messages)
     return {
       id: event.id,
       sessionId: event.sessionId,
@@ -1069,7 +1223,7 @@ export function createIntimacyService(deps: IntimacyServiceDeps): IntimacyServic
       otherMemberId: event.otherMemberId,
       anchorMessageId: event.anchorMessageId,
       anchorTs: event.anchorTs,
-      evidence: event.evidence,
+      evidence,
       observation: event.observation,
       origin: event.origin,
       modelDecision: event.modelDecision,
@@ -1077,7 +1231,9 @@ export function createIntimacyService(deps: IntimacyServiceDeps): IntimacyServic
       details: applyReviewDetails(event.details, review),
       review,
       status: resolveEventStatus(event, review),
-      stale: event.evidence.some((evidence) => !messages.has(evidence.messageId)),
+      stale:
+        evidence.some((item) => !messages.has(item.messageId)) ||
+        reviewPriorIds.some((messageId) => !messages.has(messageId)),
     }
   }
 
@@ -1336,6 +1492,67 @@ function resolveConfirmedObservation(responseCount: number, labelCount: number):
   throw Object.assign(new Error('A confirmed response needs both the reply messages and how they answered'), {
     statusCode: 400,
   })
+}
+
+/** An earlier message a follow-up question may be paired with: the other participant's own words, before it. */
+function requirePriorMessage(
+  message: MappedMessage | undefined,
+  messageId: number,
+  askedMemberId: number,
+  anchorMessageId: number
+): IntimacyEvidence {
+  if (!message) {
+    throw Object.assign(new Error(`Message ${messageId} is not part of this chat`), { statusCode: 400 })
+  }
+  if (message.senderId !== askedMemberId) {
+    throw Object.assign(new Error(`Message ${messageId} was not sent by the participant who is asked`), {
+      statusCode: 400,
+    })
+  }
+  if (messageId >= anchorMessageId) {
+    throw Object.assign(new Error(`Message ${messageId} does not come before the follow-up question`), {
+      statusCode: 400,
+    })
+  }
+  if (message.type !== 0 || message.content === '') {
+    throw Object.assign(new Error(`Message ${messageId} has no readable text`), { statusCode: 400 })
+  }
+  return toEvidence(message, 'prior')
+}
+
+function requireFollowUpMatter(details: CreateIntimacyEventDetails): string {
+  const matter = (details as CreateFollowUpDetails).matter
+  if (typeof matter !== 'string' || matter.trim() === '') {
+    throw Object.assign(new Error('A confirmed follow-up question needs the matter it asks about'), {
+      statusCode: 400,
+    })
+  }
+  return matter.trim().slice(0, INTIMACY_FOLLOW_UP_MATTER_CHARS)
+}
+
+/** The earlier messages a revision picked, so display and counting follow the user's pairing. */
+function followUpReviewPriorIds(
+  event: Pick<StoredIntimacyEvent, 'details'>,
+  review: IntimacyEventReview | null
+): number[] {
+  if (event.details.kind !== 'follow_up' || !review?.details) return []
+  return (review.details as FollowUpReviewDetails).priorMessageIds ?? []
+}
+
+function replacePriorEvidence(
+  evidence: IntimacyEvidence[],
+  priorMessageIds: number[],
+  messages: Map<number, IntimacyMessageSnippet>
+): IntimacyEvidence[] {
+  const chosen = priorMessageIds.flatMap((messageId) => {
+    const snippet = messages.get(messageId)
+    return snippet
+      ? [{ messageId, timestamp: snippet.timestamp, senderId: snippet.senderId, role: 'prior' as const }]
+      : []
+  })
+  return [...evidence.filter((item) => item.role !== 'prior'), ...chosen].sort(
+    (left, right) => left.messageId - right.messageId
+  )
 }
 
 /** The revisable part of an event, used when a confirmation lands on an event that already exists. */
