@@ -45,3 +45,13 @@ export type {
   TranscriptionSkip,
   TranscriptionSkipReason,
 } from './service'
+export { createTranscriptionWorkerClient, TranscriptionWorkerClient } from './worker-client'
+export type {
+  TranscribeWorkerPcmOptions,
+  TranscribeWorkerPcmResult,
+  TranscriptionWorkerClientOptions,
+  TranscriptionWorkerTransport,
+  TranscriptionWorkerTransportFactory,
+} from './worker-client'
+export { createTranscriptionWorkerRuntime, TranscriptionWorkerRuntime } from './worker-runtime'
+export type { TranscriptionWorkerStartupOptions } from './worker-runtime'

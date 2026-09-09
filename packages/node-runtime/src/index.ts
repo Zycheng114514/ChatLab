@@ -495,6 +495,7 @@ export type {
 export * as transcription from './transcription'
 export {
   createTranscriber,
+  createTranscriptionWorkerClient,
   findAudioDecoder,
   planSessionTranscription,
   registerAudioDecoder,
@@ -507,6 +508,7 @@ export {
   TRANSCRIPTION_MODEL_CACHE_DIR_ENV,
   TRANSCRIPTION_PROFILE_IDS,
   TRANSCRIPTION_PROFILES,
+  TranscriptionWorkerClient,
   UnsupportedAudioFormatError,
 } from './transcription'
 export type {
@@ -523,6 +525,8 @@ export type {
   TranscriptionProgress,
   TranscriptionSkip,
   TranscribeSessionAttachmentsResult,
+  TranscribeWorkerPcmResult,
+  TranscriptionWorkerClientOptions,
 } from './transcription'
 
 export {
