@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict'
 import test from 'node:test'
 import type { IntimacyMember } from '@openchatlab/shared-types'
-import { parseSharingResponse } from './model-protocol'
+import { buildSharingWindowPrompt, parseSharingResponse } from './model-protocol'
 import type { IntimacySourceMessage, IntimacyWindow } from './source'
 
 const members: [IntimacyMember, IntimacyMember] = [
@@ -122,3 +122,37 @@ for (const rejection of rejections) {
     assert.throws(() => parseSharingResponse(rejection.payload, window, members))
   })
 }
+
+test('a window prompt lists one compact line per message under its date and keeps the context apart', () => {
+  // 14:30 UTC is 22:30 in Shanghai; 16:05 UTC is already 00:05 the next day there.
+  const at = (hour: number, minute: number) => Date.UTC(2026, 3, 30, hour, minute) / 1000
+  const prompt = (contextCount: number) =>
+    buildSharingWindowPrompt({
+      window: {
+        index: 1,
+        contextCount,
+        messages: [
+          message(10, { timestamp: at(14, 30), content: '昨晚没睡好' }),
+          message(11, { senderId: 2, timestamp: at(16, 5), content: 'first line\nsecond line' }),
+          message(12, { timestamp: at(16, 6), type: 2, content: '', isText: false }),
+        ],
+      },
+      members,
+      totalWindows: 3,
+      timezone: 'Asia/Shanghai',
+      locale: 'zh-CN',
+    }).userPrompt
+
+  const withContext = prompt(1)
+  assert.match(withContext, /Window 2\/3/)
+  assert.ok(
+    withContext.includes(
+      'Context (already coded in the previous window, never cite as coreMessageIds):\n[2026-04-30]\n10 A 22:30 昨晚没睡好\n\nMessages:\n[2026-05-01]\n11 B 00:05 first line\\nsecond line\n12 A 00:06 [type:voice]\n'
+    ),
+    withContext
+  )
+
+  const withoutContext = prompt(0)
+  assert.ok(!withoutContext.includes('Context ('))
+  assert.ok(withoutContext.includes('Messages:\n[2026-04-30]\n10 A 22:30 昨晚没睡好\n[2026-05-01]\n11 B 00:05'))
+})

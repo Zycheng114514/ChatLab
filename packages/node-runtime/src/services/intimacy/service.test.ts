@@ -112,17 +112,45 @@ interface PromptWindow {
   messages: PromptMessage[]
 }
 
-/** Read a window prompt the way a model would: the participant legend plus one JSON object per message. */
+const MESSAGE_LINE = /^(\d+) ([AB]) (\d\d:\d\d) (.*)$/
+const DATE_LINE = /^\[(\d{4}-\d\d-\d\d)\]$/
+
+/**
+ * Read the message lines of a prompt the way a model would: one line per message under the date it falls on, a
+ * placeholder such as [type:voice] standing for a non-text message, and the lines under "Context" marked as such.
+ */
+function readMessageLines(userPrompt: string): PromptMessage[] {
+  const messages: PromptMessage[] = []
+  let date = ''
+  let context = false
+  for (const line of userPrompt.split('\n')) {
+    if (line.startsWith('Context (')) context = true
+    else if (line.startsWith('Messages:')) context = false
+    const dated = DATE_LINE.exec(line)
+    if (dated) {
+      date = dated[1]!
+      continue
+    }
+    const parsed = MESSAGE_LINE.exec(line)
+    if (!parsed) continue
+    const placeholder = /^\[type:([a-z0-9_]+)\]$/.exec(parsed[4]!)
+    messages.push({
+      id: Number(parsed[1]),
+      t: `${date} ${parsed[3]}`,
+      from: parsed[2] as 'A' | 'B',
+      type: placeholder ? placeholder[1]! : 'text',
+      text: placeholder ? '' : parsed[4]!.replace(/\\n/g, '\n'),
+      context,
+    })
+  }
+  return messages
+}
+
+/** Read a window prompt the way a model would: the participant legend plus the message lines. */
 function readWindow(userPrompt: string): PromptWindow {
   const header = /Window (\d+)\/(\d+)/.exec(userPrompt)
   assert.ok(header)
-  const messages: PromptMessage[] = []
-  for (const line of userPrompt.split('\n')) {
-    if (!line.startsWith('{"id"')) continue
-    const parsed = JSON.parse(line) as Omit<PromptMessage, 'context'> & { context?: boolean }
-    messages.push({ ...parsed, context: parsed.context === true })
-  }
-  return { index: Number(header[1]), total: Number(header[2]), messages }
+  return { index: Number(header[1]), total: Number(header[2]), messages: readMessageLines(userPrompt) }
 }
 
 function pickMessage(window: PromptWindow, from: 'A' | 'B', preferred: number[] = []): number {
