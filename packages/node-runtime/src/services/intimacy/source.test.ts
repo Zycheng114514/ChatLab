@@ -14,6 +14,7 @@ import {
   createIntimacySourceSignature,
   estimateIntimacyWindows,
   loadIntimacySource,
+  readIntimacySourceFingerprint,
   resolveIntimacyMembers,
   type IntimacySourceMessage,
 } from './source'
@@ -141,24 +142,102 @@ test('loading a private chat drops system messages, empties non-text content and
   assert.equal(full.sourceMessageCount, 5)
 })
 
-test('a chat that is not a two-person private conversation is rejected', (t) => {
-  const root = makeTempDir()
-  const dbPath = path.join(root, 'group.db')
+/**
+ * A private chat whose member table holds more than two rows, the way a WeChat export lists the participants of
+ * forwarded chat records. `ownerId` is null when the export does not name the owner.
+ */
+function createPrivateSessionWithExtraMembers(root: string, ownerId: string | null) {
+  const dbPath = path.join(root, 'extra-members.db')
   const raw = new Database(dbPath, { nativeBinding })
   raw.exec(CHAT_DB_SCHEMA)
   raw
     .prepare(
+      `INSERT INTO meta (name, platform, type, imported_at, owner_id, schema_version) VALUES ('Chat', 'wechat', 'private', ?, ?, 10)`
+    )
+    .run(baseTs, ownerId)
+  const member = raw.prepare('INSERT INTO member (id, platform_id, account_name) VALUES (?, ?, ?)')
+  member.run(1, 'alice', 'Alice')
+  member.run(2, 'bob', 'Bob')
+  member.run(3, 'system', '系统消息')
+  member.run(4, 'carol', 'Carol')
+  member.run(5, 'dave', 'Dave')
+  const insert = raw.prepare('INSERT INTO message (id, sender_id, ts, type, content) VALUES (?, ?, ?, ?, ?)')
+  insert.run(1, 2, baseTs + 10, 0, 'Bob writes first')
+  insert.run(2, 1, baseTs + 20, 0, 'Alice answers')
+  insert.run(3, 2, baseTs + 30, 0, 'Bob again')
+  insert.run(4, 4, baseTs + 40, 0, 'a stray message attributed to a forwarded participant')
+  insert.run(5, 3, baseTs + 50, 80, '对方撤回了一条消息')
+  raw.close()
+  return openBetterSqliteDatabase(dbPath, { nativeBinding, readonly: true })
+}
+
+test('a private chat keeps the two people who wrote in it and leaves the other member rows out', (t) => {
+  const db = createPrivateSessionWithExtraMembers(makeTempDir(), 'alice')
+  t.after(() => db.close())
+
+  assert.deepEqual(resolveIntimacyMembers(db), [
+    { memberId: 1, name: 'Alice', isOwner: true },
+    { memberId: 2, name: 'Bob', isOwner: false },
+  ])
+  const source = loadIntimacySource(db, { kinds: ['sharing'] })
+  assert.deepEqual(
+    source.messages.map((item) => item.id),
+    [1, 2, 3]
+  )
+  assert.equal(source.sourceMessageCount, 3)
+  assert.equal(source.sourceMaxMessageId, 3)
+  const range = { startTs: baseTs, endTs: baseTs + 100 }
+  assert.equal(estimateIntimacyWindows(db, range).messageCount, 3)
+  assert.deepEqual(readIntimacySourceFingerprint(db, range), { messageCount: 3, maxMessageId: 3 })
+})
+
+test('without a named owner the two participants are the two who wrote most, ties going to the older row', (t) => {
+  const db = createPrivateSessionWithExtraMembers(makeTempDir(), null)
+  t.after(() => db.close())
+
+  // Bob wrote twice; Alice and Carol once each, and Alice is the older member row.
+  assert.deepEqual(resolveIntimacyMembers(db), [
+    { memberId: 1, name: 'Alice', isOwner: false },
+    { memberId: 2, name: 'Bob', isOwner: false },
+  ])
+})
+
+test('a chat that is not a conversation between two people who wrote is rejected', (t) => {
+  const root = makeTempDir()
+  const groupPath = path.join(root, 'group.db')
+  const group = new Database(groupPath, { nativeBinding })
+  group.exec(CHAT_DB_SCHEMA)
+  group
+    .prepare(
       `INSERT INTO meta (name, platform, type, imported_at, schema_version) VALUES ('Group', 'wechat', 'group', ?, 10)`
     )
     .run(baseTs)
-  raw.prepare("INSERT INTO member (id, platform_id, account_name) VALUES (1, 'alice', 'Alice')").run()
-  raw.prepare("INSERT INTO member (id, platform_id, account_name) VALUES (2, 'bob', 'Bob')").run()
-  raw.close()
-  const db = openBetterSqliteDatabase(dbPath, { nativeBinding, readonly: true })
-  t.after(() => db.close())
+  group.prepare("INSERT INTO member (id, platform_id, account_name) VALUES (1, 'alice', 'Alice')").run()
+  group.prepare("INSERT INTO member (id, platform_id, account_name) VALUES (2, 'bob', 'Bob')").run()
+  group.close()
+  const groupDb = openBetterSqliteDatabase(groupPath, { nativeBinding, readonly: true })
+  t.after(() => groupDb.close())
 
-  assert.throws(
-    () => resolveIntimacyMembers(db),
-    (error: unknown) => (error as { statusCode?: number }).statusCode === 400
-  )
+  // A private chat where only one person ever wrote.
+  const soloPath = path.join(root, 'solo.db')
+  const solo = new Database(soloPath, { nativeBinding })
+  solo.exec(CHAT_DB_SCHEMA)
+  solo
+    .prepare(
+      `INSERT INTO meta (name, platform, type, imported_at, owner_id, schema_version) VALUES ('Chat', 'wechat', 'private', ?, 'alice', 10)`
+    )
+    .run(baseTs)
+  solo.prepare("INSERT INTO member (id, platform_id, account_name) VALUES (1, 'alice', 'Alice')").run()
+  solo.prepare("INSERT INTO member (id, platform_id, account_name) VALUES (2, 'bob', 'Bob')").run()
+  solo.prepare('INSERT INTO message (id, sender_id, ts, type, content) VALUES (1, 1, ?, 0, ?)').run(baseTs + 10, 'hi')
+  solo.close()
+  const soloDb = openBetterSqliteDatabase(soloPath, { nativeBinding, readonly: true })
+  t.after(() => soloDb.close())
+
+  for (const db of [groupDb, soloDb]) {
+    assert.throws(
+      () => resolveIntimacyMembers(db),
+      (error: unknown) => (error as { statusCode?: number }).statusCode === 400
+    )
+  }
 })

@@ -66,26 +66,40 @@ interface SourceStatsRow {
   estimatedChars: number | null
 }
 
+/** Only what the two participants wrote: the range first, then the two of them, in that parameter order. */
 const SOURCE_FILTER = `FROM message msg
-   JOIN member m ON m.id = msg.sender_id
-   WHERE msg.ts >= ? AND msg.ts <= ? AND COALESCE(m.account_name, '') != '系统消息'`
+   WHERE msg.ts >= ? AND msg.ts <= ? AND msg.sender_id IN (?, ?)`
 
-/** Intimacy analysis only describes a two-person conversation, so anything else is rejected up front. */
+const NOT_A_TWO_PERSON_CHAT = 'Intimacy insights require a private chat between two participants who sent messages'
+
+/**
+ * The two people of a private chat. Its member table can hold more rows than that — a WeChat export lists the
+ * participants of forwarded chat records as members who never wrote here — so the two participants are read from
+ * who actually wrote: the owner when the export names one, and the other participant with the most messages. A chat
+ * that is not private, or where fewer than two people wrote, is rejected up front, and messages from any other
+ * sender never enter the analysis (see SOURCE_FILTER).
+ */
 export function resolveIntimacyMembers(db: DatabaseAdapter): [IntimacyMember, IntimacyMember] {
   const meta = getSessionMeta(db)
   if (!meta) throw Object.assign(new Error('Session metadata is missing'), { statusCode: 404 })
-  if (meta.type !== 'private') {
-    throw Object.assign(new Error('Intimacy insights require a private chat with two members'), { statusCode: 400 })
-  }
-  const members = getMembers(db)
-  if (members.length !== 2) {
-    throw Object.assign(new Error('Intimacy insights require a private chat with two members'), { statusCode: 400 })
-  }
+  if (meta.type !== 'private') throw Object.assign(new Error(NOT_A_TWO_PERSON_CHAT), { statusCode: 400 })
   const ownerId = meta.ownerId?.trim() || null
-  const resolved = members
+  // getMembers already leaves the system member out; ties in message count go to the older member row.
+  const speaking = getMembers(db)
+    .filter((member) => member.messageCount > 0)
+    .sort((left, right) => right.messageCount - left.messageCount || left.id - right.id)
+  const owner = ownerId === null ? undefined : speaking.find((member) => member.platformId === ownerId)
+  const other = speaking.find((member) => member !== owner)
+  const chosen = owner && other ? [owner, other] : speaking.slice(0, 2)
+  if (chosen.length < 2) throw Object.assign(new Error(NOT_A_TWO_PERSON_CHAT), { statusCode: 400 })
+  const resolved = chosen
     .map((member) => ({ memberId: member.id, name: member.name, isOwner: member.platformId === ownerId }))
     .sort((left, right) => left.memberId - right.memberId)
   return [resolved[0]!, resolved[1]!]
+}
+
+function sourceFilterParams(range: IntimacyTimeRange, members: [IntimacyMember, IntimacyMember]): number[] {
+  return [range.startTs, range.endTs, members[0].memberId, members[1].memberId]
 }
 
 export function resolveIntimacyRange(db: DatabaseAdapter, request: IntimacyAnalysisRequest): IntimacyTimeRange {
@@ -104,7 +118,7 @@ export function loadIntimacySource(db: DatabaseAdapter, request: IntimacyAnalysi
       `SELECT msg.id, msg.sender_id AS senderId, msg.ts AS timestamp, msg.type, msg.content ${SOURCE_FILTER}
        ORDER BY msg.ts ASC, msg.id ASC`
     )
-    .all(range.startTs, range.endTs) as unknown as SourceRow[]
+    .all(...sourceFilterParams(range, members)) as unknown as SourceRow[]
   const messages = rows.map(normalizeSourceRow)
   return {
     members,
@@ -121,15 +135,20 @@ export function loadIntimacySource(db: DatabaseAdapter, request: IntimacyAnalysi
 /** Cheap staleness probe: the same two numbers the run recorded when it started. */
 export function readIntimacySourceFingerprint(
   db: DatabaseAdapter,
-  range: IntimacyTimeRange
+  range: IntimacyTimeRange,
+  members: [IntimacyMember, IntimacyMember] = resolveIntimacyMembers(db)
 ): { messageCount: number; maxMessageId: number } {
   const row = db
     .prepare(`SELECT COUNT(*) AS messageCount, COALESCE(MAX(msg.id), 0) AS maxMessageId ${SOURCE_FILTER}`)
-    .get(range.startTs, range.endTs) as { messageCount: number; maxMessageId: number } | undefined
+    .get(...sourceFilterParams(range, members)) as { messageCount: number; maxMessageId: number } | undefined
   return { messageCount: Number(row?.messageCount ?? 0), maxMessageId: Number(row?.maxMessageId ?? 0) }
 }
 
-export function estimateIntimacyWindows(db: DatabaseAdapter, range: IntimacyTimeRange): IntimacySourceEstimate {
+export function estimateIntimacyWindows(
+  db: DatabaseAdapter,
+  range: IntimacyTimeRange,
+  members: [IntimacyMember, IntimacyMember] = resolveIntimacyMembers(db)
+): IntimacySourceEstimate {
   const row = db
     .prepare(
       `SELECT COUNT(*) AS messageCount,
@@ -137,7 +156,7 @@ export function estimateIntimacyWindows(db: DatabaseAdapter, range: IntimacyTime
         SUM(LENGTH(COALESCE(msg.content, '')) + ${INTIMACY_SOURCE_FIXED_CHARS}) AS estimatedChars
        ${SOURCE_FILTER}`
     )
-    .get(range.startTs, range.endTs) as SourceStatsRow | undefined
+    .get(...sourceFilterParams(range, members)) as SourceStatsRow | undefined
   const messageCount = Number(row?.messageCount ?? 0)
   const estimatedChars = Number(row?.estimatedChars ?? 0)
   return {
